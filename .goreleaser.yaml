@@ -61,8 +61,12 @@ archives:
       - goos: windows
         formats:
           - zip
+    # Deliberately version-LESS names (no {{ .Version }}) so a stable URL like
+    # https://github.com/embeddedci-com/benchpod-cli/releases/latest/download/benchpod_Darwin_arm64.tar.gz
+    # always resolves to the newest release. The version is still recoverable from
+    # `benchpod --version`, the release tag, and checksums.txt.
     name_template: >-
-      benchpod_{{ .Version }}_
+      benchpod_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "arm64" }}arm64

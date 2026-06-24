@@ -27,20 +27,21 @@ notarized build (not currently produced) or build from source.
 
 ### Direct download
 
-Grab the archive for your OS/arch from the releases page and put the binary on
-your `PATH`. For example, macOS arm64:
+Grab the archive for your OS/arch and put the binary on your `PATH`. The
+`releases/latest/download/…` URLs always point at the newest release. For
+example, macOS arm64:
 
 ```sh
-VER=v0.1.0   # pick the latest release tag
 curl -fsSL -o benchpod.tar.gz \
-  "https://github.com/embeddedci-com/benchpod-cli/releases/download/${VER}/benchpod_${VER#v}_Darwin_arm64.tar.gz"
+  https://github.com/embeddedci-com/benchpod-cli/releases/latest/download/benchpod_Darwin_arm64.tar.gz
 tar -xzf benchpod.tar.gz benchpod
 sudo mv benchpod /usr/local/bin/
 benchpod --version
 ```
 
-On Windows download the `..._Windows_x86_64.zip` archive and extract
-`benchpod.exe`. `checksums.txt` in each release verifies the download.
+Swap `Darwin_arm64` for `Darwin_x86_64`, `Linux_x86_64`, `Linux_arm64`, etc. On
+Windows download `benchpod_Windows_x86_64.zip` and extract `benchpod.exe`.
+`releases/latest/download/checksums.txt` verifies the download.
 
 > **macOS, direct download only:** if you fetch the archive with a *browser*
 > (not curl/Homebrew) it gets the quarantine flag and double-clicking is
