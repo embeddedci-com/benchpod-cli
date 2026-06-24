@@ -99,11 +99,10 @@ release:
 # Publish/update a Homebrew cask in the embeddedci-com/homebrew-tap repo on every
 # (non-prerelease) tag, so `brew install --cask embeddedci-com/tap/benchpod`
 # tracks the latest release. (GoReleaser deprecated `brews` formulae in favour of
-# casks for pre-built binaries.) The generated cask strips the quarantine xattr
-# in a postflight hook, so the unsigned binary runs without an Apple Developer
-# cert. The tap is a DIFFERENT repo, so the default GITHUB_TOKEN can't push to
-# it — this step uses a dedicated PAT via repository.token (TAP_GITHUB_TOKEN in
-# the release workflow), which must have write access to homebrew-tap.
+# casks for pre-built binaries.) The tap is a DIFFERENT repo, so the default
+# GITHUB_TOKEN can't push to it — this step uses a dedicated PAT via
+# repository.token (TAP_GITHUB_TOKEN in the release workflow), which must have
+# write access to homebrew-tap.
 homebrew_casks:
   - name: benchpod
     repository:
@@ -113,6 +112,17 @@ homebrew_casks:
     directory: Casks
     homepage: "https://github.com/embeddedci-com/benchpod-cli"
     description: "EmbeddedCI bench pod CLI — drive a bench pod over USB serial or TCP/JSON"
+    # The binary is not notarized, so Homebrew's quarantine flag makes macOS
+    # (Gatekeeper) refuse to run it — even from the terminal. Strip the
+    # com.apple.quarantine attribute on install so `benchpod` runs without an
+    # Apple Developer cert. This deliberately bypasses Gatekeeper for our own
+    # binary; the alternative is paid Apple notarization (see README).
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/benchpod"]
+          end
     # No openocd dependency on purpose: `benchpod flash` needs a recent OpenOCD
     # with the cmsis_dap_tcp backend (`brew install --HEAD open-ocd`), which the
     # stable open-ocd formula doesn't provide — so we document it instead of

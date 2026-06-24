@@ -18,10 +18,12 @@ brew install --cask embeddedci-com/tap/benchpod
 ```
 
 This taps `embeddedci-com/homebrew-tap` and installs the `benchpod` binary;
-`brew upgrade --cask benchpod` later picks up new releases. No Apple Developer
-cert / notarization is involved: a CLI binary installed via Homebrew and run
-from the terminal is not subject to the Gatekeeper launch prompt, and the macOS
-binaries are ad-hoc signed by the Go toolchain so Apple Silicon runs them.
+`brew upgrade --cask benchpod` later picks up new releases. The macOS binary is
+not Apple-notarized, so the cask's post-install hook strips the
+`com.apple.quarantine` attribute that Homebrew sets — otherwise macOS Gatekeeper
+would refuse to run the unsigned binary (even from the terminal). This
+deliberately bypasses Gatekeeper for our own binary; if you'd rather not, use a
+notarized build (not currently produced) or build from source.
 
 ### Direct download
 
