@@ -1,0 +1,44 @@
+name: release
+
+# Publish Windows / Linux / macOS binaries to a GitHub Release whenever a
+# version tag is pushed, e.g.:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+on:
+  push:
+    tags:
+      - "v*"
+
+# The GitHub Release is created in this repo, so the default GITHUB_TOKEN needs
+# write access to contents. The Homebrew cask is pushed to a different repo
+# (homebrew-tap) and uses a separate PAT — see TAP_GITHUB_TOKEN below.
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    # macOS runner: macOS binaries need cgo (IOKit); Linux/Windows cross-compile
+    # from here with cgo off. See .goreleaser.yaml for the full rationale.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # GoReleaser needs full history + tags for the changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          # Creates the release in THIS repo (default token is enough).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pushes the Homebrew cask to embeddedci-com/homebrew-tap (a different
+          # repo): a PAT with write access to that tap repo.
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}

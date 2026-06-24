@@ -1,0 +1,122 @@
+# GoReleaser config for benchpod-cli.
+#
+# Builds Windows, Linux and macOS binaries and publishes them to a GitHub
+# Release. Run by .github/workflows/release.yml on a `v*` tag push.
+#
+# Why this runs on a macOS runner: the serial-port enumerator
+# (go.bug.st/serial/enumerator) needs cgo + the IOKit framework on darwin, so
+# the macOS binaries MUST be built with CGO_ENABLED=1 on a real macOS host.
+# Linux and Windows are pure Go, so they cross-compile fine from the same macOS
+# runner with cgo disabled. One job, all three OSes.
+version: 2
+
+project_name: benchpod-cli
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  # macOS: native cgo build (IOKit). The macos-latest runner is arm64; the
+  # universal macOS SDK lets it also emit the amd64 (Intel) binary via clang's
+  # -arch, which Go's cgo forwards.
+  - id: darwin
+    main: ./cmd/benchpod-cli
+    binary: benchpod
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+  # Linux + Windows: pure Go, cross-compiled with cgo off.
+  - id: linux-windows
+    main: ./cmd/benchpod-cli
+    binary: benchpod
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    # tar.gz everywhere except Windows, which gets a .zip.
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      benchpod_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+# The GitHub Release is created in this same repo (embeddedci-com/benchpod-cli),
+# so the workflow's default GITHUB_TOKEN is enough — no PAT needed for the
+# release itself.
+release:
+  github:
+    owner: embeddedci-com
+    name: benchpod-cli
+  draft: false
+  prerelease: auto
+
+# Publish/update a Homebrew cask in the embeddedci-com/homebrew-tap repo on every
+# (non-prerelease) tag, so `brew install --cask embeddedci-com/tap/benchpod`
+# tracks the latest release. (GoReleaser deprecated `brews` formulae in favour of
+# casks for pre-built binaries.) The generated cask strips the quarantine xattr
+# in a postflight hook, so the unsigned binary runs without an Apple Developer
+# cert. The tap is a DIFFERENT repo, so the default GITHUB_TOKEN can't push to
+# it — this step uses a dedicated PAT via repository.token (TAP_GITHUB_TOKEN in
+# the release workflow), which must have write access to homebrew-tap.
+homebrew_casks:
+  - name: benchpod
+    repository:
+      owner: embeddedci-com
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/embeddedci-com/benchpod-cli"
+    description: "EmbeddedCI bench pod CLI — drive a bench pod over USB serial or TCP/JSON"
+    # No openocd dependency on purpose: `benchpod flash` needs a recent OpenOCD
+    # with the cmsis_dap_tcp backend (`brew install --HEAD open-ocd`), which the
+    # stable open-ocd formula doesn't provide — so we document it instead of
+    # pinning the wrong version here. See the README.
+    #
+    # Don't touch the tap for snapshot/prerelease builds.
+    skip_upload: auto
