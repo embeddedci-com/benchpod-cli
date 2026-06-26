@@ -62,6 +62,14 @@ backend (post-0.12.0) — on macOS that currently means
 `brew install --HEAD open-ocd`. See [Flashing: CMSIS-DAP](#flashing-cmsis-dap)
 below.
 
+### dfu-util (for `flash-self`)
+
+`flash-self` reflashes a **bench pod's own firmware** over USB DFU (STM32) and
+shells out to **dfu-util**. The Homebrew cask declares it as a dependency, so
+`brew install --cask embeddedci-com/tap/benchpod` pulls it in automatically;
+otherwise `brew install dfu-util` (or your distro's package). See
+[Flashing the pod itself](#flashing-the-pod-itself-stm32-usb-dfu) below.
+
 ## Connection
 
 The global `--connection` flag is the single place that says where and how to
@@ -113,8 +121,12 @@ benchpod show-wifi
 benchpod clear-wifi
 
 # Firmware:
-benchpod flash ...        # SWD via OpenOCD's CMSIS-DAP backend (TCP or serial)
-benchpod bootsel          # serial console only
+benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP)
+benchpod bootsel          # reboot an RP2350 pod into its UF2 bootloader (serial console only)
+benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (serial console only)
+benchpod flash-self                  # fetch latest firmware + flash the POD over USB DFU (STM32)
+benchpod flash-self --enter-dfu      # …rebooting a running pod into DFU first
+benchpod flash-self ./fw.bin         # …flashing a specific local build instead
 
 # Cloud auth (optional):
 benchpod login [--server-url https://www.embeddedci.com]
@@ -137,6 +149,46 @@ backend up front and fails with clear advice if it is missing.
 
 The legacy per-bit `remote_bitbang` path has been retired — the pod no longer
 speaks it.
+
+#### Flashing the pod itself (STM32, USB DFU)
+
+`flash` programs a *target* wired to the pod. To flash the **pod's own
+firmware** there are two paths, mirroring how the two pod MCUs boot:
+
+- **RP2350 pod** — drag-and-drop UF2. `benchpod bootsel` reboots a running pod
+  into the UF2 drive; for a blank board hold the physical BOOT0 button. Drop
+  `firmware.uf2` onto the `RPI-RP2` drive (or use `picotool`).
+- **STM32 pod** — USB DFU via `dfu-util`, no SWD probe needed. A first-time user
+  just runs `benchpod flash-self` with **no arguments**: the latest prebuilt
+  firmware is fetched automatically (no toolchain, no manual download), the pod
+  is detected in DFU mode — with on-screen guidance and a wait if it isn't yet —
+  and dfu-util writes it.
+
+  ```
+  benchpod flash-self
+  ```
+
+  The device must be in its ROM DFU bootloader; `flash-self` waits (up to
+  `--wait`, default 60s) and tells you how to get there:
+  - **first flash / blank board:** hold **BOOT0 high at reset** (hardware only —
+    a board with no firmware can't be driven over USB yet), then run the command.
+  - **re-flash a running pod:** add `--enter-dfu` to reboot it into DFU for you
+    (equivalent to `benchpod dfu` first):
+    ```
+    benchpod flash-self --enter-dfu
+    ```
+
+  Overrides: a local path (`benchpod flash-self ./bench_pod_stm32.bin`), an
+  explicit `--firmware-url`, or a pinned `--firmware-version v0.0.5`.
+
+The prebuilt firmware is fetched from the public
+[`embeddedci-com/benchpod-firmware`](https://github.com/embeddedci-com/benchpod-firmware)
+releases (the firmware source repo is private); a published `.sha256` is
+verified when present. Under the hood `flash-self` runs
+`dfu-util -a 0 --dfuse-address 0x08000000:leave -D <firmware.bin>`; `:leave`
+starts the new firmware once the write verifies. The firmware side is the `dfu`
+console command, which jumps to the STM32 system-memory bootloader (the same
+flow the firmware `make flash-dfu` target uses).
 
 ### Global flags
 

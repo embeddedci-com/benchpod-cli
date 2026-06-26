@@ -47,8 +47,9 @@ func newRootCmd() *cobra.Command {
 			"is inferred from its value: an address (192.168.1.5[:8080]) uses the TCP/JSON\n" +
 			"API; a device path (/dev/tty..., COM3) or the keyword `serial` uses the USB\n" +
 			"serial console. Omit it to use the default saved by `benchpod set-connection`.\n" +
-			"Today only `flash` works over serial; the wifi-* and bootsel commands always\n" +
-			"use the serial console regardless.",
+			"Today only `flash` works over serial; the wifi-*, bootsel and dfu commands\n" +
+			"always use the serial console regardless. `flash-self` reflashes the pod's\n" +
+			"own firmware over USB DFU (STM32) via dfu-util, independent of --connection.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Apply Viper precedence (flag > env > default) into g before any RunE.
@@ -90,10 +91,12 @@ func newRootCmd() *cobra.Command {
 		newSetGPIOCmd(g),
 		newStepGPIOCmd(g),
 		newFlashCmd(g),
+		newFlashSelfCmd(g),
 		newSetWifiCmd(g),
 		newShowWifiCmd(g),
 		newClearWifiCmd(g),
 		newBootselCmd(g),
+		newDfuCmd(g),
 	)
 	return root
 }

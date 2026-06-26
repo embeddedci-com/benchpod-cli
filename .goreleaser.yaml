@@ -117,6 +117,11 @@ homebrew_casks:
     directory: Casks
     homepage: "https://github.com/embeddedci-com/benchpod-cli"
     description: "EmbeddedCI bench pod CLI — drive a bench pod over USB serial or TCP/JSON"
+    # `benchpod flash-self` (STM32 first-time / re-flash over USB DFU) shells out
+    # to dfu-util. Unlike openocd, the stable dfu-util formula is exactly what we
+    # need, so pin it as a dependency rather than just documenting it.
+    dependencies:
+      - formula: dfu-util
     # The binary is not notarized, so Homebrew's quarantine flag makes macOS
     # (Gatekeeper) refuse to run it — even from the terminal. Strip the
     # com.apple.quarantine attribute on install so `benchpod` runs without an

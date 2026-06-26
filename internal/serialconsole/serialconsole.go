@@ -575,6 +575,25 @@ func (c *Console) Bootsel(ctx context.Context) error {
 	return errors.New("device did not acknowledge bootsel")
 }
 
+// Dfu reboots an STM32 bench pod into its ROM USB DFU bootloader (the STM32
+// analog of Bootsel; RP2350 pods don't have this command). The device then
+// re-enumerates as an STM32 DFU device and the firmware can be rewritten with
+// dfu-util (see the `flash-self` command). Success is either the "entering DFU"
+// marker or the port vanishing (EOF) as USB re-enumerates right after.
+func (c *Console) Dfu(ctx context.Context) error {
+	out, err := c.sendCommand(ctx, "dfu")
+	if strings.Contains(out, "entering DFU") {
+		return nil
+	}
+	if errors.Is(err, errPortVanished) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return errors.New("device did not acknowledge dfu (RP2350 pods use `bootsel` instead)")
+}
+
 // DAPStart enters the firmware's length-framed CMSIS-DAP probe mode over the
 // console. It sends `dap-start <swclk> <swdio>[ <nreset>]`, then reads console
 // lines until the firmware prints the `dap ready` sentinel; any `ERROR:`/`usage:`

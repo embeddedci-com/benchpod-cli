@@ -175,3 +175,42 @@ func newBootselCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
 	return cmd
 }
+
+// ── dfu ──────────────────────────────────────────────────────────────────────
+
+// newDfuCmd reboots an STM32 bench pod into its ROM USB DFU bootloader (the
+// STM32 counterpart of `bootsel`). It only triggers the reboot; write the new
+// firmware afterwards with `flash-self` (or dfu-util directly). For a blank
+// board with no firmware yet, use the hardware BOOT0 pin instead.
+func newDfuCmd(g *globalFlags) *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "dfu",
+		Short: "Reboot an STM32 pod into the USB DFU bootloader to flash firmware",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if !yes {
+				fmt.Fprint(os.Stderr, "This reboots the device into the USB DFU bootloader; the serial port will disconnect. Type 'yes' to continue: ")
+				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+				if strings.TrimSpace(line) != "yes" {
+					return errors.New("aborted")
+				}
+			}
+			console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(10*time.Second))
+			if err != nil {
+				return err
+			}
+			defer cancel()
+			defer console.Close()
+
+			if err := console.Dfu(ctx); err != nil {
+				return fmt.Errorf("dfu: %w", err)
+			}
+			fmt.Fprintln(os.Stderr, "Device entering DFU (USB bootloader). Serial port disconnected — this is expected.")
+			fmt.Fprintln(os.Stderr, "Write firmware with `benchpod flash-self <firmware.bin>` (or dfu-util) to flash.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	return cmd
+}
