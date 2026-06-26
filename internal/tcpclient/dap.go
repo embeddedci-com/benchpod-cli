@@ -17,10 +17,11 @@ import (
 // internal/openocd.BridgeDAP, which translates between OpenOCD's framing and the
 // pod's 2-byte length frames. See bench-pod-firmware/docs/dap-over-tunnel.md.
 //
-// The handshake mirrors SWDStart exactly (ack {"status":"ok","data":"dap ready"}
-// in JSON mode, then raw framed packets on the same socket), so it shares
-// startRawMode. The caller owns closing the returned connection; a zero-length
-// frame or closing the socket returns the pod to JSON mode.
+// The handshake is the dap_start arm-then-switch sequence (ack
+// {"status":"ok","data":"dap ready"} in JSON mode, then raw framed packets on the
+// same socket), implemented by startRawMode. The caller owns closing the returned
+// connection; a zero-length frame or closing the socket returns the pod to JSON
+// mode.
 //
 // nreset is the optional target-reset LA channel; pass nil when the pod does not
 // own target reset.

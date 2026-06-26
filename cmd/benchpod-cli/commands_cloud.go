@@ -48,7 +48,7 @@ func runLogin(serverURL, tokenFile string, noOpen bool) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	installSignalHandler(cancel)
+	defer installSignalHandler(ctx, cancel)()
 
 	api := serverapi.New(serverURL)
 
@@ -199,7 +199,7 @@ func runRegister(g *globalFlags, serverURL, tokenFile, deviceName string, insecu
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	installSignalHandler(cancel)
+	defer installSignalHandler(ctx, cancel)()
 
 	api := serverapi.New(serverURL)
 	tokens, err := ensureTokens(ctx, api, tokenPath)
@@ -252,12 +252,18 @@ func runRegister(g *globalFlags, serverURL, tokenFile, deviceName string, insecu
 	}
 	log.Printf("provisioned: bench pod will connect to %s:%d (tls=%v verify=%v) as device %s", host, port, tls, verify, device.ID)
 
-	// Best-effort: report the cloud connection state the device sees.
+	// Best-effort: report the cloud connection state the device sees. A failure
+	// here doesn't undo the registration/provisioning, so warn (don't fail) — but
+	// surface it rather than silently dropping it.
 	statCtx, statCancel := context.WithTimeout(ctx, 10*time.Second)
-	if raw, err := client.Command(statCtx, map[string]any{"cmd": "cloud_status"}); err == nil {
+	if raw, err := client.Command(statCtx, map[string]any{"cmd": "cloud_status"}); err != nil {
+		log.Printf("warning: could not read bench pod cloud status: %v", err)
+	} else {
 		log.Printf("bench pod cloud status: %s", strings.TrimSpace(string(raw)))
 	}
 	statCancel()
+
+	fmt.Fprintf(os.Stderr, "Registered bench pod %q (device %s).\n", device.Name, device.ID)
 	return nil
 }
 

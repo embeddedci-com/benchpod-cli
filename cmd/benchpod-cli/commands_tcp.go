@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -153,7 +153,7 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 				defer closeOut()
 				printJSON(out, data)
 			}
-			log.Printf("ok")
+			fmt.Fprintln(os.Stderr, "generate: ok")
 			return nil
 		},
 	}

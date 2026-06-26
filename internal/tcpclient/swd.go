@@ -32,7 +32,7 @@ func (c *Client) TargetPower(ctx context.Context, efuse int, on bool) error {
 func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int, nreset *int) (net.Conn, error) {
 	addr := strings.TrimSpace(c.Addr)
 	if addr == "" {
-		return nil, fmt.Errorf("bench pod address is empty; run `benchpod set-bench-pod <addr>` first")
+		return nil, fmt.Errorf("bench pod address is empty; run `benchpod set-connection <addr>` first")
 	}
 
 	budget := c.DialTimeout

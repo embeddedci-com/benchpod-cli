@@ -139,8 +139,8 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(flashTimeout))
-	installSignalHandler(cancel)
 	defer cancel()
+	defer installSignalHandler(ctx, cancel)()
 
 	if err := openocd.Validate(ctx, bin); err != nil {
 		return fmt.Errorf("flash: %w", err)

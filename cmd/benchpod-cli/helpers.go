@@ -92,8 +92,19 @@ func (g *globalFlags) wifiClient(cmdName string, def time.Duration) (context.Con
 		return nil, func() {}, nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(def))
-	installSignalHandler(cancel)
-	return ctx, cancel, &tcpclient.Client{Addr: spec.Addr}, nil
+	stop := installSignalHandler(ctx, cancel)
+	return ctx, withSignalCleanup(cancel, stop), &tcpclient.Client{Addr: spec.Addr}, nil
+}
+
+// withSignalCleanup wraps a context cancel func so calling it also stops the
+// signal handler installed alongside it. Callers already `defer cancel()`, so
+// returning this in place of the bare cancel keeps the signal handler scoped to
+// the command's lifetime without changing any call site.
+func withSignalCleanup(cancel context.CancelFunc, stop func()) context.CancelFunc {
+	return func() {
+		stop()
+		cancel()
+	}
 }
 
 // openSerialConsole opens the bench-pod serial console (auto-detecting unless an
@@ -105,8 +116,8 @@ func (g *globalFlags) openSerialConsole(device string, timeout time.Duration) (*
 		return nil, "", nil, func() {}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	installSignalHandler(cancel)
-	return console, path, ctx, cancel, nil
+	stop := installSignalHandler(ctx, cancel)
+	return console, path, ctx, withSignalCleanup(cancel, stop), nil
 }
 
 // openBenchpodSerial is the single serial auto-detect entry point shared by all
@@ -320,7 +331,7 @@ func ensureTokens(ctx context.Context, api *serverapi.Client, tokenPath string) 
 	if existing.RefreshExpired(now) {
 		return nil, fmt.Errorf("session expired; run `benchpod login` again")
 	}
-	resp, err := api.RefreshGuest(ctx, existing.RefreshToken)
+	resp, err := api.RefreshTokens(ctx, existing.RefreshToken)
 	if err != nil {
 		return nil, fmt.Errorf("refresh token failed (%v); run `benchpod login` again", err)
 	}
@@ -331,7 +342,7 @@ func ensureTokens(ctx context.Context, api *serverapi.Client, tokenPath string) 
 	return saved, nil
 }
 
-func saveTokensFromResponse(path string, resp *serverapi.GuestResponse, fallbackSessionID, fallbackUserID string) (*authstore.Tokens, error) {
+func saveTokensFromResponse(path string, resp *serverapi.TokenResponse, fallbackSessionID, fallbackUserID string) (*authstore.Tokens, error) {
 	if resp == nil {
 		return nil, errors.New("nil response")
 	}
@@ -409,14 +420,29 @@ func resolveWifiPassword(flagVal string, stdin bool) (string, error) {
 	return pw, nil
 }
 
-func installSignalHandler(cancel context.CancelFunc) {
+// installSignalHandler arranges for SIGINT/SIGTERM to cancel ctx and returns a
+// cleanup func the caller must invoke (defer) to stop delivering signals and let
+// the watcher goroutine exit. Returning a cleanup — rather than leaking the
+// goroutine and the signal registration for the process lifetime as the old
+// per-call version did — keeps each command's handler scoped to that command and
+// avoids piling up duplicate SIGINT registrations.
+func installSignalHandler(ctx context.Context, cancel context.CancelFunc) func() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	done := make(chan struct{})
 	go func() {
-		s := <-sig
-		log.Printf("received %s, shutting down", s)
-		cancel()
+		select {
+		case s := <-sig:
+			log.Printf("received %s, shutting down", s)
+			cancel()
+		case <-ctx.Done():
+		case <-done:
+		}
 	}()
+	return func() {
+		signal.Stop(sig)
+		close(done)
+	}
 }
 
 func openBrowser(target string) error {

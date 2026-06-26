@@ -103,10 +103,15 @@ func newShowWifiCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("show-wifi: %w", err)
 			}
-			fmt.Printf("SSID:  %s\n", valueOrDash(st.SSID))
-			fmt.Printf("State: %s\n", valueOrDash(st.State))
-			fmt.Printf("IP:    %s\n", valueOrDash(st.IP))
-			fmt.Printf("RSSI:  %s\n", valueOrDash(st.RSSI))
+			out, closeOut, err := resolveOutput(g.outputFilename)
+			if err != nil {
+				return fmt.Errorf("show-wifi: open output: %w", err)
+			}
+			defer closeOut()
+			fmt.Fprintf(out, "SSID:  %s\n", valueOrDash(st.SSID))
+			fmt.Fprintf(out, "State: %s\n", valueOrDash(st.State))
+			fmt.Fprintf(out, "IP:    %s\n", valueOrDash(st.IP))
+			fmt.Fprintf(out, "RSSI:  %s\n", valueOrDash(st.RSSI))
 			return nil
 		},
 	}

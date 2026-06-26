@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -57,14 +58,14 @@ type reply struct {
 // an error carrying the firmware's message. It is used by commands whose result
 // fits in a single packet (ping, status, generate, gpio_set).
 func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessage, error) {
-	conn, scanner, err := c.dialAndSend(ctx, req)
+	conn, reader, err := c.dialAndSend(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 	defer watchContext(ctx, conn)()
 
-	r, err := readReply(scanner)
+	r, err := readReply(reader)
 	if err != nil {
 		return nil, readErr(ctx, err)
 	}
@@ -83,7 +84,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 // used by capture, stream, measure, and test. Samples are stored as []int rather
 // than []byte to avoid encoding/json's base64 special-casing of byte slices.
 func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error) {
-	conn, scanner, err := c.dialAndSend(ctx, req)
+	conn, reader, err := c.dialAndSend(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +93,7 @@ func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error)
 
 	var out []int
 	for {
-		r, err := readReply(scanner)
+		r, err := readReply(reader)
 		if err != nil {
 			return nil, readErr(ctx, err)
 		}
@@ -117,12 +118,12 @@ func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error)
 }
 
 // dialAndSend opens the TCP connection, applies the context deadline, writes req
-// as one newline-terminated JSON line, and returns the connection plus a scanner
-// positioned to read response lines. The caller owns closing the connection.
-func (c *Client) dialAndSend(ctx context.Context, req map[string]any) (net.Conn, *bufio.Scanner, error) {
+// as one newline-terminated JSON line, and returns the connection plus a buffered
+// reader positioned to read response lines. The caller owns closing the connection.
+func (c *Client) dialAndSend(ctx context.Context, req map[string]any) (net.Conn, *bufio.Reader, error) {
 	addr := strings.TrimSpace(c.Addr)
 	if addr == "" {
-		return nil, nil, fmt.Errorf("bench pod address is empty; run `benchpod set-bench-pod <addr>` first")
+		return nil, nil, fmt.Errorf("bench pod address is empty; run `benchpod set-connection <addr>` first")
 	}
 
 	budget := c.DialTimeout
@@ -148,7 +149,7 @@ func (c *Client) dialAndSend(ctx context.Context, req map[string]any) (net.Conn,
 		return nil, nil, fmt.Errorf("send request: %w", err)
 	}
 
-	return conn, bufio.NewScanner(conn), nil
+	return conn, bufio.NewReader(conn), nil
 }
 
 // dialWithRetry repeatedly attempts to connect to addr, giving each attempt at
@@ -216,16 +217,23 @@ func readErr(ctx context.Context, err error) error {
 	return err
 }
 
-// readReply scans the next line and decodes it into a reply.
-func readReply(scanner *bufio.Scanner) (*reply, error) {
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			return nil, fmt.Errorf("read response: %w", err)
+// readReply reads the next newline-terminated line and decodes it into a reply.
+// It uses bufio.Reader.ReadBytes rather than bufio.Scanner: a scanner's default
+// token cap is 64 KB and would fail with bufio.ErrTooLong on a larger reply line
+// (chunked capture/measure packets can exceed that), while ReadBytes grows the
+// buffer to whatever the line needs.
+func readReply(reader *bufio.Reader) (*reply, error) {
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		// EOF (with or without a partial, newline-less line buffered) means the pod
+		// closed before sending a complete response line.
+		if errors.Is(err, io.EOF) {
+			return nil, errors.New("bench pod closed connection without a complete response")
 		}
-		return nil, errors.New("bench pod closed connection without a complete response")
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 	var r reply
-	if err := json.Unmarshal(scanner.Bytes(), &r); err != nil {
+	if err := json.Unmarshal(line, &r); err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	return &r, nil

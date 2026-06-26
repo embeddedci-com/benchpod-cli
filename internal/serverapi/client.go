@@ -1,8 +1,12 @@
-// Package serverapi is a thin HTTP client for embeddedci-server's guest auth endpoints.
-// benchpod uses CreateGuest at startup (no session_id yet) or when both tokens have expired,
-// and RefreshGuest when only the access token has expired but the refresh token is still
-// valid. Both helpers return a normalised GuestResponse with absolute expiry times so the
-// caller can save the result with authstore.Tokens directly.
+// Package serverapi is a thin HTTP client for embeddedci-server's auth and device endpoints.
+//
+// The CLI logs a real user in with the RFC-8628 device-authorization flow:
+// BeginDeviceLogin starts it (the user approves a code in the browser) and
+// PollDeviceLogin waits for the tokens. RefreshTokens rotates the access token
+// when it has expired but the refresh token is still valid. RegisterDevice
+// records an attached bench pod against the logged-in user. All token-returning
+// helpers yield a normalised TokenResponse the caller can save with
+// authstore.Tokens directly.
 package serverapi
 
 import (
@@ -13,13 +17,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
 
-// GuestResponse is the parsed body returned by POST /api/auth/guest and /api/auth/guest/refresh.
-type GuestResponse struct {
+// TokenResponse is the parsed body returned by the token-issuing endpoints
+// (POST /api/auth/device/token and /api/auth/guest/refresh).
+type TokenResponse struct {
 	AccessToken      string `json:"access_token"`
 	AccessExpiresIn  int    `json:"access_expires_in"`
 	RefreshToken    string `json:"refresh_token"`
@@ -53,7 +57,7 @@ type DeviceCodeResponse struct {
 type PollOutcome int
 
 const (
-	// PollSuccess means tokens were returned (GuestResponse populated).
+	// PollSuccess means tokens were returned (TokenResponse populated).
 	PollSuccess PollOutcome = iota
 	// PollPending means the user has not yet approved the code (server returned authorization_pending).
 	PollPending
@@ -76,21 +80,10 @@ func New(baseURL string) *Client {
 	}
 }
 
-// CreateGuest calls POST /api/auth/guest. If sessionID is empty, the server allocates a new
-// session_id and user; otherwise it returns tokens for the existing guest with that session_id.
-// Non-200 responses return an error containing the status code and (when JSON parses) the
-// server's `error` field.
-func (c *Client) CreateGuest(ctx context.Context, sessionID string) (*GuestResponse, error) {
-	body := struct {
-		SessionID string `json:"session_id,omitempty"`
-	}{SessionID: strings.TrimSpace(sessionID)}
-	return c.postGuest(ctx, "/api/auth/guest", body)
-}
-
-// RefreshGuest calls POST /api/auth/guest/refresh to rotate a guest's tokens. The server
+// RefreshTokens calls POST /api/auth/guest/refresh to rotate the session's tokens. The server
 // rejects access tokens here (it requires TokenType=benchpod_refresh); see authstore for the
 // expiry check that should fence off calls with a stale refresh token before they hit the wire.
-func (c *Client) RefreshGuest(ctx context.Context, refreshToken string) (*GuestResponse, error) {
+func (c *Client) RefreshTokens(ctx context.Context, refreshToken string) (*TokenResponse, error) {
 	rt := strings.TrimSpace(refreshToken)
 	if rt == "" {
 		return nil, errors.New("refresh token is empty")
@@ -98,11 +91,11 @@ func (c *Client) RefreshGuest(ctx context.Context, refreshToken string) (*GuestR
 	body := struct {
 		RefreshToken string `json:"refresh_token"`
 	}{RefreshToken: rt}
-	return c.postGuest(ctx, "/api/auth/guest/refresh", body)
+	return c.postTokens(ctx, "/api/auth/guest/refresh", body)
 }
 
-// postGuest is the shared POST + JSON + error-shaping helper for both endpoints.
-func (c *Client) postGuest(ctx context.Context, path string, body any) (*GuestResponse, error) {
+// postTokens is the shared POST + JSON + error-shaping helper for the token endpoints.
+func (c *Client) postTokens(ctx context.Context, path string, body any) (*TokenResponse, error) {
 	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, errors.New("serverapi: BaseURL is empty")
 	}
@@ -145,7 +138,7 @@ func (c *Client) postGuest(ctx context.Context, path string, body any) (*GuestRe
 		}
 		return nil, fmt.Errorf("%s %s: %d %s", req.Method, path, resp.StatusCode, msg)
 	}
-	var out GuestResponse
+	var out TokenResponse
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
@@ -155,39 +148,8 @@ func (c *Client) postGuest(ctx context.Context, path string, body any) (*GuestRe
 	return &out, nil
 }
 
-// WSURL converts BaseURL to its ws(s):// equivalent for the benchpod WebSocket endpoint and
-// appends `device_id` plus the access token as `?token=` (handleTerminalWSAuth lifts the
-// `?token=` query parameter into the Bearer header).
-//
-// deviceID must be a UUID returned by POST /api/benchpod/devices.
-func (c *Client) WSURL(accessToken, deviceID string) (string, error) {
-	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
-		return "", errors.New("serverapi: BaseURL is empty")
-	}
-	if strings.TrimSpace(deviceID) == "" {
-		return "", errors.New("serverapi: device_id is required")
-	}
-	scheme := "wss"
-	base := c.BaseURL
-	switch {
-	case strings.HasPrefix(base, "https://"):
-		base = strings.TrimPrefix(base, "https://")
-	case strings.HasPrefix(base, "http://"):
-		base = strings.TrimPrefix(base, "http://")
-		scheme = "ws"
-	}
-	base = strings.TrimRight(base, "/")
-	q := url.Values{}
-	q.Set("device_id", deviceID)
-	if strings.TrimSpace(accessToken) != "" {
-		q.Set("token", accessToken)
-	}
-	return scheme + "://" + base + "/api/benchpod/ws?" + q.Encode(), nil
-}
-
-// RegisterDevice calls POST /api/benchpod/devices with the given benchpod JWT (guest or real
-// user). For guest users the device is owned by the guest with no org; for real users it
-// is scoped to the user's default organization. When publicKey is non-empty it is the
+// RegisterDevice calls POST /api/benchpod/devices with the logged-in user's benchpod JWT.
+// The device is scoped to the user's default organization. When publicKey is non-empty it is the
 // device's Ed25519 public key (base64url, 43 chars) and becomes the device's stable
 // identity (the server dedups on it); pass "" for the keyless registration flow.
 // Returns the upserted device record.
@@ -294,10 +256,10 @@ func (c *Client) BeginDeviceLogin(ctx context.Context) (*DeviceCodeResponse, err
 }
 
 // PollDeviceLogin calls POST /api/auth/device/token with the given device code. The
-// returned outcome is one of PollSuccess (with non-nil GuestResponse), PollPending
+// returned outcome is one of PollSuccess (with non-nil TokenResponse), PollPending
 // (still waiting on the user to approve), or PollExpired (deadline reached / already
 // consumed). Network and parsing errors are returned as err.
-func (c *Client) PollDeviceLogin(ctx context.Context, deviceCode string) (*GuestResponse, PollOutcome, error) {
+func (c *Client) PollDeviceLogin(ctx context.Context, deviceCode string) (*TokenResponse, PollOutcome, error) {
 	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, PollExpired, errors.New("serverapi: BaseURL is empty")
 	}
@@ -332,7 +294,7 @@ func (c *Client) PollDeviceLogin(ctx context.Context, deviceCode string) (*Guest
 	}
 	switch resp.StatusCode {
 	case http.StatusOK:
-		var out GuestResponse
+		var out TokenResponse
 		if err := json.Unmarshal(data, &out); err != nil {
 			return nil, PollExpired, fmt.Errorf("parse response: %w", err)
 		}
@@ -349,10 +311,4 @@ func (c *Client) PollDeviceLogin(ctx context.Context, deviceCode string) (*Guest
 	default:
 		return nil, PollExpired, fmt.Errorf("POST /api/auth/device/token: %d %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
-}
-
-// ShareURL returns the URL printed to the user, e.g. "https://www.embeddedci.com/s/AbCd1234".
-// The browser landing page (/s/:sessionId) POSTs the session_id back to obtain a guest JWT.
-func (c *Client) ShareURL(sessionID string) string {
-	return c.BaseURL + "/s/" + sessionID
 }

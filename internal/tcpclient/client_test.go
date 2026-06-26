@@ -192,6 +192,37 @@ func TestSamplesMidStreamError(t *testing.T) {
 	}
 }
 
+// A single reply line larger than bufio.Scanner's default 64 KB token cap must
+// still be read in full (the old scanner-based reader failed with
+// bufio.ErrTooLong here).
+func TestSamplesLargeReplyLineExceeds64K(t *testing.T) {
+	// 70 000 samples → a JSON array well over 64 KB on one line.
+	const n = 70000
+	b := make([]byte, 0, n*2+32)
+	b = append(b, []byte(`{"status":"ok","more":false,"data":[`)...)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, '1')
+	}
+	b = append(b, []byte(`]}`)...)
+	if len(b) <= bufio.MaxScanTokenSize {
+		t.Fatalf("test reply is %d bytes, not over the 64 KB scanner cap", len(b))
+	}
+
+	addr, _ := mockServer(t, []string{string(b)})
+	c := &Client{Addr: addr}
+
+	got, err := c.Samples(testContext(t), map[string]any{"cmd": "capture", "samples": n})
+	if err != nil {
+		t.Fatalf("Samples: %v", err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d samples, want %d", len(got), n)
+	}
+}
+
 func TestEmptyAddr(t *testing.T) {
 	c := &Client{Addr: ""}
 	if _, err := c.Command(testContext(t), map[string]any{"cmd": "ping"}); err == nil {
