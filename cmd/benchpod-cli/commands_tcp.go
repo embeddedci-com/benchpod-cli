@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -319,35 +320,49 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// ── set-gpio ─────────────────────────────────────────────────────────────────
+// ── la (logic-analyzer pins: pull-ups + step pulses) ─────────────────────────
 
-func newSetGPIOCmd(g *globalFlags) *cobra.Command {
+func newLACmd(g *globalFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "la",
+		Short: "Logic-analyzer pin control (pull-ups and step pulses)",
+	}
+	cmd.AddCommand(newLAPullupCmd(g), newLAStatusCmd(g), newLAStepCmd(g))
+	return cmd
+}
+
+func newLAPullupCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:   "set-gpio PIN STATE",
-		Short: "Drive a digital GPIO output (PIN: 6 or gpio6; STATE: 0|1|z, z|hiz|highz = high-impedance)",
+		Use:   "pullup PIN STATE",
+		Short: "Switch an LA pin's pull-up (PIN: 1-8 or la1; STATE: on|off)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			pin, err := parseGPIOPin(args[0])
+			pin, err := parseLAPin(args[0])
 			if err != nil {
 				return err
 			}
-			state, err := parseGPIOState(args[1])
-			if err != nil {
-				return err
+			var state string
+			switch strings.ToLower(strings.TrimSpace(args[1])) {
+			case "on", "1":
+				state = "on"
+			case "off", "0":
+				state = "off"
+			default:
+				return fmt.Errorf("invalid state %q (use on or off)", args[1])
 			}
-			ctx, cancel, client, err := g.wifiClient("set-gpio", 30*time.Second)
+			ctx, cancel, client, err := g.wifiClient("la pullup", 30*time.Second)
 			if err != nil {
 				return err
 			}
 			defer cancel()
 
-			data, err := client.Command(ctx, map[string]any{"cmd": "gpio_set", "gpio": pin, "state": state})
+			data, err := client.Command(ctx, map[string]any{"cmd": "la", "la": pin, "pullup": state})
 			if err != nil {
-				return fmt.Errorf("set-gpio: %w", err)
+				return fmt.Errorf("la pullup: %w", err)
 			}
 			out, closeOut, err := resolveOutput(g.outputFilename)
 			if err != nil {
-				return fmt.Errorf("set-gpio: open output: %w", err)
+				return fmt.Errorf("la pullup: open output: %w", err)
 			}
 			defer closeOut()
 			printJSON(out, data)
@@ -356,20 +371,53 @@ func newSetGPIOCmd(g *globalFlags) *cobra.Command {
 	}
 }
 
-// ── step-gpio ────────────────────────────────────────────────────────────────
+func newLAStatusCmd(g *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status [PIN]",
+		Short: "Report LA pull-up state (one PIN, or the bitmask of all if omitted)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			req := map[string]any{"cmd": "la"}
+			if len(args) == 1 {
+				pin, err := parseLAPin(args[0])
+				if err != nil {
+					return err
+				}
+				req["la"] = pin
+			}
+			ctx, cancel, client, err := g.wifiClient("la status", 30*time.Second)
+			if err != nil {
+				return err
+			}
+			defer cancel()
 
-func newStepGPIOCmd(g *globalFlags) *cobra.Command {
-	var gpioArg, dirGPIOArg string
+			data, err := client.Command(ctx, req)
+			if err != nil {
+				return fmt.Errorf("la status: %w", err)
+			}
+			out, closeOut, err := resolveOutput(g.outputFilename)
+			if err != nil {
+				return fmt.Errorf("la status: open output: %w", err)
+			}
+			defer closeOut()
+			printJSON(out, data)
+			return nil
+		},
+	}
+}
+
+func newLAStepCmd(g *globalFlags) *cobra.Command {
+	var laArg, dirLAArg string
 	var steps, delayUS, direction int
 	cmd := &cobra.Command{
-		Use:   "step-gpio",
-		Short: "Pulse a GPIO N times (step/dir stepper drivers)",
+		Use:   "step",
+		Short: "Pulse an LA pin N times (step/dir stepper drivers)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if gpioArg == "" {
-				return fmt.Errorf("--gpio is required")
+			if laArg == "" {
+				return fmt.Errorf("--la is required")
 			}
-			pin, err := parseGPIOPin(gpioArg)
+			pin, err := parseLAPin(laArg)
 			if err != nil {
 				return err
 			}
@@ -381,34 +429,34 @@ func newStepGPIOCmd(g *globalFlags) *cobra.Command {
 			}
 
 			req := map[string]any{
-				"cmd":      "gpio_step",
-				"gpio":     pin,
+				"cmd":      "la",
+				"la":       pin,
 				"steps":    steps,
 				"delay_us": delayUS,
 			}
-			if dirGPIOArg != "" {
-				dirPin, err := parseGPIOPin(dirGPIOArg)
+			if dirLAArg != "" {
+				dirPin, err := parseLAPin(dirLAArg)
 				if err != nil {
-					return fmt.Errorf("--dir-gpio: %w", err)
+					return fmt.Errorf("--dir-la: %w", err)
 				}
 				if direction != 0 && direction != 1 {
 					return fmt.Errorf("--direction must be 0 or 1")
 				}
-				req["dir_gpio"] = dirPin
+				req["dir_la"] = dirPin
 				req["direction"] = direction
 			} else if cmd.Flags().Changed("direction") {
-				return fmt.Errorf("--direction requires --dir-gpio")
+				return fmt.Errorf("--direction requires --dir-la")
 			}
 
-			// The firmware busy-waits for the whole run (steps × delay_us,
-			// high+low), so size the deadline to the work plus margin.
+			// The FPGA runs the train autonomously, but size the deadline to the
+			// work (steps × delay_us, high+low) plus margin so a slow link is fine.
 			totalUS := int64(steps) * int64(delayUS) * 2
 			def := time.Duration(totalUS)*time.Microsecond + 15*time.Second
 			if def < 30*time.Second {
 				def = 30 * time.Second
 			}
 
-			ctx, cancel, client, err := g.wifiClient("step-gpio", def)
+			ctx, cancel, client, err := g.wifiClient("la step", def)
 			if err != nil {
 				return err
 			}
@@ -416,21 +464,21 @@ func newStepGPIOCmd(g *globalFlags) *cobra.Command {
 
 			data, err := client.Command(ctx, req)
 			if err != nil {
-				return fmt.Errorf("step-gpio: %w", err)
+				return fmt.Errorf("la step: %w", err)
 			}
 			out, closeOut, err := resolveOutput(g.outputFilename)
 			if err != nil {
-				return fmt.Errorf("step-gpio: open output: %w", err)
+				return fmt.Errorf("la step: open output: %w", err)
 			}
 			defer closeOut()
 			printJSON(out, data)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&gpioArg, "gpio", "", "GPIO pin to pulse, e.g. 6 or gpio6 (required)")
+	cmd.Flags().StringVar(&laArg, "la", "", "LA pin to pulse, e.g. 6 or la6 (required)")
 	cmd.Flags().IntVar(&steps, "steps", 0, "number of pulses (required, positive)")
 	cmd.Flags().IntVar(&delayUS, "delay-us", 0, "high/low half-period in microseconds (required, positive)")
-	cmd.Flags().StringVar(&dirGPIOArg, "dir-gpio", "", "optional direction GPIO pin, driven before stepping")
-	cmd.Flags().IntVar(&direction, "direction", 0, "direction level 0|1 applied to --dir-gpio")
+	cmd.Flags().StringVar(&dirLAArg, "dir-la", "", "optional direction LA pin, driven before stepping")
+	cmd.Flags().IntVar(&direction, "direction", 0, "direction level 0|1 applied to --dir-la")
 	return cmd
 }

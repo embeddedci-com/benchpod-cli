@@ -56,7 +56,7 @@ type reply struct {
 // Command sends req as a single JSON line and reads exactly one response line.
 // On "status":"ok" it returns the raw data field; on "status":"error" it returns
 // an error carrying the firmware's message. It is used by commands whose result
-// fits in a single packet (ping, status, generate, gpio_set).
+// fits in a single packet (ping, status, generate, la).
 func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessage, error) {
 	conn, reader, err := c.dialAndSend(ctx, req)
 	if err != nil {

@@ -177,16 +177,6 @@ func validSamples(n int) bool { return n >= 1 && n <= 4096 }
 
 func validOutput(o string) bool { return o == "json" || o == "csv" || o == "ndjson" }
 
-func parseGPIOPin(s string) (int, error) {
-	s = strings.TrimSpace(strings.ToLower(s))
-	s = strings.TrimPrefix(s, "gpio")
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, fmt.Errorf("invalid GPIO pin %q (use e.g. 6 or gpio6)", s)
-	}
-	return n, nil
-}
-
 // parseLAPin parses a logic-analyzer pin reference for SWD wiring. These are no
 // longer GPIO numbers: they are the pod's LA pins (1-12) that map to the
 // ice40/FPGA. Accepts an optional "la" prefix, so "la1", "1", "la12", and "12"
@@ -199,23 +189,6 @@ func parseLAPin(s string) (int, error) {
 		return 0, fmt.Errorf("invalid LA pin %q (use 1-12, e.g. la1 or 1)", orig)
 	}
 	return n, nil
-}
-
-// parseGPIOState normalises a state argument to the string the firmware's
-// gpio_set "state" field accepts: "0", "1", or "z" (high-impedance). The
-// aliases "hiz"/"highz" map to "z"; the firmware's high-Z ack echoes
-// {"gpio":N,"state":"z"}.
-func parseGPIOState(s string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "0":
-		return "0", nil
-	case "1":
-		return "1", nil
-	case "z", "hiz", "highz":
-		return "z", nil
-	default:
-		return "", fmt.Errorf("invalid state %q (use 0, 1, or z|hiz|highz for high-impedance)", s)
-	}
 }
 
 // ── output formatting ───────────────────────────────────────────────────────
