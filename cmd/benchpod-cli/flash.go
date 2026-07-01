@@ -19,11 +19,11 @@ import (
 // default command deadline. Overridable with --timeout.
 const flashTimeout = 5 * time.Minute
 
-// swdHandshakeTimeout bounds just the swd-start handshake (arming the probe and
-// reading the firmware's "swd ready"). The firmware answers near-instantly, so a
+// dapHandshakeTimeout bounds just the dap-start handshake (arming the probe and
+// reading the firmware's "dap ready"). The firmware answers near-instantly, so a
 // short deadline here means a pod that never enters SWD mode fails fast — and we
 // never launch OpenOCD against a dead link — instead of hanging on flashTimeout.
-const swdHandshakeTimeout = 15 * time.Second
+const dapHandshakeTimeout = 15 * time.Second
 
 // targetPowerSettle gives a target a moment to boot after the pod enables its
 // power eFuse, so the very first SWD connect attempt has a live DAP to talk to
@@ -162,7 +162,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	// returns the pod to a safe state. The handshake gets its own short deadline
 	// (a child of the flash ctx) so that if the pod never reports ready we abort
 	// here, with the firmware's output, rather than handing a dead link to OpenOCD.
-	hsCtx, hsCancel := context.WithTimeout(ctx, swdHandshakeTimeout)
+	hsCtx, hsCancel := context.WithTimeout(ctx, dapHandshakeTimeout)
 	podConn, err := openDAP(hsCtx, g, swclk, swdio, nresetPtr, f.targetPower)
 	hsCancel()
 	if err != nil {
@@ -268,7 +268,7 @@ func settle(ctx context.Context, d time.Duration) {
 // clearResetEventsTCL empties the loaded target's reset-start/reset-init events.
 // Stock STM32 (and similar) cfgs use these to boost the core clock for faster
 // flashing — e.g. stm32f4x.cfg's reset-init reprograms the PLL and calls
-// `adapter speed N`. Over the bit-banged remote_bitbang link both are harmful:
+// `adapter speed N`. Over the pod's SWD link both are harmful:
 // `adapter speed` aborts the reset ("Translation from khz to adapter speed not
 // implemented"), and the PLL writes fire microseconds after reset-deassert while
 // the core is still coming up, which races/glitches the slow SWD link and the
