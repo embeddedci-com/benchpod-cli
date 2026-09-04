@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -26,19 +27,25 @@ import (
 type TokenResponse struct {
 	AccessToken      string `json:"access_token"`
 	AccessExpiresIn  int    `json:"access_expires_in"`
-	RefreshToken    string `json:"refresh_token"`
+	RefreshToken     string `json:"refresh_token"`
 	RefreshExpiresIn int    `json:"refresh_expires_in"`
 	SessionID        string `json:"session_id"`
 	UserID           string `json:"user_id"`
 }
 
-// DeviceResponse is the parsed body returned by POST /api/benchpod/devices.
+// DeviceResponse is the parsed body returned by POST /api/benchpod/devices (and by the
+// deregister endpoint, which returns the device it just disabled).
 type DeviceResponse struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
+	Address        string            `json:"address,omitempty"`
 	OwnerUserID    string            `json:"owner_user_id"`
 	OrganizationID string            `json:"organization_id,omitempty"`
+	PublicKey      string            `json:"public_key,omitempty"`
 	Parameters     map[string]string `json:"parameters"`
+	// DisabledAt is set on a deregistered device. Deregistered devices are excluded from
+	// ListDevices, so it is only ever populated on a DeregisterDevice response.
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
 }
 
 // DeviceCodeResponse is the parsed body returned by POST /api/auth/device/code.
@@ -311,4 +318,96 @@ func (c *Client) PollDeviceLogin(ctx context.Context, deviceCode string) (*Token
 	default:
 		return nil, PollExpired, fmt.Errorf("POST /api/auth/device/token: %d %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
+}
+
+// ListDevices calls GET /api/benchpod/devices and returns the devices visible to the logged-in
+// user (their organization's, or their own for guests). Deregistered devices are not included.
+func (c *Client) ListDevices(ctx context.Context, accessToken string) ([]DeviceResponse, error) {
+	var out struct {
+		Devices []DeviceResponse `json:"devices"`
+	}
+	if err := c.doAuthedJSON(ctx, http.MethodGet, "/api/benchpod/devices", accessToken, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Devices, nil
+}
+
+// DeregisterDevice calls POST /api/benchpod/devices/{id}/deregister, which detaches the device
+// from the account without deleting it: the server keeps the row (and everything hanging off it)
+// but flags it disabled, so the device disappears from the UI and its public key is free for
+// another account. Registering the same pod again for the same organization revives the row with
+// its data. The call is idempotent.
+func (c *Client) DeregisterDevice(ctx context.Context, accessToken, deviceID string) (*DeviceResponse, error) {
+	id := strings.TrimSpace(deviceID)
+	if id == "" {
+		return nil, errors.New("serverapi: device id is empty")
+	}
+	var out DeviceResponse
+	if err := c.doAuthedJSON(ctx, http.MethodPost, "/api/benchpod/devices/"+url.PathEscape(id)+"/deregister",
+		accessToken, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// doAuthedJSON performs a bearer-authenticated JSON request and decodes a 2xx body into out
+// (skipped when out is nil). Non-2xx responses are shaped into an error carrying the server's
+// `error` field when it sends one (the writeJSONError shape).
+func (c *Client) doAuthedJSON(ctx context.Context, method, path, accessToken string, body, out any) error {
+	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
+		return errors.New("serverapi: BaseURL is empty")
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return errors.New("serverapi: access token is empty")
+	}
+	var reader io.Reader
+	if body != nil {
+		buf, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
+		reader = bytes.NewReader(buf)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	httpc := c.HTTP
+	if httpc == nil {
+		httpc = http.DefaultClient
+	}
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		var errBody struct {
+			Error  string `json:"error"`
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal(data, &errBody)
+		msg := strings.TrimSpace(errBody.Error)
+		if msg == "" {
+			msg = strings.TrimSpace(string(data))
+		}
+		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, msg)
+	}
+	if out == nil || len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+	return nil
 }

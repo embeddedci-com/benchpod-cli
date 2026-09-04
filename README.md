@@ -131,7 +131,24 @@ benchpod flash-self ./fw.bin         # …flashing a specific local build instea
 # Cloud auth (optional):
 benchpod login [--server-url https://www.embeddedci.com]
 benchpod register ...
+benchpod deregister ...
 ```
+
+`deregister` is the inverse of `register`: it detaches the pod from the
+logged-in account and clears the pod's cloud configuration so it stops
+connecting. The server **keeps** everything recorded for that pod (captures,
+waveforms, wiring) and only marks the device disabled — registering the same pod
+again for the same account brings the device and its data back. Registering it
+for a *different* account gives that account a fresh device and leaves the
+previous owner's history untouched, which is how a pod changes hands:
+
+```bash
+benchpod deregister --connection <pod-ip>       # identifies the pod by its own key
+benchpod deregister --device-name <name>        # …for a pod you can no longer reach
+```
+
+A pod that is still registered elsewhere cannot be claimed: `register` fails
+until the current owner deregisters it.
 
 Run `benchpod <command> -h` for the flags of any subcommand.
 
