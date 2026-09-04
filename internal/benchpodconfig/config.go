@@ -17,7 +17,7 @@ const DefaultPort = "8080"
 // Config holds CLI-level settings that persist between invocations.
 //
 // Connection is the default connection target (a TCP address, a serial device
-// path, or the keyword "serial"); the transport is inferred from its shape by
+// path, or the keyword "usb"); the transport is inferred from its shape by
 // the CLI. BenchPodAddr is the legacy field that only ever held a TCP address;
 // it is kept for backward-compatible reads and migrated into Connection by Load.
 // LastSerial caches the serial device path most recently auto-detected as a bench

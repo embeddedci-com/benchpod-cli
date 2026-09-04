@@ -1,8 +1,8 @@
 # benchpod-cli
 
 `benchpod` is the EmbeddedCI **bench pod** command-line tool. It talks to a
-bench pod either over its TCP/JSON API (port 8080) or over its USB CDC-ACM
-serial console, and drives the pod's hardware: GPIO, signal generation,
+bench pod either over its TCP/JSON API (port 8080) or over its USB console
+(CDC-ACM), and drives the pod's hardware: GPIO, signal generation,
 measurement, scope capture/streaming, Wi-Fi configuration, BOOTSEL, and
 firmware flashing over SWD.
 
@@ -78,21 +78,21 @@ reach the pod; the transport is inferred from its value:
 | `--connection` value             | Transport                                              |
 |----------------------------------|--------------------------------------------------------|
 | `192.168.1.5[:8080]`             | TCP/JSON API (an address ⇒ Wi-Fi).                     |
-| `/dev/tty...`, `COM3`            | USB serial console, explicit device path.              |
-| `serial`                         | USB serial console, auto-detected (USB VID `2E8A`).    |
+| `/dev/tty...`, `COM3`            | USB console, explicit device path.                     |
+| `usb`                            | USB console, auto-detected by probing the ports.       |
 | *(omitted)*                      | the default saved by `benchpod set-connection`.        |
 
 Every flag is also settable via a `BENCHPOD_*` environment variable
-(e.g. `BENCHPOD_CONNECTION=serial`), with precedence flag > env > default.
+(e.g. `BENCHPOD_CONNECTION=usb`), with precedence flag > env > default.
 
 The firmware itself is unauthenticated; `benchpod login` is independent of the
 device path and authenticates with `embeddedci-server` (device-login flow) for
 cloud features. Direct firmware commands do not send tokens.
 
-Only `flash` (SWD) is implemented over the serial console today; the other
-TCP/JSON commands reject a serial connection with a clear message. The
-`set-wifi` / `show-wifi` / `clear-wifi` and `bootsel` subcommands always use
-the serial console regardless of `--connection` (a device path still selects
+Only `flash` (SWD) is implemented over the USB console today; the other
+TCP/JSON commands reject a USB connection with a clear message. The
+`set-wifi` / `show-network` / `clear-wifi` and `bootsel` subcommands always use
+the USB console regardless of `--connection` (a device path still selects
 the port).
 
 ## CLI usage
@@ -100,7 +100,11 @@ the port).
 ```sh
 # Save a default connection so later commands can omit --connection:
 benchpod set-connection 192.168.1.5
-benchpod set-connection serial
+benchpod set-connection usb
+
+# Find every pod on this machine and this LAN, and check each one works:
+benchpod discover
+benchpod discover --save     # save it as the default when exactly one is found
 
 # Reachability / state:
 benchpod ping
@@ -115,15 +119,15 @@ benchpod capture ...
 benchpod stream ...
 benchpod test ...
 
-# Wi-Fi (always over the serial console):
+# Network (always over the USB console):
 benchpod set-wifi
-benchpod show-wifi
+benchpod show-network     # the pod's IP (wired lease included), SSID, state, RSSI
 benchpod clear-wifi
 
 # Firmware:
 benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP)
-benchpod bootsel          # reboot an RP2350 pod into its UF2 bootloader (serial console only)
-benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (serial console only)
+benchpod bootsel          # reboot an RP2350 pod into its UF2 bootloader (USB console only)
+benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (USB console only)
 benchpod flash-self                  # fetch latest firmware + flash the POD over USB DFU (STM32)
 benchpod flash-self --enter-dfu      # …rebooting a running pod into DFU first
 benchpod flash-self ./fw.bin         # …flashing a specific local build instead
@@ -159,7 +163,7 @@ intelligence and OpenOCD's exit code is the verdict. The pod runs a CMSIS-DAP
 processor locally and OpenOCD's `cmsis-dap` **TCP backend** ships whole DAP
 transfers (`DAP_Transfer`/`DAP_TransferBlock`), so a flash is one round-trip per
 DAP command instead of thousands of per-bit round-trips — fast even over the
-network. Works on **TCP** (`dap_start`) and **serial** (the console `dap-start`
+network. Works on **TCP** (`dap_start`) and **USB** (the console `dap-start`
 command). It needs a **recent OpenOCD with the `cmsis_dap_tcp` backend**
 (post-0.12.0; e.g. `brew install --HEAD open-ocd`); the CLI checks for the
 backend up front and fails with clear advice if it is missing.
@@ -211,7 +215,7 @@ flow the firmware `make flash-dfu` target uses).
 
 | Flag                | Default                          | Purpose                                                           |
 |---------------------|----------------------------------|-------------------------------------------------------------------|
-| `--connection`      | (saved `set-connection` target)  | Address, device path, or `serial` — see the table above.          |
+| `--connection`      | (saved `set-connection` target)  | Address, device path, or `usb` — see the table above.             |
 | `--config-file`     | (none)                           | Path to a config file.                                            |
 | `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.             |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |

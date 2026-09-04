@@ -156,7 +156,7 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 	fl.StringVar(&f.address, "address", stmDfuBaseAddr, "flash base address (STM32 main flash)")
 	fl.StringVar(&f.dfuUtil, "dfu-util", "", "path to the dfu-util binary; defaults to the one on PATH")
 	fl.BoolVar(&f.noLeave, "no-leave", false, "stay in DFU after flashing instead of starting the new firmware")
-	fl.BoolVar(&f.enterDfu, "enter-dfu", false, "first reboot a running pod into DFU over the serial console, then flash")
+	fl.BoolVar(&f.enterDfu, "enter-dfu", false, "first reboot a running pod into DFU over the USB console, then flash")
 	fl.DurationVar(&f.wait, "wait", 60*time.Second, "how long to wait for the pod to enter / re-enumerate in DFU mode")
 	fl.StringVar(&f.firmwareURL, "firmware-url", "", "override the firmware download URL (default: the latest public release)")
 	fl.StringVar(&f.firmwareVer, "firmware-version", "", "fetch a specific firmware release tag instead of the latest")
@@ -336,14 +336,14 @@ func dfuDevicePresent(ctx context.Context, dfuPath string) bool {
 func enterDfuViaConsole(g *globalFlags) error {
 	console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(10*time.Second))
 	if err != nil {
-		return fmt.Errorf("enter-dfu: open serial console: %w", err)
+		return fmt.Errorf("enter-dfu: open USB console: %w", err)
 	}
 	defer cancel()
 	defer console.Close()
 	if err := console.Dfu(ctx); err != nil {
 		return fmt.Errorf("enter-dfu: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "flash-self: device entering DFU; serial port disconnected (expected)")
+	fmt.Fprintln(os.Stderr, "flash-self: device entering DFU; USB console disconnected (expected)")
 	return nil
 }
 

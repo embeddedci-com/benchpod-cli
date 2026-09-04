@@ -133,8 +133,13 @@ func TestDetectPortNoMatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no VID 2E8A port present")
 	}
-	if !strings.Contains(err.Error(), benchPodVID) || !strings.Contains(err.Error(), "--connection") {
-		t.Fatalf("error should mention VID and override flag: %v", err)
+	for _, vid := range benchPodVIDs {
+		if !strings.Contains(err.Error(), vid) {
+			t.Fatalf("error should mention VID %s: %v", vid, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "--connection") {
+		t.Fatalf("error should mention the override flag: %v", err)
 	}
 }
 
@@ -707,5 +712,79 @@ func TestQuoteArgRejectsEmbeddedQuote(t *testing.T) {
 	}
 	if got != `"My Net"` {
 		t.Fatalf("quoted: %q", got)
+	}
+}
+
+func TestParseSerialPodSplitsBoardAndFirmware(t *testing.T) {
+	// Verbatim shape of the STM32 firmware's `status` output (console.c), with an
+	// async log line interleaved the way the console really does it.
+	raw := strings.Join([]string{
+		"  device : benchpod",
+		"  mac    : 02:1a:2b:3c:4d:5e",
+		"  ip     : 192.168.1.213",
+		"[wifi] connected",
+		"  board  : bench-pod  fw v1.4.2",
+		"  adc    : 16-bit x2, 30000 mV full-scale",
+	}, "\n")
+
+	p := parseSerialPod("/dev/cu.usbmodem1103", raw)
+	if p.Device != "/dev/cu.usbmodem1103" {
+		t.Fatalf("device: %q", p.Device)
+	}
+	if p.Board != "bench-pod" {
+		t.Fatalf("board: %q", p.Board)
+	}
+	if p.Firmware != "v1.4.2" {
+		t.Fatalf("firmware: %q", p.Firmware)
+	}
+	if p.IP != "192.168.1.213" {
+		t.Fatalf("ip: %q", p.IP)
+	}
+	if p.MAC != "02:1a:2b:3c:4d:5e" {
+		t.Fatalf("mac: %q", p.MAC)
+	}
+	if !p.Addressed() {
+		t.Fatal("a pod with a lease should report Addressed")
+	}
+}
+
+func TestParseSerialPodWithoutLease(t *testing.T) {
+	p := parseSerialPod("/dev/ttyACM0", "  device : benchpod\n  ip     : 0.0.0.0\n  board  : bench-pod\n")
+	if p.Addressed() {
+		t.Fatal("0.0.0.0 is not a usable address")
+	}
+	if p.Board != "bench-pod" || p.Firmware != "" {
+		t.Fatalf("board=%q firmware=%q", p.Board, p.Firmware)
+	}
+}
+
+func TestIsBenchPodVIDCoversBothPodGenerations(t *testing.T) {
+	for _, vid := range []string{"2E8A", "2e8a", "0483", "0483"} {
+		if !isBenchPodVID(vid) {
+			t.Fatalf("VID %s should be recognised as a bench-pod console", vid)
+		}
+	}
+	if isBenchPodVID("1234") {
+		t.Fatal("an unrelated VID should not be recognised")
+	}
+}
+
+func TestCandidatePortsOrdersBothPodVIDsFirst(t *testing.T) {
+	withLister(t, func() ([]*enumerator.PortDetails, error) {
+		return []*enumerator.PortDetails{
+			{Name: "/dev/cu.usbserial-other", IsUSB: true, VID: "1234"},
+			{Name: "/dev/cu.usbmodem-stm", IsUSB: true, VID: "0483", PID: "5740"},
+		}, nil
+	})
+	withGlobber(t)
+
+	got, err := candidatePorts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The STM32 pod's VID must sort ahead of an unrelated USB serial device, so
+	// the real pod is probed first rather than after every other adapter.
+	if len(got) == 0 || got[0] != "/dev/cu.usbmodem-stm" {
+		t.Fatalf("candidate order = %v, want the 0483 port first", got)
 	}
 }

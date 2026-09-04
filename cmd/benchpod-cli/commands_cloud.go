@@ -465,9 +465,9 @@ func parseServerEndpoint(raw string) (host string, port int, tls bool, err error
 
 func newSetConnectionCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:     "set-connection <addr|device|serial>",
+		Use:     "set-connection <addr|device|usb>",
 		Aliases: []string{"set-bench-pod"},
-		Short:   `Store the default connection: a TCP address, a serial device path, or "serial"`,
+		Short:   `Store the default connection: a TCP address, a device path, or "usb"`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runSetConnection(g, args[0])

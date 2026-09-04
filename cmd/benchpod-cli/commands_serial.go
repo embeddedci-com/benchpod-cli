@@ -25,7 +25,7 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 	var passwordStdin bool
 	cmd := &cobra.Command{
 		Use:   "set-wifi",
-		Short: "Save WiFi credentials and join (over the USB serial console)",
+		Short: "Save WiFi credentials and join (over the pod's USB console)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if strings.TrimSpace(ssid) == "" {
@@ -73,7 +73,7 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 			if joined {
 				fmt.Fprintf(os.Stderr, "Joined %q, ip=%s\n", ssid, valueOrDash(ip))
 			} else {
-				fmt.Fprintln(os.Stderr, "Credentials saved; join not confirmed (run `benchpod show-wifi`).")
+				fmt.Fprintln(os.Stderr, "Credentials saved; join not confirmed (run `benchpod show-network`).")
 			}
 			return nil
 		},
@@ -84,13 +84,22 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// ── show-wifi ────────────────────────────────────────────────────────────────
+// ── show-network ─────────────────────────────────────────────────────────────
 
-func newShowWifiCmd(g *globalFlags) *cobra.Command {
+// newShowNetworkCmd reports the pod's network state. It is named for what it
+// reports rather than for one of the interfaces it can report on: the IP is
+// whichever address the pod is actually using, and the pod prefers its wired
+// Ethernet lease, so on a cabled pod this prints an address and no SSID at all.
+// (It was called show-wifi, which described only the minority case.)
+func newShowNetworkCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:   "show-wifi",
-		Short: "Show stored SSID, WiFi state, IP, and RSSI (over the USB serial console)",
-		Args:  cobra.NoArgs,
+		Use:   "show-network",
+		Short: "Show the pod's network details: IP, plus stored SSID/state/RSSI (over the pod's USB console)",
+		Long: "Report the pod's network state over the pod's USB console.\n\n" +
+			"The IP is whichever address the pod is actually using: it prefers the wired\n" +
+			"Ethernet lease over Wi-Fi, so a pod on a cable reports an address here with no\n" +
+			"SSID at all. The SSID/state/RSSI fields describe the optional Wi-Fi interface.",
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(15*time.Second))
 			if err != nil {
@@ -101,16 +110,18 @@ func newShowWifiCmd(g *globalFlags) *cobra.Command {
 
 			st, err := console.WifiShow(ctx)
 			if err != nil {
-				return fmt.Errorf("show-wifi: %w", err)
+				return fmt.Errorf("show-network: %w", err)
 			}
 			out, closeOut, err := resolveOutput(g.outputFilename)
 			if err != nil {
-				return fmt.Errorf("show-wifi: open output: %w", err)
+				return fmt.Errorf("show-network: open output: %w", err)
 			}
 			defer closeOut()
+			// IP first: it is the field that matters on any pod, and it is
+			// populated on a wired pod that has no SSID at all.
+			fmt.Fprintf(out, "IP:    %s\n", valueOrDash(st.IP))
 			fmt.Fprintf(out, "SSID:  %s\n", valueOrDash(st.SSID))
 			fmt.Fprintf(out, "State: %s\n", valueOrDash(st.State))
-			fmt.Fprintf(out, "IP:    %s\n", valueOrDash(st.IP))
 			fmt.Fprintf(out, "RSSI:  %s\n", valueOrDash(st.RSSI))
 			return nil
 		},
@@ -151,7 +162,7 @@ func newBootselCmd(g *globalFlags) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if !yes {
-				fmt.Fprint(os.Stderr, "This reboots the device into the UF2 bootloader; the serial port will disconnect. Type 'yes' to continue: ")
+				fmt.Fprint(os.Stderr, "This reboots the device into the UF2 bootloader; the USB console will disconnect. Type 'yes' to continue: ")
 				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.TrimSpace(line) != "yes" {
 					return errors.New("aborted")
@@ -167,7 +178,7 @@ func newBootselCmd(g *globalFlags) *cobra.Command {
 			if err := console.Bootsel(ctx); err != nil {
 				return fmt.Errorf("bootsel: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "Device entering BOOTSEL (UF2 drive). Serial port disconnected — this is expected.")
+			fmt.Fprintln(os.Stderr, "Device entering BOOTSEL (UF2 drive). USB console disconnected — this is expected.")
 			fmt.Fprintln(os.Stderr, "Drop firmware.uf2 onto the RP2350 drive (or use picotool) to flash.")
 			return nil
 		},
@@ -190,7 +201,7 @@ func newDfuCmd(g *globalFlags) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if !yes {
-				fmt.Fprint(os.Stderr, "This reboots the device into the USB DFU bootloader; the serial port will disconnect. Type 'yes' to continue: ")
+				fmt.Fprint(os.Stderr, "This reboots the device into the USB DFU bootloader; the USB console will disconnect. Type 'yes' to continue: ")
 				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.TrimSpace(line) != "yes" {
 					return errors.New("aborted")
@@ -206,7 +217,7 @@ func newDfuCmd(g *globalFlags) *cobra.Command {
 			if err := console.Dfu(ctx); err != nil {
 				return fmt.Errorf("dfu: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "Device entering DFU (USB bootloader). Serial port disconnected — this is expected.")
+			fmt.Fprintln(os.Stderr, "Device entering DFU (USB bootloader). USB console disconnected — this is expected.")
 			fmt.Fprintln(os.Stderr, "Write firmware with `benchpod flash-self <firmware.bin>` (or dfu-util) to flash.")
 			return nil
 		},

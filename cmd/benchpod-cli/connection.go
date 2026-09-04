@@ -48,10 +48,14 @@ func isSerialDevice(raw string) bool {
 func classifyConnection(raw string) (ConnSpec, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return ConnSpec{}, fmt.Errorf("no connection set; pass --connection <addr|device|serial> or run `benchpod set-connection <addr|device|serial>`")
+		return ConnSpec{}, fmt.Errorf("no connection set; pass --connection <addr|device|usb> or run `benchpod set-connection <addr|device|usb>`")
 	}
 	switch strings.ToLower(raw) {
-	case "serial", "usb":
+	// "usb" is the name this keyword goes by everywhere the CLI speaks to a
+	// user — it names what the person plugged in. "serial" is the older
+	// spelling, still accepted so saved configs and BENCHPOD_CONNECTION values
+	// written before the rename keep working; it is not advertised anywhere.
+	case "usb", "serial":
 		return ConnSpec{Kind: connSerial}, nil
 	case "wifi", "tcp":
 		return ConnSpec{}, fmt.Errorf("--connection %s needs an address, e.g. --connection 192.168.1.5", strings.ToLower(raw))
@@ -69,20 +73,25 @@ func (c ConnSpec) IsSerial() bool { return c.Kind == connSerial }
 // confirmation messages.
 func describeConn(c ConnSpec) string {
 	if c.IsWifi() {
-		return "wifi/TCP " + c.Addr
+		return "network/TCP " + c.Addr
 	}
 	if c.Device != "" {
-		return "serial " + c.Device
+		return "usb " + c.Device
 	}
-	return "serial (auto-detect)"
+	return "usb (auto-detect)"
 }
 
 // RequireWifi guards the TCP/JSON commands that the firmware's serial console
-// does not implement: it errors (telling the user to point --connection at the
-// bench pod's address) unless the wifi transport is selected.
+// does not implement: it errors unless the network transport is selected.
+//
+// The message names the way out rather than only the restriction, because a
+// caller hitting this is usually part-way through first-time setup and does not
+// yet know the pod's address — `discover` is what finds it.
 func (c ConnSpec) RequireWifi(cmd string) error {
 	if c.IsWifi() {
 		return nil
 	}
-	return fmt.Errorf("%s is not available over a serial connection; use --connection <bench-pod-address>", cmd)
+	return fmt.Errorf("%s needs the pod on the network; it is not available over a USB connection. "+
+		"Run `benchpod discover` to find the pod's address, then pass --connection <address>. "+
+		"If it has no address yet, plug in Ethernet or run `benchpod set-wifi --ssid <ssid>`", cmd)
 }

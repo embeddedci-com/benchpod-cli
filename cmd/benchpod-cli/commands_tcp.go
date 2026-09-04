@@ -55,7 +55,7 @@ func newPingCmd(g *globalFlags) *cobra.Command {
 func newStatusCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Firmware / WiFi info (wifi: JSON over TCP; serial: `status` console text)",
+		Short: "Firmware / network info (network: JSON over TCP; USB: `status` console text)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			spec, err := g.resolveConnection()

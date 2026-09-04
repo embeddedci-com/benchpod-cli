@@ -58,14 +58,18 @@ func TestRequireWifi(t *testing.T) {
 	if err := wifi.RequireWifi("ping"); err != nil {
 		t.Errorf("RequireWifi on wifi transport: unexpected error %v", err)
 	}
-	for _, conn := range []string{"serial", "/dev/tty.usbmodem1101"} {
+	// "serial" is still accepted as an input spelling, so both forms must land
+	// on the same USB transport and the same guidance.
+	for _, conn := range []string{"usb", "serial", "/dev/tty.usbmodem1101"} {
 		spec, _ := classifyConnection(conn)
 		err := spec.RequireWifi("ping")
 		if err == nil {
 			t.Fatalf("RequireWifi(%q) = nil, want error", conn)
 		}
-		if !strings.Contains(err.Error(), "ping") || !strings.Contains(err.Error(), "serial") {
-			t.Errorf("RequireWifi(%q) error = %q, want it to mention the command and serial", conn, err)
+		for _, want := range []string{"ping", "USB", "benchpod discover"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("RequireWifi(%q) error = %q, want it to mention %q", conn, err, want)
+			}
 		}
 	}
 }
@@ -80,5 +84,27 @@ func TestIsSerialDevice(t *testing.T) {
 		if isSerialDevice(notDev) {
 			t.Errorf("isSerialDevice(%q) = true, want false", notDev)
 		}
+	}
+}
+
+func TestDescribeConnSpeaksUSBNotSerial(t *testing.T) {
+	// The keyword the user types and the wording the CLI echoes back must agree:
+	// "serial" is accepted as a legacy input spelling but is never presented.
+	for _, conn := range []string{"usb", "serial"} {
+		spec, err := classifyConnection(conn)
+		if err != nil {
+			t.Fatalf("classifyConnection(%q): %v", conn, err)
+		}
+		if got := describeConn(spec); got != "usb (auto-detect)" {
+			t.Errorf("describeConn(%q) = %q, want %q", conn, got, "usb (auto-detect)")
+		}
+	}
+	spec, _ := classifyConnection("/dev/ttyACM0")
+	if got := describeConn(spec); got != "usb /dev/ttyACM0" {
+		t.Errorf("describeConn(device) = %q", got)
+	}
+	spec, _ = classifyConnection("192.168.1.5")
+	if got := describeConn(spec); got != "network/TCP 192.168.1.5:8080" {
+		t.Errorf("describeConn(addr) = %q", got)
 	}
 }

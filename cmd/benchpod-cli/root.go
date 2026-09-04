@@ -45,10 +45,10 @@ func newRootCmd() *cobra.Command {
 		Long: "EmbeddedCI bench pod CLI.\n\n" +
 			"--connection says where and how to reach the bench pod, and the transport\n" +
 			"is inferred from its value: an address (192.168.1.5[:8080]) uses the TCP/JSON\n" +
-			"API; a device path (/dev/tty..., COM3) or the keyword `serial` uses the USB\n" +
-			"serial console. Omit it to use the default saved by `benchpod set-connection`.\n" +
-			"Today only `flash` works over serial; the wifi-*, bootsel and dfu commands\n" +
-			"always use the serial console regardless. `flash-self` reflashes the pod's\n" +
+			"API; a device path (/dev/tty..., COM3) or the keyword `usb` uses the pod's\n" +
+			"USB console. Omit it to use the default saved by `benchpod set-connection`.\n" +
+			"Today only `flash` works over USB; the wifi-*, bootsel and dfu commands\n" +
+			"always use the USB console regardless. `flash-self` reflashes the pod's\n" +
 			"own firmware over USB DFU (STM32) via dfu-util, independent of --connection.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -64,7 +64,7 @@ func newRootCmd() *cobra.Command {
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&g.connection, "connection", "",
-		`how to reach the pod: an address (192.168.1.5[:8080]), a device path (/dev/tty..., COM3), or "serial" to auto-detect USB (default: the saved set-connection target)`)
+		`how to reach the pod: an address (192.168.1.5[:8080]), a device path (/dev/tty..., COM3), or "usb" to auto-detect the pod over USB (default: the saved set-connection target)`)
 	pf.StringVar(&g.configFile, "config-file", "", "path to config file")
 	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")
@@ -93,7 +93,7 @@ func newRootCmd() *cobra.Command {
 		newFlashCmd(g),
 		newFlashSelfCmd(g),
 		newSetWifiCmd(g),
-		newShowWifiCmd(g),
+		newShowNetworkCmd(g),
 		newClearWifiCmd(g),
 		newBootselCmd(g),
 		newDfuCmd(g),

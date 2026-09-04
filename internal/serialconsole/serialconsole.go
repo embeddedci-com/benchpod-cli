@@ -27,9 +27,28 @@ import (
 	"go.bug.st/serial/enumerator"
 )
 
-// benchPodVID is the USB vendor ID (Raspberry Pi) the RP2350 CDC-ACM console
-// enumerates under. Matched case-insensitively against enumerator VID strings.
-const benchPodVID = "2E8A"
+// benchPodVIDs are the USB vendor IDs a bench-pod CDC-ACM console enumerates
+// under, matched case-insensitively against enumerator VID strings:
+//
+//	2E8A — Raspberry Pi, the RP2350 pod's native USB port.
+//	0483 — STMicroelectronics, the STM32H563 pod (ST's stock CDC VID/PID
+//	       0483:5740, so the host binds its in-box CDC driver).
+//
+// Neither ID is exclusive to a bench pod — 2E8A is shared with the CMSIS-DAP
+// probe's CDC and 0483:5740 with every ST Virtual COM Port on the bench — so
+// these only ORDER the ports to probe (see portPrio). Identification is always
+// by probing for benchpodMarker, never by VID alone.
+var benchPodVIDs = []string{"2E8A", "0483"}
+
+// isBenchPodVID reports whether vid is one of benchPodVIDs.
+func isBenchPodVID(vid string) bool {
+	for _, want := range benchPodVIDs {
+		if strings.EqualFold(vid, want) {
+			return true
+		}
+	}
+	return false
+}
 
 // baudRate is nominal: CDC-ACM ignores the on-wire rate, but terminal tools
 // expect 115200 8N1 (8N1 are the zero-value defaults of serial.Mode).
@@ -75,7 +94,7 @@ const dapFlushDelay = 50 * time.Millisecond
 // prompt. For most commands that is a failure; for Bootsel it is the expected
 // success signal (the device reboots into the UF2 bootloader and the CDC-ACM
 // port disappears).
-var errPortVanished = errors.New("serial port vanished (device rebooted)")
+var errPortVanished = errors.New("USB console vanished (device rebooted)")
 
 // portLister is a test seam mirroring capabilities.serialPortLister so unit
 // tests can enumerate fake ports without touching real USB.
@@ -97,7 +116,7 @@ func DetectPort(explicit string) (string, error) {
 	}
 	ports, err := portLister()
 	if err != nil {
-		return "", fmt.Errorf("serial port enumeration is not supported on this OS; pass --connection <device>: %w", err)
+		return "", fmt.Errorf("USB port enumeration is not supported on this OS; pass --connection <device>: %w", err)
 	}
 	type cand struct{ name, product, serial string }
 	var cands []cand
@@ -105,7 +124,7 @@ func DetectPort(explicit string) (string, error) {
 		if p == nil || strings.TrimSpace(p.Name) == "" || !p.IsUSB {
 			continue
 		}
-		if strings.EqualFold(p.VID, benchPodVID) {
+		if isBenchPodVID(p.VID) {
 			cands = append(cands, cand{name: p.Name, product: p.Product, serial: p.SerialNumber})
 		}
 	}
@@ -113,12 +132,12 @@ func DetectPort(explicit string) (string, error) {
 
 	switch len(cands) {
 	case 0:
-		return "", fmt.Errorf("no bench-pod serial console found (USB VID %s). Is the device plugged in? Pass --connection <device> to override", benchPodVID)
+		return "", fmt.Errorf("no bench-pod USB console found (USB VID %s). Is the device plugged in? Pass --connection <device> to override", strings.Join(benchPodVIDs, "/"))
 	case 1:
 		return cands[0].name, nil
 	default:
 		var b strings.Builder
-		fmt.Fprintf(&b, "multiple bench-pod serial consoles found (USB VID %s); pass --connection <device> to choose one:", benchPodVID)
+		fmt.Fprintf(&b, "multiple bench-pod USB consoles found (USB VID %s); pass --connection <device> to choose one:", strings.Join(benchPodVIDs, "/"))
 		for _, c := range cands {
 			b.WriteString("\n  " + c.name)
 			detail := strings.TrimSpace(c.product)
@@ -173,10 +192,10 @@ func Open(explicitDevice string) (*Console, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	serialLogf("connecting to bench-pod console at %s (%d 8N1)...", name, baudRate)
+	serialLogf("connecting to bench-pod USB console at %s (%d 8N1)...", name, baudRate)
 	port, err := serial.Open(name, &serial.Mode{BaudRate: baudRate})
 	if err != nil {
-		return nil, "", fmt.Errorf("open serial port %s: %w", name, err)
+		return nil, "", fmt.Errorf("open USB port %s: %w", name, err)
 	}
 	serialLogf("connected to %s", name)
 	c := newConsole(port)
@@ -193,7 +212,7 @@ func newConsole(rw io.ReadWriteCloser) *Console {
 //
 // With an explicit device it opens that verbatim (the caller chose it). Otherwise
 // it enumerates USB serial ports — the `preferred` hint first (a previously-found
-// device cached by the caller), then the Raspberry Pi VID, then any other USB
+// device cached by the caller), then the bench-pod USB VIDs, then any other USB
 // serial device (both /dev/cu.* and /dev/tty.*) — and probes each with `status`,
 // returning the first whose output identifies a bench pod. This avoids latching
 // onto the CMSIS-DAP debug probe's CDC (same VID) or another serial device.
@@ -209,7 +228,7 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 	}
 	cands = preferFirst(strings.TrimSpace(preferred), cands)
 	if len(cands) == 0 {
-		return nil, "", errors.New("no USB serial ports found; plug in the bench pod or pass --connection <device>")
+		return nil, "", errors.New("no USB ports found; plug in the bench pod or pass --connection <device>")
 	}
 	var tried []string
 	for _, name := range cands {
@@ -232,7 +251,7 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 		_ = c.Close()
 		tried = append(tried, name)
 	}
-	return nil, "", fmt.Errorf("no bench-pod console found among %d probed port(s) [%s]; pass --connection <device> to force one",
+	return nil, "", fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]; pass --connection <device> to force one",
 		len(tried), strings.Join(tried, ", "))
 }
 
@@ -259,8 +278,8 @@ var globPorts = func() []string {
 }
 
 // candidatePorts lists serial ports to probe: the enumerator's USB ports plus the
-// globbed /dev/cu.* and /dev/tty.* nodes (deduped), ordered Raspberry Pi VID first
-// (the firmware's native console) then everything else by name.
+// globbed /dev/cu.* and /dev/tty.* nodes (deduped), ordered by benchPodVIDs first
+// (the VIDs a pod's console enumerates under) then everything else by name.
 func candidatePorts() ([]string, error) {
 	// VID by port name, from the enumerator (cross-platform), for ordering.
 	vid := map[string]string{}
@@ -286,9 +305,8 @@ func candidatePorts() ([]string, error) {
 	for _, m := range globPorts() {
 		add(m)
 	}
-	if len(names) == 0 {
-		return nil, errors.New("no USB serial ports found; pass --connection <device>")
-	}
+	// An empty list is a finding, not a failure: `discover` reports "nothing to
+	// probe" while OpenBenchpod turns it into its own actionable error.
 	sort.SliceStable(names, func(i, j int) bool {
 		pi, pj := portPrio(vid[names[i]]), portPrio(vid[names[j]])
 		if pi != pj {
@@ -300,7 +318,7 @@ func candidatePorts() ([]string, error) {
 }
 
 func portPrio(vid string) int {
-	if strings.EqualFold(vid, benchPodVID) {
+	if isBenchPodVID(vid) {
 		return 0
 	}
 	return 1
@@ -465,7 +483,7 @@ func BringupLines(raw string) []string {
 	return out
 }
 
-// WifiStatus is the parsed result of show-wifi (firmware: wifi-show).
+// WifiStatus is the parsed result of show-network (firmware: wifi-show).
 type WifiStatus struct {
 	SSID  string
 	State string
@@ -803,4 +821,100 @@ func tail(b []byte, n int) string {
 		return string(b)
 	}
 	return string(b[len(b)-n:])
+}
+
+// ── discovery over USB ──────────────────────────────────────────────────────
+
+// SerialPod is a bench pod identified on a USB serial port by probing it with
+// the firmware's `status` command. The parsed fields are best-effort: the
+// console interleaves async log lines, so a missing field is left empty rather
+// than treated as an error. Status keeps the raw text for display.
+type SerialPod struct {
+	Device   string // the /dev node or COM port the pod answered on
+	Board    string // "bench-pod" (the board line, minus the firmware version)
+	Firmware string // "v1.4.2", from the same line
+	IP       string // the pod's address, "" or "0.0.0.0" when it has no lease
+	MAC      string // wired MAC
+	Status   string // raw `status` output
+}
+
+// Addressed reports whether the pod holds a usable IP address (it has a DHCP
+// lease on one of its interfaces), as opposed to no network at all.
+func (p SerialPod) Addressed() bool {
+	ip := strings.TrimSpace(p.IP)
+	return ip != "" && ip != "0.0.0.0" && ip != "-"
+}
+
+// ProbeSerial enumerates USB serial ports and probes each for a bench-pod
+// console, returning every pod found (not just the first, unlike OpenBenchpod)
+// together with the ports that answered but were not bench pods.
+//
+// It exists for `discover`, which reports on a whole bench rather than opening
+// one pod: a machine can legitimately have several pods plugged in, and the
+// ports that were ruled out are worth showing when nothing was found at all.
+// Each port is opened, probed and closed before moving on, so no port is left
+// held. probeTimeout bounds each probe individually — a real pod answers in
+// well under a second, so only non-pod ports run it out.
+func ProbeSerial(preferred string, probeTimeout time.Duration) (pods []SerialPod, skipped []string, err error) {
+	cands, err := candidatePorts()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, name := range preferFirst(strings.TrimSpace(preferred), cands) {
+		port, oErr := serial.Open(name, &serial.Mode{BaudRate: baudRate})
+		if oErr != nil {
+			skipped = append(skipped, name)
+			continue
+		}
+		c := newConsole(port)
+		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+		raw, _ := c.Status(ctx)
+		cancel()
+		_ = c.Close()
+		if !strings.Contains(strings.ToLower(raw), benchpodMarker) {
+			skipped = append(skipped, name)
+			continue
+		}
+		pods = append(pods, parseSerialPod(name, raw))
+	}
+	return pods, skipped, nil
+}
+
+// parseSerialPod pulls the identifying fields out of `status` output. The board
+// line carries both the board name and the firmware version — "bench-pod  fw
+// v1.4.2" — so it is split on the "fw" token.
+func parseSerialPod(device, raw string) SerialPod {
+	p := SerialPod{
+		Device: device,
+		IP:     statusField(raw, "ip"),
+		MAC:    statusField(raw, "mac"),
+		Status: raw,
+	}
+	board := statusField(raw, "board")
+	if i := strings.Index(board, "fw "); i >= 0 {
+		p.Board = strings.TrimSpace(board[:i])
+		p.Firmware = firstToken(board[i+len("fw "):])
+	} else {
+		p.Board = strings.TrimSpace(board)
+	}
+	return p
+}
+
+// statusField reads one "label : value" line out of `status` output.
+//
+// It is deliberately not fieldValue: the console pads its labels into a column
+// ("  ip     : 192.168.1.213"), so a "label:" prefix match never fires on this
+// output. Splitting on the FIRST colon also keeps colon-bearing values intact,
+// which is what makes the mac line parse.
+func statusField(raw, label string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		i := strings.IndexByte(line, ':')
+		if i < 0 {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(line[:i]), label) {
+			return strings.TrimSpace(line[i+1:])
+		}
+	}
+	return ""
 }

@@ -79,7 +79,7 @@ func (g *globalFlags) serialDevice() string {
 // ── shared firmware-command setup (wifi/TCP path) ───────────────────────────
 
 // wifiClient resolves the connection, requires the wifi transport (returning the
-// standard "not available over serial" error for the named command otherwise),
+// standard "not available over USB" error for the named command otherwise),
 // and returns a ready tcpclient plus a deadline context (overridable by
 // --timeout) with signal handling. It replaces the old RequireWifi + setupClient
 // pair at every TCP command's call site.
@@ -140,7 +140,7 @@ func (g *globalFlags) openBenchpodSerial(device string, probeTimeout time.Durati
 	// Remember the auto-detected device so the next run probes it first.
 	if strings.TrimSpace(device) == "" && path != "" && path != hint && cfgErr == nil {
 		if err := saveLastSerial(cfgPath, path); err != nil {
-			log.Printf("note: could not cache serial device %q: %v", path, err)
+			log.Printf("note: could not cache USB device %q: %v", path, err)
 		}
 	}
 	return console, path, nil

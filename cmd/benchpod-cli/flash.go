@@ -59,7 +59,7 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	f := &flashFlags{}
 	cmd := &cobra.Command{
 		Use:   "flash",
-		Short: "Flash an SWD target via OpenOCD's CMSIS-DAP backend (wifi or serial)",
+		Short: "Flash an SWD target via OpenOCD's CMSIS-DAP backend (network or USB)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runFlash(g, f)
