@@ -860,6 +860,11 @@ func ProbeSerial(preferred string, probeTimeout time.Duration) (pods []SerialPod
 	if err != nil {
 		return nil, nil, err
 	}
+	// One physical port shows up as two /dev nodes on macOS — the call-out
+	// /dev/cu.X and the dial-in /dev/tty.X — and both answer, so a single pod
+	// would otherwise be reported twice. Both are still probed (either can be
+	// the one that opens), but only the first answer per pod is kept.
+	seen := map[string]bool{}
 	for _, name := range preferFirst(strings.TrimSpace(preferred), cands) {
 		port, oErr := serial.Open(name, &serial.Mode{BaudRate: baudRate})
 		if oErr != nil {
@@ -875,9 +880,32 @@ func ProbeSerial(preferred string, probeTimeout time.Duration) (pods []SerialPod
 			skipped = append(skipped, name)
 			continue
 		}
-		pods = append(pods, parseSerialPod(name, raw))
+		pod := parseSerialPod(name, raw)
+		key := podIdentity(pod)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		pods = append(pods, pod)
 	}
 	return pods, skipped, nil
+}
+
+// podIdentity keys a pod for de-duplication across the /dev nodes that lead to
+// it. The MAC is the pod's own identity and is preferred; when the firmware is
+// too old to report one, fall back to the port name with the OS's call-out /
+// dial-in prefix stripped, which is what makes cu.usbmodemX and tty.usbmodemX
+// collapse to one entry.
+func podIdentity(p SerialPod) string {
+	if mac := strings.TrimSpace(p.MAC); mac != "" && mac != "-" {
+		return "mac:" + strings.ToLower(mac)
+	}
+	base := p.Device
+	if i := strings.LastIndexByte(base, '/'); i >= 0 {
+		base = base[i+1:]
+	}
+	base = strings.TrimPrefix(strings.TrimPrefix(base, "cu."), "tty.")
+	return "dev:" + base
 }
 
 // parseSerialPod pulls the identifying fields out of `status` output. The board

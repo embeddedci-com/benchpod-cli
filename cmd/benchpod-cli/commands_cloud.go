@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/authstore"
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
 	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
@@ -22,18 +23,92 @@ import (
 
 func newLoginCmd(g *globalFlags) *cobra.Command {
 	var serverURL, tokenFile string
-	var noOpen bool
+	var noOpen, force bool
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate with embeddedci-server (device-login flow)",
-		Args:  cobra.NoArgs,
+		Long: "Authenticate the CLI with embeddedci-server.\n\n" +
+			"Running this while a usable session already exists is a no-op: it reports who\n" +
+			"you are signed in as and exits, rather than sending you through the browser\n" +
+			"approval again. Use --force to authenticate anyway (e.g. to switch account),\n" +
+			"or `benchpod logout` to drop the session first.",
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if !force {
+				if who, path := currentSession(serverURL, tokenFile); who != "" {
+					fmt.Fprintf(os.Stderr, "Already logged in as user %s (%s).\n", who, path)
+					fmt.Fprintln(os.Stderr, "Run `benchpod login --force` to sign in again, or `benchpod logout` to sign out.")
+					return nil
+				}
+			}
 			return runLogin(serverURL, tokenFile, noOpen)
 		},
 	}
 	cmd.Flags().StringVar(&serverURL, "server-url", "https://www.embeddedci.com", "embeddedci-server base URL")
 	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to token cache (default: ~/.config/benchpod-cli/token.json)")
 	cmd.Flags().BoolVar(&noOpen, "no-browser", false, "do not try to open the approval URL in a browser")
+	cmd.Flags().BoolVar(&force, "force", false, "authenticate again even when a session already exists")
+	return cmd
+}
+
+// currentSession reports the signed-in user id and token path when a session is
+// usable, or "" when there is none. A session with an expired access token but a
+// live refresh token still counts: ensureTokens would renew it silently, so
+// sending the user through the browser again would be pointless.
+func currentSession(serverURL, tokenFile string) (userID, path string) {
+	tokenPath, err := resolveTokenPath(tokenFile)
+	if err != nil {
+		return "", ""
+	}
+	tokens, err := authstore.Load(tokenPath)
+	if err != nil || tokens == nil {
+		return "", ""
+	}
+	now := time.Now()
+	if tokens.AccessExpired(now) && tokens.RefreshExpired(now) {
+		return "", ""
+	}
+	who := strings.TrimSpace(tokens.UserID)
+	if who == "" {
+		who = "(unknown)"
+	}
+	return who, tokenPath
+}
+
+// ── logout ──────────────────────────────────────────────────────────────────
+
+func newLogoutCmd(g *globalFlags) *cobra.Command {
+	var tokenFile string
+	cmd := &cobra.Command{
+		Use:   "logout",
+		Short: "Sign out: delete the cached embeddedci-server tokens",
+		Long: "Delete the local token cache, so cloud commands need `benchpod login` again.\n\n" +
+			"This is local only: it does not deregister any pod and does not touch the\n" +
+			"devices already registered to the account. Signing out and back in leaves\n" +
+			"them exactly as they were.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			tokenPath, err := resolveTokenPath(tokenFile)
+			if err != nil {
+				return fmt.Errorf("resolve token path: %w", err)
+			}
+			who, _ := currentSession("", tokenFile)
+			if err := os.Remove(tokenPath); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					fmt.Fprintln(os.Stderr, "Not logged in; nothing to do.")
+					return nil
+				}
+				return fmt.Errorf("remove %s: %w", tokenPath, err)
+			}
+			if who != "" {
+				fmt.Fprintf(os.Stderr, "Logged out user %s (removed %s).\n", who, tokenPath)
+			} else {
+				fmt.Fprintf(os.Stderr, "Logged out (removed %s).\n", tokenPath)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to token cache (default: ~/.config/benchpod-cli/token.json)")
 	return cmd
 }
 

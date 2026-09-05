@@ -209,7 +209,7 @@ func discoverPods(wait time.Duration) ([]discoveredPod, error) {
 		defer close(drained)
 		for e := range entries {
 			p := discoveredPod{
-				instance: e.Instance,
+				instance: unescapeDNSSD(e.Instance),
 				hostname: strings.TrimSuffix(e.HostName, "."),
 				id:       txtValue(e.Text, "id"),
 			}
@@ -230,7 +230,18 @@ func discoverPods(wait time.Duration) ([]discoveredPod, error) {
 	// Browse blocks until ctx expires (returning nil for a browse) and closes
 	// `entries` on the way out. A non-nil error is a setup failure (e.g. no
 	// multicast-capable interface) before the channel was handed off.
-	if err := zeroconf.Browse(ctx, mdnsService, mdnsDomain, entries); err != nil {
+	//
+	// The interfaces are chosen explicitly rather than left to the library's
+	// default: on macOS the default selection silently returns nothing at all,
+	// while the very same browse restricted to the real IPv4 interfaces finds
+	// the pod immediately. IPv4-only for the same reason — the firmware
+	// advertises an A record, and asking for both families reintroduces the
+	// empty result.
+	opts := []zeroconf.ClientOption{zeroconf.SelectIPTraffic(zeroconf.IPv4)}
+	if ifaces := multicastIfaces(); len(ifaces) > 0 {
+		opts = append(opts, zeroconf.SelectIfaces(ifaces))
+	}
+	if err := zeroconf.Browse(ctx, mdnsService, mdnsDomain, entries, opts...); err != nil {
 		return nil, fmt.Errorf("browse %s: %w", mdnsService, err)
 	}
 	<-drained
@@ -241,6 +252,51 @@ func discoverPods(wait time.Duration) ([]discoveredPod, error) {
 	}
 	sort.Slice(pods, func(i, j int) bool { return pods[i].instance < pods[j].instance })
 	return pods, nil
+}
+
+// multicastIfaces lists the interfaces worth browsing for mDNS: up, multicast
+// capable, not loopback, and carrying an IPv4 address. Loopback is excluded
+// because a pod is never on it and including it is one of the ways the default
+// selection ends up finding nothing.
+func multicastIfaces() []net.Interface {
+	all, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []net.Interface
+	for _, ifi := range all {
+		if ifi.Flags&net.FlagUp == 0 ||
+			ifi.Flags&net.FlagMulticast == 0 ||
+			ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, aErr := ifi.Addrs()
+		if aErr != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil {
+				out = append(out, ifi)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// unescapeDNSSD undoes the escaping DNS-SD applies to an instance label, where
+// a space arrives as "\\ " and a literal dot as "\\.". Without this the pod
+// reads as "BenchPod\ b83ba1" everywhere it is printed.
+func unescapeDNSSD(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // txtValue returns the value of key=... from a DNS-SD TXT record, or "".

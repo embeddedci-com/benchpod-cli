@@ -78,6 +78,7 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newLoginCmd(g),
+		newLogoutCmd(g),
 		newRegisterCmd(g),
 		newDeregisterCmd(g),
 		newSetConnectionCmd(g),
