@@ -336,7 +336,8 @@ func printReport(in reportInput) {
 		default:
 			w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 			for _, p := range in.serialPods {
-				fmt.Fprintf(w, "  %s\t%s\t%s\n", p.Device, describeBoard(p), describePodIP(p))
+				fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", p.Device, describeBoard(p), describePodIP(p),
+					describeSerialRegistration(p))
 			}
 			_ = w.Flush()
 		}
@@ -409,10 +410,72 @@ func printVerdict(out *os.File, in reportInput) {
 		}
 	}
 
+	printRegistrationVerdict(out, in)
+
 	if target := saveTarget(in.netPods, in.serialPods); target != "" && !in.opts.save {
 		fmt.Fprintf(out, "\nNext: `benchpod discover --save` stores %s as the default connection,\n"+
 			"so later commands can omit --connection.\n", target)
 	}
+}
+
+// printRegistrationVerdict answers the question a new user actually has: is this pod already
+// claimed into an account, or do I have to claim it?
+//
+// Both are ordinary states and neither is an error. A pod that was set up for somebody before it
+// was shipped is already registered, and telling that person to run `benchpod register` would
+// send them to redo work that is done — so the two cases get different, equally definite advice.
+// Nothing is printed when no pod could report its registration (older firmware, or a pod that
+// answered neither transport), because silence is honest and a guess is not.
+func printRegistrationVerdict(out *os.File, in reportInput) {
+	registered, unregistered := 0, 0
+	for _, p := range in.serialPods {
+		// Skip a pod that also appeared on the network: the network entry is counted below and
+		// carries the live cloud state, so counting both would double one physical pod.
+		if !p.CloudKnown || serialPodAlsoOnNetwork(p, in.netPods) {
+			continue
+		}
+		if p.Registered {
+			registered++
+		} else {
+			unregistered++
+		}
+	}
+	for _, p := range in.netPods {
+		if !p.cloud.known {
+			continue
+		}
+		if p.cloud.Configured {
+			registered++
+		} else {
+			unregistered++
+		}
+	}
+
+	switch {
+	case registered > 0 && unregistered == 0:
+		fmt.Fprintf(out, "\nAlready registered — nothing to set up on the pod itself.\n"+
+			"Sign in at https://www.embeddedci.com and it will be on your BenchPod page.\n"+
+			"Tests address it by name: `pytest --benchpod-connection=embeddedci:<name>`.\n")
+	case unregistered > 0 && registered == 0:
+		fmt.Fprintln(out, "\nNot registered yet. To drive this pod through embeddedci.com (and from CI):")
+		fmt.Fprintln(out, "  benchpod login       # authenticate this machine")
+		fmt.Fprintln(out, "  benchpod register    # claim the pod into your account")
+		fmt.Fprintln(out, "Or skip both and address the pod directly by IP — no account needed.")
+	case registered > 0 && unregistered > 0:
+		fmt.Fprintf(out, "\n%d registered, %d not. `benchpod register --connection <ip>` claims the\n"+
+			"unregistered one; the registered one needs nothing.\n", registered, unregistered)
+	}
+}
+
+// serialPodAlsoOnNetwork reports whether this USB pod is the same physical pod as one of the
+// network entries, which correlate() has already matched up by address.
+func serialPodAlsoOnNetwork(p serialconsole.SerialPod, netPods []discoveredPod) bool {
+	for _, np := range netPods {
+		if np.sameAs == p.Device {
+			return true
+		}
+	}
+	return false
 }
 
 // countUnmatched counts network pods that were not already counted as a serial
@@ -425,6 +488,22 @@ func countUnmatched(pods []discoveredPod) int {
 		}
 	}
 	return n
+}
+
+// describeSerialRegistration is the USB half of the registration verdict. It matters most for a
+// pod somebody was sent already set up: over USB, before the pod has any network at all, this is
+// the only thing that can say so. Firmware too old to report it says nothing rather than guessing.
+func describeSerialRegistration(p serialconsole.SerialPod) string {
+	if !p.CloudKnown {
+		return ""
+	}
+	if !p.Registered {
+		return "not registered"
+	}
+	if state := strings.TrimSpace(p.CloudState); state != "" {
+		return "registered, cloud " + strings.ToLower(state)
+	}
+	return "registered"
 }
 
 func describeBoard(p serialconsole.SerialPod) string {

@@ -822,3 +822,56 @@ func TestCandidatePortsOrdersBothPodVIDsFirst(t *testing.T) {
 		t.Fatalf("candidate order = %v, want the 0483 port first", got)
 	}
 }
+
+func TestParseSerialPodReadsCloudRegistration(t *testing.T) {
+	// Verbatim shape of the firmware's registered cloud line (console.c).
+	raw := strings.Join([]string{
+		"  device : benchpod",
+		"  ip     : 192.168.1.213",
+		"  board  : bench-pod  fw v1.4.2",
+		"  cloud  : registered  state=connected  device_id=7f3a91c2-0000-4000-8000-abcdef012345",
+		"  reset  : power-on",
+	}, "\n")
+
+	p := parseSerialPod("/dev/cu.usbmodem1103", raw)
+	if !p.CloudKnown {
+		t.Fatal("a firmware that printed the cloud line should be CloudKnown")
+	}
+	if !p.Registered {
+		t.Fatal("registered pod not detected")
+	}
+	if p.CloudState != "connected" {
+		t.Fatalf("cloud state: got %q want connected", p.CloudState)
+	}
+	if p.DeviceID != "7f3a91c2-0000-4000-8000-abcdef012345" {
+		t.Fatalf("device id: got %q", p.DeviceID)
+	}
+}
+
+func TestParseSerialPodReadsUnregistered(t *testing.T) {
+	raw := "  device : benchpod\n  board  : bench-pod  fw v1.4.2\n  cloud  : not registered\n"
+	p := parseSerialPod("/dev/ttyACM0", raw)
+	if !p.CloudKnown {
+		t.Fatal("the line was present, so the state is known")
+	}
+	if p.Registered {
+		t.Fatal("an unregistered pod was read as registered")
+	}
+	if p.CloudState != "" || p.DeviceID != "" {
+		t.Fatalf("unregistered pod carried state=%q device_id=%q", p.CloudState, p.DeviceID)
+	}
+}
+
+// Firmware predating the cloud line must read as UNKNOWN, never as unregistered: telling
+// somebody their pod is unclaimed when we cannot tell would send them to re-register a pod that
+// is already working.
+func TestParseSerialPodOlderFirmwareLeavesCloudUnknown(t *testing.T) {
+	raw := "  device : benchpod\n  ip     : 192.168.1.213\n  board  : bench-pod  fw v1.3.0\n"
+	p := parseSerialPod("/dev/ttyACM0", raw)
+	if p.CloudKnown {
+		t.Fatal("firmware with no cloud line must leave the registration unknown")
+	}
+	if p.Registered {
+		t.Fatal("unknown must not read as registered")
+	}
+}

@@ -835,6 +835,17 @@ type SerialPod struct {
 	IP       string // the pod's address, "" or "0.0.0.0" when it has no lease
 	MAC      string // wired MAC
 	Status   string // raw `status` output
+
+	// Registered reports whether the pod already holds a cloud provisioning — i.e. it was
+	// claimed into an account, possibly by somebody else before it was shipped. This comes
+	// from the console rather than the TCP/JSON `cloud_status`, so it is answerable over USB
+	// alone: a pod straight out of its box has no network for the JSON API to answer over.
+	// CloudKnown is false against firmware too old to print the line, which must read as
+	// "unknown", never as "not registered".
+	CloudKnown bool
+	Registered bool
+	CloudState string // "connected", "connecting", "backoff", ... when registered
+	DeviceID   string // the provisioned device id, when registered
 }
 
 // Addressed reports whether the pod holds a usable IP address (it has a DHCP
@@ -924,7 +935,37 @@ func parseSerialPod(device, raw string) SerialPod {
 	} else {
 		p.Board = strings.TrimSpace(board)
 	}
+	parseCloudField(&p, statusField(raw, "cloud"))
 	return p
+}
+
+// parseCloudField reads the console's cloud line into the pod's registration fields. The
+// firmware prints either
+//
+//	cloud  : not registered
+//	cloud  : registered  state=connected  device_id=<uuid>
+//
+// An empty value means the firmware predates the line, which is left as "unknown" rather than
+// reported as unregistered — telling somebody their pod is unclaimed when we simply cannot
+// tell would send them to re-register a pod that is already working.
+func parseCloudField(p *SerialPod, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	p.CloudKnown = true
+	if !strings.HasPrefix(value, "registered") {
+		return
+	}
+	p.Registered = true
+	for _, tok := range strings.Fields(value) {
+		switch {
+		case strings.HasPrefix(tok, "state="):
+			p.CloudState = strings.TrimPrefix(tok, "state=")
+		case strings.HasPrefix(tok, "device_id="):
+			p.DeviceID = strings.TrimPrefix(tok, "device_id=")
+		}
+	}
 }
 
 // statusField reads one "label : value" line out of `status` output.
