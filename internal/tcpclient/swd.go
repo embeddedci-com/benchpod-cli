@@ -29,7 +29,7 @@ func (c *Client) TargetPower(ctx context.Context, efuse int, on bool) error {
 // swallow probe bytes): it reads exactly the one ack line off the wire, then
 // returns the untouched connection for the caller to bridge to OpenOCD. The
 // caller owns closing it; closing returns the pod to a safe JSON state.
-func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int, nreset *int) (net.Conn, error) {
+func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int) (net.Conn, error) {
 	addr := strings.TrimSpace(c.Addr)
 	if addr == "" {
 		return nil, fmt.Errorf("bench pod address is empty; run `benchpod set-connection <addr>` first")
@@ -48,9 +48,6 @@ func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int,
 	}
 
 	req := map[string]any{"cmd": cmd, "swclk": swclk, "swdio": swdio}
-	if nreset != nil {
-		req["nreset"] = *nreset
-	}
 	line, err := json.Marshal(req)
 	if err != nil {
 		conn.Close()
@@ -107,4 +104,28 @@ func readLine(conn net.Conn) ([]byte, error) {
 			return nil, err
 		}
 	}
+}
+
+// HasNRSTPin reports whether the pod owns a dedicated target-reset line.
+//
+// Pod rev3 added /NRST_CONTROL on the DUT header (J1 pin 22); before that the
+// pod had no reset output at all and nRESET had to borrow an LA channel — a
+// mode that has been removed. The firmware advertises the pin as
+// `status.nrst_pin` (and as the "nrst_pin" capability), so `flash` can decide
+// whether connect-under-reset is possible instead of asking the user.
+//
+// A pod too old to report the field answers false, which is correct: it has no
+// reset pin.
+func (c *Client) HasNRSTPin(ctx context.Context) (bool, error) {
+	data, err := c.Command(ctx, map[string]any{"cmd": "status"})
+	if err != nil {
+		return false, err
+	}
+	var st struct {
+		NRSTPin bool `json:"nrst_pin"`
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		return false, fmt.Errorf("decode status: %w", err)
+	}
+	return st.NRSTPin, nil
 }

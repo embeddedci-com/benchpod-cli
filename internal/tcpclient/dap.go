@@ -23,8 +23,9 @@ import (
 // connection; a zero-length frame or closing the socket returns the pod to JSON
 // mode.
 //
-// nreset is the optional target-reset LA channel; pass nil when the pod does not
-// own target reset.
-func (c *Client) DAPStart(ctx context.Context, swclk, swdio int, nreset *int) (net.Conn, error) {
-	return c.startRawMode(ctx, "dap_start", swclk, swdio, nreset)
+// Target reset is NOT passed here. Since pod rev3 nRESET is the pod's own
+// /NRST_CONTROL pin (J1 pin 22), driven by the firmware behind CMSIS-DAP
+// SWJ_PINS — it is no longer an LA channel the host has to name.
+func (c *Client) DAPStart(ctx context.Context, swclk, swdio int) (net.Conn, error) {
+	return c.startRawMode(ctx, "dap_start", swclk, swdio)
 }

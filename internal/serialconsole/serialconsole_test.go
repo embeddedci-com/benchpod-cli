@@ -586,7 +586,7 @@ func TestDAPStartReadyHandshake(t *testing.T) {
 		}
 	}}
 	c := newConsole(fc)
-	conn, err := c.DAPStart(testContext(t), 2, 3, nil)
+	conn, err := c.DAPStart(testContext(t), 2, 3)
 	if err != nil {
 		t.Fatalf("DAPStart: %v", err)
 	}
@@ -606,20 +606,54 @@ func TestDAPStartReadyHandshake(t *testing.T) {
 	}
 }
 
-func TestDAPStartWithNreset(t *testing.T) {
+// nRESET is the pod's own pin since rev3, so dap-start carries exactly two pin
+// arguments — a third would be read by the firmware as a channel to take over.
+func TestDAPStartSendsNoResetChannel(t *testing.T) {
 	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
 		if strings.HasPrefix(line, "dap-start") {
 			out.WriteString("dap ready\n")
 		}
 	}}
-	nreset := 9
-	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3, &nreset)
+	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3)
 	if err != nil {
 		t.Fatalf("DAPStart: %v", err)
 	}
 	defer conn.Close()
-	if !strings.HasPrefix(fc.written.String(), "dap-start 2 3 9\n") {
-		t.Fatalf("nreset not included in command: %q", fc.written.String())
+	if got := fc.written.String(); !strings.HasPrefix(got, "dap-start 2 3\n") {
+		t.Fatalf("dap-start must carry only swclk/swdio, got: %q", got)
+	}
+}
+
+// HasNRSTPin reads the console `status` board line, which is how flash decides
+// whether connect-under-reset is possible.
+func TestHasNRSTPin(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		board string
+		want  bool
+	}{
+		{"v3", "  board  : stm32h563  fw v1.2.3  rev v3  nrst_pin=yes  usb_cc=yes", true},
+		{"v2", "  board  : stm32h563  fw v1.2.3  rev v2  nrst_pin=no  usb_cc=no", false},
+		{"old firmware", "  board  : stm32h563  fw v0.9.0", false},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
+				if strings.HasPrefix(line, "status") {
+					out.WriteString(line + "\r\n")
+					out.WriteString("  device : benchpod\r\n")
+					out.WriteString(tc.board + "\r\n")
+					out.WriteString("> ")
+				}
+			}}
+			got, err := newConsole(fc).HasNRSTPin(testContext(t))
+			if err != nil {
+				t.Fatalf("HasNRSTPin: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("HasNRSTPin = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -627,7 +661,7 @@ func TestDAPStartRejected(t *testing.T) {
 	for _, reply := range []string{
 		"ERROR: gpio not in controlled set",
 		"ERROR: swd busy",
-		"usage: dap-start <swclk> <swdio> [nreset]",
+		"usage: dap-start <swclk> <swdio>",
 	} {
 		reply := reply
 		fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
@@ -637,7 +671,7 @@ func TestDAPStartRejected(t *testing.T) {
 				out.WriteString("> ")
 			}
 		}}
-		_, err := newConsole(fc).DAPStart(testContext(t), 2, 3, nil)
+		_, err := newConsole(fc).DAPStart(testContext(t), 2, 3)
 		if err == nil {
 			t.Fatalf("expected failure for reply %q", reply)
 		}
@@ -656,7 +690,7 @@ func TestDAPStartRawStreamPassthrough(t *testing.T) {
 			out.WriteString("01") // raw bitbang sample replies
 		}
 	}}
-	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3, nil)
+	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3)
 	if err != nil {
 		t.Fatalf("DAPStart: %v", err)
 	}
@@ -692,7 +726,7 @@ func TestDAPStartClearsStaleLine(t *testing.T) {
 			out.WriteString("dap ready\n")
 		}
 	}}
-	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3, nil)
+	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3)
 	if err != nil {
 		t.Fatalf("DAPStart: %v", err)
 	}

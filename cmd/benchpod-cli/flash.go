@@ -30,18 +30,31 @@ const dapHandshakeTimeout = 15 * time.Second
 // rather than relying on OpenOCD's connect retries.
 const targetPowerSettle = 250 * time.Millisecond
 
+// Where the pod's target-reset line comes out, and where that is documented.
+// Since rev3 the pod drives NRST from its own pin, so --nreset no longer names an
+// LA channel — it just says whether the target's reset reaches that pin.
+const (
+	nrstPinLocation = "DUT header J1 pin 22"
+	nrstPinDocsURL  = "https://github.com/embeddedci-com/benchpod-firmware/blob/main/docs/API.md#dut-header"
+)
+
 // flashFlags holds the flash-specific (non-global) flags.
 type flashFlags struct {
-	swclk, swdio, nreset string
-	target, file         string
-	loadAddr             string
-	noVerify, noReset    bool
-	noConnectUnderReset  bool
-	keepResetInit        bool
-	openocdBin           string
-	targetPower          int
-	extraConfigs         []string
-	extraArgs            []string
+	swclk, swdio        string
+	nreset              bool
+	target, file        string
+	loadAddr            string
+	noVerify, noReset   bool
+	noConnectUnderReset bool
+	keepResetInit       bool
+	openocdBin          string
+	targetPower         int
+	extraConfigs        []string
+	extraArgs           []string
+
+	// hasNRST is filled in from the pod during runFlash (not a flag): whether
+	// this pod has the dedicated target-reset pin. Used by the failure hint.
+	hasNRST bool
 }
 
 // newFlashCmd builds the flash subcommand. It flashes an SWD target wired to the
@@ -68,13 +81,13 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.swclk, "swclk", "", "LA pin for SWCLK, 1-12, e.g. 1 or la1 (required)")
 	fl.StringVar(&f.swdio, "swdio", "", "LA pin for SWDIO, 1-12, e.g. 2 or la2 (required)")
-	fl.StringVar(&f.nreset, "nreset", "", "optional LA pin for target reset (active-low), 1-12")
+	fl.BoolVar(&f.nreset, "nreset", false, "the target's NRST is wired to the pod's reset pin ("+nrstPinLocation+"); enables connect-under-reset")
 	fl.StringVar(&f.target, "target", "", "OpenOCD target config (passed as -f), e.g. target/stm32f1x.cfg")
 	fl.StringVar(&f.file, "file", "", "firmware image to flash (used with --target)")
 	fl.StringVar(&f.loadAddr, "load-address", "", "load address for a raw .bin image (appended to the program command)")
 	fl.BoolVar(&f.noVerify, "no-verify", false, "do not verify after programming")
 	fl.BoolVar(&f.noReset, "no-reset", false, "do not reset the target after programming")
-	fl.BoolVar(&f.noConnectUnderReset, "no-connect-under-reset", false, "do not hold the target in reset while connecting (connect-under-reset is on by default when --nreset is set; it stops already-running firmware from disabling SWD before the debug port is read)")
+	fl.BoolVar(&f.noConnectUnderReset, "no-connect-under-reset", false, "do not hold the target in reset while connecting (on by default when --nreset is set; it stops already-running firmware from disabling SWD before the debug port is read)")
 	fl.BoolVar(&f.keepResetInit, "keep-reset-init", false, "keep the target cfg's reset-init/reset-start events (clock boost); by default they are cleared because the just-after-reset clock writes glitch the slow bit-banged link (flashing then runs at the default reset clock — slower but reliable)")
 	fl.StringVar(&f.openocdBin, "openocd", "", "path to the openocd binary; defaults to the one on PATH")
 	fl.IntVar(&f.targetPower, "target-power", 0, "enable a target power eFuse before flashing: 1 (internal 5V) or 2 (external)")
@@ -98,36 +111,12 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if swclk == swdio {
 		return fmt.Errorf("--swclk and --swdio must be different pins")
 	}
-	var nresetPtr *int
-	if strings.TrimSpace(f.nreset) != "" {
-		nreset, err := parseLAPin(f.nreset)
-		if err != nil {
-			return fmt.Errorf("--nreset: %w", err)
-		}
-		nresetPtr = &nreset
-	}
 	if strings.TrimSpace(f.file) != "" && strings.TrimSpace(f.target) == "" {
 		return fmt.Errorf("--file requires --target")
 	}
 	if f.targetPower != 0 && f.targetPower != 1 && f.targetPower != 2 {
 		return fmt.Errorf("--target-power must be 1 (internal 5V) or 2 (external)")
 	}
-
-	// Connect-under-reset holds the target in reset while OpenOCD reads the debug
-	// port, so already-running firmware can't remap/disable SWD or sleep before we
-	// connect. It needs a wired reset line, so it's only meaningful with --nreset.
-	connectUnderReset := !f.noConnectUnderReset && nresetPtr != nil
-	if connectUnderReset {
-		fmt.Fprintln(os.Stderr, "flash: connecting under reset (NRST held asserted through the debug-port read)")
-	}
-
-	// Build the OpenOCD argument list (excluding the cmsis-dap adapter config,
-	// which BridgeDAP prepends).
-	ocArgs, err := buildOpenOCDArgs(f.target, f.file, f.loadAddr, f.noVerify, f.noReset, connectUnderReset, !f.keepResetInit, f.extraConfigs, f.extraArgs)
-	if err != nil {
-		return err
-	}
-
 	// 1. Identify OpenOCD. 2. Validate it actually runs.
 	bin := strings.TrimSpace(f.openocdBin)
 	if bin == "" {
@@ -163,14 +152,40 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	// (a child of the flash ctx) so that if the pod never reports ready we abort
 	// here, with the firmware's output, rather than handing a dead link to OpenOCD.
 	hsCtx, hsCancel := context.WithTimeout(ctx, dapHandshakeTimeout)
-	podConn, err := openDAP(hsCtx, g, swclk, swdio, nresetPtr, f.targetPower)
+	podConn, hasNRST, err := openDAP(hsCtx, g, swclk, swdio, f.targetPower)
 	hsCancel()
 	if err != nil {
 		return err
 	}
 	defer podConn.Close()
+	f.hasNRST = hasNRST
 
-	// 4. Run OpenOCD bridged to the pod connection over its cmsis-dap TCP backend
+	// Connect-under-reset holds the target in reset while OpenOCD reads the debug
+	// port, so already-running firmware can't remap/disable SWD or sleep before we
+	// connect. Two things must both be true: the user says the target's reset is
+	// wired (--nreset), and the pod actually has a reset pin to drive it with.
+	// Since rev3 that pin is always the same one, so --nreset is a yes/no rather
+	// than the LA channel it used to be.
+	connectUnderReset := !f.noConnectUnderReset && f.nreset && hasNRST
+	switch {
+	case f.nreset && !hasNRST:
+		fmt.Fprintln(os.Stderr, "flash: NRST — this pod has no reset pin (pre-rev3 board), so --nreset has nothing to drive; connecting without reset")
+	case connectUnderReset:
+		fmt.Fprintf(os.Stderr, "flash: NRST — driving the pod's reset pin, %s (%s)\n", nrstPinLocation, nrstPinDocsURL)
+		fmt.Fprintln(os.Stderr, "flash: connecting under reset (NRST held asserted through the debug-port read)")
+	case f.nreset:
+		fmt.Fprintf(os.Stderr, "flash: NRST — driving the pod's reset pin, %s (%s)\n", nrstPinLocation, nrstPinDocsURL)
+		fmt.Fprintln(os.Stderr, "flash: connect-under-reset disabled (--no-connect-under-reset)")
+	}
+
+	// 4. Build the OpenOCD argument list (excluding the cmsis-dap adapter config,
+	// which BridgeDAP prepends), now that we know whether reset is available.
+	ocArgs, err := buildOpenOCDArgs(f.target, f.file, f.loadAddr, f.noVerify, f.noReset, connectUnderReset, !f.keepResetInit, f.extraConfigs, f.extraArgs)
+	if err != nil {
+		return err
+	}
+
+	// 5. Run OpenOCD bridged to the pod connection over its cmsis-dap TCP backend
 	// (BridgeDAP translates the per-packet framing). Its exit code is the verdict.
 	if err := openocd.BridgeDAP(ctx, bin, ocArgs, podConn, os.Stdout, os.Stderr); err != nil {
 		if errors.Is(err, openocd.ErrTargetUnreachable) {
@@ -194,12 +209,14 @@ func printTargetUnreachableHint(f *flashFlags) {
 	}
 	fmt.Fprintf(os.Stderr, "  • wiring — SWCLK (%s) and SWDIO (%s) must reach the target's SWCLK/SWDIO pins (not swapped), with a common ground\n", f.swclk, f.swdio)
 	switch {
-	case strings.TrimSpace(f.nreset) == "":
-		fmt.Fprintln(os.Stderr, "  • running firmware — if the target already runs firmware that remaps/disables SWD or sleeps, wire its NRST to an LA pin and pass --nreset; the pod then connects under reset by default")
+	case !f.hasNRST:
+		fmt.Fprintln(os.Stderr, "  • running firmware — this pod has no reset pin, so if the target already runs firmware that remaps/disables SWD or sleeps, there is no way to connect under reset. A rev3 pod has a dedicated NRST pin")
+	case !f.nreset:
+		fmt.Fprintf(os.Stderr, "  • running firmware — if the target already runs firmware that remaps/disables SWD or sleeps, wire its NRST to the pod's reset pin (%s, %s) and pass --nreset; the pod then connects under reset\n", nrstPinLocation, nrstPinDocsURL)
 	case f.noConnectUnderReset:
 		fmt.Fprintln(os.Stderr, "  • running firmware — connect-under-reset is disabled (--no-connect-under-reset); drop that flag to hold NRST asserted while connecting")
 	default:
-		fmt.Fprintln(os.Stderr, "  • reset wiring — connect-under-reset is on, so confirm --nreset really reaches the target's NRST pin and is active-low")
+		fmt.Fprintf(os.Stderr, "  • reset wiring — connect-under-reset is on, so confirm the target's NRST really reaches the pod's reset pin, %s (%s)\n", nrstPinLocation, nrstPinDocsURL)
 	}
 }
 
@@ -207,25 +224,33 @@ func printTargetUnreachableHint(f *flashFlags) {
 // the selected transport (dap_start over wifi/TCP, the dap-start console command
 // over serial) and returns the length-framed DAP stream to bridge to OpenOCD.
 // powerEfuse 0 leaves target power untouched; 1/2 enables that eFuse first.
-func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, nreset *int, powerEfuse int) (io.ReadWriteCloser, error) {
+func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse int) (io.ReadWriteCloser, bool, error) {
 	spec, err := g.resolveConnection()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if spec.IsWifi() {
 		client := &tcpclient.Client{Addr: spec.Addr}
+		// Ask the pod whether it has the dedicated reset pin BEFORE arming the
+		// probe — once the connection is in DAP mode it no longer speaks JSON.
+		// A probe failure is not fatal: assume the pin is there (every current
+		// board has it) and let the real failure surface at dap_start.
+		hasNRST := true
+		if v, err := client.HasNRSTPin(ctx); err == nil {
+			hasNRST = v
+		}
 		if powerEfuse != 0 {
 			if err := client.TargetPower(ctx, powerEfuse, true); err != nil {
-				return nil, fmt.Errorf("flash: enable target-power eFuse %d: %w", powerEfuse, err)
+				return nil, false, fmt.Errorf("flash: enable target-power eFuse %d: %w", powerEfuse, err)
 			}
 			fmt.Fprintf(os.Stderr, "flash: target-power eFuse %d on\n", powerEfuse)
 			settle(ctx, targetPowerSettle)
 		}
-		conn, err := client.DAPStart(ctx, swclk, swdio, nreset)
+		conn, err := client.DAPStart(ctx, swclk, swdio)
 		if err != nil {
-			return nil, fmt.Errorf("flash: dap_start: %w", err)
+			return nil, false, fmt.Errorf("flash: dap_start: %w", err)
 		}
-		return conn, nil
+		return conn, hasNRST, nil
 	}
 
 	// Serial transport: open the console, optionally power the target, perform
@@ -236,22 +261,30 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, nreset *int,
 	// device verbatim, else probe USB serial ports for the bench-pod identifier.
 	console, path, err := g.openBenchpodSerial(spec.Device, 2*time.Second)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	// Same probe as the wifi path, on the console this time — and for the same
+	// reason it has to happen before dap-start: the console stops taking text
+	// commands once the probe is armed. The port is already open, so this costs
+	// one `status` round-trip and no extra connection.
+	hasNRST := true
+	if v, err := console.HasNRSTPin(ctx); err == nil {
+		hasNRST = v
 	}
 	if powerEfuse != 0 {
 		if err := console.TargetPower(ctx, powerEfuse, true); err != nil {
 			console.Close()
-			return nil, fmt.Errorf("flash: enable target-power eFuse %d over %s: %w", powerEfuse, path, err)
+			return nil, false, fmt.Errorf("flash: enable target-power eFuse %d over %s: %w", powerEfuse, path, err)
 		}
 		fmt.Fprintf(os.Stderr, "flash: target-power eFuse %d on\n", powerEfuse)
 		settle(ctx, targetPowerSettle)
 	}
-	conn, err := console.DAPStart(ctx, swclk, swdio, nreset)
+	conn, err := console.DAPStart(ctx, swclk, swdio)
 	if err != nil {
 		console.Close()
-		return nil, fmt.Errorf("flash: dap-start over %s: %w", path, err)
+		return nil, false, fmt.Errorf("flash: dap-start over %s: %w", path, err)
 	}
-	return conn, nil
+	return conn, hasNRST, nil
 }
 
 // settle waits for d or until ctx is cancelled, whichever comes first, so the

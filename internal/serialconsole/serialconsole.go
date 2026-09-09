@@ -613,7 +613,7 @@ func (c *Console) Dfu(ctx context.Context) error {
 }
 
 // DAPStart enters the firmware's length-framed CMSIS-DAP probe mode over the
-// console. It sends `dap-start <swclk> <swdio>[ <nreset>]`, then reads console
+// console. It sends `dap-start <swclk> <swdio>`, then reads console
 // lines until the firmware prints the `dap ready` sentinel; any `ERROR:`/`usage:`
 // line before it is a handshake failure. On success the port is switched to
 // blocking reads and an io.ReadWriteCloser carrying the raw framed DAP stream is
@@ -622,18 +622,17 @@ func (c *Console) Dfu(ctx context.Context) error {
 // closing the TCP connection returns the pod to a safe state. The firmware's 60s
 // inactivity watchdog is the backstop if Close never runs.
 //
-// swclk/swdio (and the optional nreset) are LA pin numbers (1-12); the caller is
-// responsible for parsing/validating them (see parseLAPin in the CLI).
+// swclk/swdio are LA pin numbers (1-12); the caller is responsible for
+// parsing/validating them (see parseLAPin in the CLI). Target reset is not a
+// parameter: since pod rev3 nRESET is the pod's own pin on J1 pin 22, driven by
+// the firmware behind CMSIS-DAP SWJ_PINS.
 //
 // If the firmware never reports "dap ready" before ctx expires (or emits an
 // error line), no connection is returned and the error carries the full console
 // transcript captured during the handshake, so the caller can show what the pod
 // actually said instead of launching OpenOCD against a link that isn't armed.
-func (c *Console) DAPStart(ctx context.Context, swclk, swdio int, nreset *int) (io.ReadWriteCloser, error) {
+func (c *Console) DAPStart(ctx context.Context, swclk, swdio int) (io.ReadWriteCloser, error) {
 	cmd := fmt.Sprintf("dap-start %d %d", swclk, swdio)
-	if nreset != nil {
-		cmd += fmt.Sprintf(" %d", *nreset)
-	}
 	if err := c.writeLine(cmd); err != nil {
 		return nil, fmt.Errorf("write dap-start: %w", err)
 	}
@@ -945,4 +944,20 @@ func statusField(raw, label string) string {
 		}
 	}
 	return ""
+}
+
+// nrstPinMarker is what the firmware's console `status` prints on its board line
+// when the pod has the dedicated target-reset pin (rev3+): `... nrst_pin=yes`.
+const nrstPinMarker = "nrst_pin=yes"
+
+// HasNRSTPin reports whether the pod owns a dedicated target-reset line, by
+// reading the console `status` board line. See tcpclient.Client.HasNRSTPin for
+// why `flash` needs this; a pod too old to print the marker answers false, which
+// is correct — it has no reset pin.
+func (c *Console) HasNRSTPin(ctx context.Context) (bool, error) {
+	out, err := c.Status(ctx)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(strings.ToLower(out), nrstPinMarker), nil
 }
