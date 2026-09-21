@@ -944,6 +944,7 @@ func parseSerialPod(device, raw string) SerialPod {
 //
 //	cloud  : not registered
 //	cloud  : registered  state=connected  device_id=<uuid>
+//	cloud  : registered  state=backoff  device_id=<uuid>  last_error=<reason, may hold spaces>
 //
 // An empty value means the firmware predates the line, which is left as "unknown" rather than
 // reported as unregistered — telling somebody their pod is unclaimed when we simply cannot

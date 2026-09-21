@@ -151,8 +151,17 @@ benchpod deregister --connection <pod-ip>       # identifies the pod by its own 
 benchpod deregister --device-name <name>        # …for a pod you can no longer reach
 ```
 
-A pod that is still registered elsewhere cannot be claimed: `register` fails
-until the current owner deregisters it.
+Running `register` again on the same pod is always safe: it refreshes the pod's
+cloud settings and keeps its device, name and history, even after a deregister.
+A pod registered in an organization you are not in cannot be claimed until
+someone there deregisters it, on the BenchPod page or with `benchpod deregister
+--device-name <name>`. The pod does not need to be online for that. Deleting or
+disabling an account deregisters its pods automatically.
+
+`register` names the pod after its mDNS name (`benchpod-a1b2c3`) unless you pass
+`--device-name`. Names identify pods, so each is unique within an organization:
+if another pod already has it, pick another name. It then waits up to `--wait` (default 30s) for the pod to connect, and if it does
+not, prints the pod's last connection error and exits non-zero.
 
 Run `benchpod <command> -h` for the flags of any subcommand.
 

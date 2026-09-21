@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,4 +201,94 @@ func refreshServer(t *testing.T, status int, resp *serverapi.TokenResponse) (*se
 	}))
 	t.Cleanup(ts.Close)
 	return serverapi.New(ts.URL), &calls
+}
+
+// TestDeviceNameFromPublicKey pins the default name to what the firmware advertises over mDNS
+// (benchpod-<first three key bytes in hex>), not the IP.
+func TestDeviceNameFromPublicKey(t *testing.T) {
+	key := make([]byte, 32)
+	key[0], key[1], key[2], key[3] = 0xa1, 0xb2, 0x03, 0xff
+	if got := deviceNameFromPublicKey(base64.RawURLEncoding.EncodeToString(key)); got != "benchpod-a1b203" {
+		t.Fatalf("got %q, want benchpod-a1b203", got)
+	}
+	for _, bad := range []string{"", "not base64!", base64.RawURLEncoding.EncodeToString(make([]byte, 32))} {
+		if got := deviceNameFromPublicKey(bad); got != "" {
+			t.Errorf("deviceNameFromPublicKey(%q) = %q, want \"\"", bad, got)
+		}
+	}
+}
+
+func TestWaitCloudConnected(t *testing.T) {
+	ctx := context.Background()
+	t.Run("connects", func(t *testing.T) {
+		n := 0
+		st, err := waitCloudConnected(ctx, func(context.Context) (cloudStatus, error) {
+			n++
+			switch n {
+			case 1:
+				return cloudStatus{}, errors.New("busy") // a transient read failure keeps polling
+			case 2:
+				return cloudStatus{State: "connecting"}, nil
+			}
+			return cloudStatus{State: "connected"}, nil
+		}, time.Second, time.Millisecond)
+		if err != nil || st.State != "connected" || n != 3 {
+			t.Fatalf("got state=%q err=%v after %d polls", st.State, err, n)
+		}
+	})
+	t.Run("times out with the last status", func(t *testing.T) {
+		msg := "server refused the device (HTTP 404)"
+		st, err := waitCloudConnected(ctx, func(context.Context) (cloudStatus, error) {
+			return cloudStatus{State: "backoff", LastError: &msg}, nil
+		}, 20*time.Millisecond, time.Millisecond)
+		if err != nil || st.State != "backoff" || st.LastError == nil || *st.LastError != msg {
+			t.Fatalf("got %+v err=%v", st, err)
+		}
+	})
+}
+
+func TestDescribeNotConnected(t *testing.T) {
+	msg := "server refused the device (HTTP 404)"
+	out := describeNotConnected("benchpod-a1b2c3", "www.embeddedci.com", 30*time.Second,
+		cloudStatus{State: "backoff", LastError: &msg}, nil)
+	for _, want := range []string{"The registration stands", "state: backoff", "last error: " + msg, "--server-url"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "—") {
+		t.Errorf("em-dash in user-facing text:\n%s", out)
+	}
+}
+
+func TestCloudErrorHint(t *testing.T) {
+	s := func(v string) *string { return &v }
+	cases := []struct {
+		st   cloudStatus
+		want string
+	}{
+		{cloudStatus{State: "waiting-wifi", LastError: s("")}, "no network"},
+		{cloudStatus{State: "backoff"}, "flash-self"}, // firmware without last_error
+		{cloudStatus{State: "backoff", LastError: s("dns lookup failed")}, "DNS"},
+		{cloudStatus{State: "backoff", LastError: s("tcp connect refused")}, "outbound HTTPS"},
+		{cloudStatus{State: "backoff", LastError: s("tls certificate not trusted (flags 0x8)")}, "certificate"},
+		{cloudStatus{State: "backoff", LastError: s("tls handshake failed")}, "intercepts HTTPS"},
+		{cloudStatus{State: "backoff", LastError: s("server refused the device (HTTP 404)")}, "does not know this device"},
+		{cloudStatus{State: "backoff", LastError: s("server refused the device (HTTP 403)")}, "deregistered"},
+		{cloudStatus{State: "backoff", LastError: s("websocket upgrade failed (HTTP 403)")}, "rejected"},
+		{cloudStatus{State: "backoff", LastError: s("connection lost")}, "unreliable"},
+	}
+	for _, c := range cases {
+		if got := cloudErrorHint(c.st, *orEmpty(c.st.LastError)); !strings.Contains(got, c.want) {
+			t.Errorf("cloudErrorHint(%+v) = %q, want it to mention %q", c.st, got, c.want)
+		}
+	}
+}
+
+func orEmpty(p *string) *string {
+	if p == nil {
+		e := ""
+		return &e
+	}
+	return p
 }
