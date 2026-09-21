@@ -127,12 +127,21 @@ homebrew_casks:
     # com.apple.quarantine attribute on install so `benchpod` runs without an
     # Apple Developer cert. This deliberately bypasses Gatekeeper for our own
     # binary; the alternative is paid Apple notarization (see README).
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/benchpod"]
-          end
+    #
+    # Homebrew 7 deprecates `postflight do` (what `hooks.post.install` renders
+    # to) and warns on every brew command, so write `postflight_steps` via
+    # custom_block instead. GoReleaser puts custom_block above `version`, which
+    # `brew style` flags as stanza order; that is cosmetic, install order is
+    # fixed by artifact type. The whole cask goes through one template pass,
+    # hence the escaped Homebrew `{{staged_path}}` token.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr",
+              args:         ["-dr", "com.apple.quarantine", "{{ `{{staged_path}}` }}/benchpod"],
+              must_succeed: false
+        end
+      end
     # No openocd dependency on purpose: `benchpod flash` needs a recent OpenOCD
     # with the cmsis_dap_tcp backend (`brew install --HEAD open-ocd`), which the
     # stable open-ocd formula doesn't provide — so we document it instead of
