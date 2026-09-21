@@ -81,3 +81,16 @@ func TestIsHTTPURL(t *testing.T) {
 		}
 	}
 }
+
+func TestDfuLeaveBenign(t *testing.T) {
+	ok := "Download done.\nFile downloaded successfully\nSubmitting leave request...\ndfu-util: Error during download get_status\n"
+	if !dfuLeaveBenign(true, ok) {
+		t.Fatal("a flash that completed before the :leave reset must count as success")
+	}
+	if dfuLeaveBenign(false, ok) {
+		t.Fatal("without :leave there is no benign failure")
+	}
+	if dfuLeaveBenign(true, "dfu-util: Cannot open DFU device 0483:df11\n") {
+		t.Fatal("a flash that never downloaded is a failure")
+	}
+}

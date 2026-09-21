@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -77,6 +78,14 @@ func isHTTPURL(s string) bool {
 }
 
 // dfuUtilDownloadArgs builds the dfu-util argument list to write `file` to the
+// dfuLeaveBenign reports whether a failing dfu-util run in fact flashed the pod. With `:leave`
+// the bootloader starts the new firmware at once, so dfu-util's final status poll finds no
+// device ("Error during download get_status") and it exits 74, after "File downloaded
+// successfully". That run succeeded; anything else did not.
+func dfuLeaveBenign(leave bool, output string) bool {
+	return leave && strings.Contains(output, "File downloaded successfully")
+}
+
 // STM32 main flash. The trailing `:leave` makes the bootloader start the new
 // firmware once the download verifies, instead of staying in DFU.
 func dfuUtilDownloadArgs(address string, leave bool, file string) []string {
@@ -139,15 +148,17 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			dfuArgs := dfuUtilDownloadArgs(f.address, !f.noLeave, file)
 			fmt.Fprintf(os.Stderr, "flash-self: flashing — %s %s\n", dfuPath, strings.Join(dfuArgs, " "))
 			c := flashSelfCommandContext(ctx, dfuPath, dfuArgs...)
-			c.Stdout = os.Stdout
-			c.Stderr = os.Stderr
-			if err := c.Run(); err != nil {
+			var out bytes.Buffer // also kept, to tell a real failure from the :leave one
+			c.Stdout = io.MultiWriter(os.Stdout, &out)
+			c.Stderr = io.MultiWriter(os.Stderr, &out)
+			if err := c.Run(); err != nil && !dfuLeaveBenign(!f.noLeave, out.String()) {
 				return fmt.Errorf("dfu-util: %w", err)
 			}
 			if f.noLeave {
 				fmt.Fprintln(os.Stderr, "flash-self: success — firmware written (device left in DFU mode)")
 			} else {
-				fmt.Fprintln(os.Stderr, "flash-self: success — the pod is rebooting into the new firmware")
+				fmt.Fprintln(os.Stderr, "flash-self: success, the pod is rebooting into the new firmware.")
+				fmt.Fprintln(os.Stderr, "  If `benchpod discover` does not find it within 30 s, unplug USB-C and plug it back in (without BOOT0).")
 			}
 			return nil
 		},
