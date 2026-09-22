@@ -8,11 +8,18 @@
 // (capture/stream/measure/test) chunk their data across multiple lines: the
 // first packet uses "status":"ok", later packets use "status":"chunk", and every
 // packet carries a "more" boolean — the client reads until "more":false.
+//
+// Samples asks for base64 ("enc":"b64"): a pod with the capture_b64 capability then sends
+// "b64" (unpadded base64url of little-endian uint16) instead of the decimal "data" array,
+// which reads back several times faster. Older firmware ignores the key and still sends
+// "data", so both are decoded.
 package tcpclient
 
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +56,7 @@ type Client struct {
 type reply struct {
 	Status  string          `json:"status"` // "ok" | "error" | "chunk"
 	Data    json.RawMessage `json:"data"`
+	B64     *string         `json:"b64"` // replaces Data when the request asked for "enc":"b64"
 	Message string          `json:"message"`
 	More    bool            `json:"more"`
 }
@@ -79,11 +87,19 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 	}
 }
 
-// Samples sends req and reassembles a (possibly chunked) uint8 array response
+// Samples sends req and reassembles a (possibly chunked) sample array response
 // into a single []int, reading packets until one reports "more":false. It is
 // used by capture, stream, measure, and test. Samples are stored as []int rather
 // than []byte to avoid encoding/json's base64 special-casing of byte slices.
 func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error) {
+	if _, set := req["enc"]; !set {
+		withEnc := make(map[string]any, len(req)+1)
+		for k, v := range req {
+			withEnc[k] = v
+		}
+		withEnc["enc"] = "b64"
+		req = withEnc
+	}
 	conn, reader, err := c.dialAndSend(ctx, req)
 	if err != nil {
 		return nil, err
@@ -99,7 +115,13 @@ func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error)
 		}
 		switch r.Status {
 		case "ok", "chunk":
-			if len(r.Data) > 0 && string(r.Data) != "null" {
+			if r.B64 != nil {
+				chunk, err := decodeB64Samples(*r.B64)
+				if err != nil {
+					return nil, fmt.Errorf("parse sample data: %w", err)
+				}
+				out = append(out, chunk...)
+			} else if len(r.Data) > 0 && string(r.Data) != "null" {
 				var chunk []int
 				if err := json.Unmarshal(r.Data, &chunk); err != nil {
 					return nil, fmt.Errorf("parse sample data: %w", err)
@@ -115,6 +137,23 @@ func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error)
 			return nil, fmt.Errorf("unexpected response status %q", r.Status)
 		}
 	}
+}
+
+// decodeB64Samples decodes one "b64" chunk: base64url (padding optional) of little-endian
+// uint16 samples.
+func decodeB64Samples(s string) ([]int, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(s, "="))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw)%2 != 0 {
+		return nil, fmt.Errorf("odd byte count %d in b64 samples", len(raw))
+	}
+	out := make([]int, len(raw)/2)
+	for i := range out {
+		out[i] = int(binary.LittleEndian.Uint16(raw[2*i:]))
+	}
+	return out, nil
 }
 
 // dialAndSend opens the TCP connection, applies the context deadline, writes req

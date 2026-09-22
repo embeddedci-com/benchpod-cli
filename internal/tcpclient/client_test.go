@@ -162,6 +162,39 @@ func TestSamplesMultiPacket(t *testing.T) {
 	}
 }
 
+func TestSamplesAsksForAndDecodesB64(t *testing.T) {
+	// "AAABAP__" = 0, 1, 65535; "NBL_fw" = 0x1234, 32767; "AIA=" = 32768 (padding tolerated).
+	addr, gotReq := mockServer(t, []string{
+		`{"status":"ok","bits":16,"b64":"AAABAP__","more":true}`,
+		`{"status":"chunk","b64":"NBL_fw","more":true}`,
+		`{"status":"chunk","b64":"AIA=","more":false}`,
+	})
+	c := &Client{Addr: addr}
+
+	req := map[string]any{"cmd": "capture", "samples": 6}
+	got, err := c.Samples(testContext(t), req)
+	if err != nil {
+		t.Fatalf("Samples: %v", err)
+	}
+	if want := []int{0, 1, 65535, 0x1234, 32767, 32768}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if sent := <-gotReq; sent["enc"] != "b64" {
+		t.Fatalf("server received enc = %v, want b64", sent["enc"])
+	}
+	if _, touched := req["enc"]; touched {
+		t.Fatal("Samples modified the caller's request map")
+	}
+}
+
+func TestSamplesRejectsBadB64(t *testing.T) {
+	addr, _ := mockServer(t, []string{`{"status":"ok","b64":"AAAA","more":false}`}) // 3 bytes
+	c := &Client{Addr: addr}
+	if _, err := c.Samples(testContext(t), map[string]any{"cmd": "capture"}); err == nil {
+		t.Fatal("an odd byte count must fail, not drop a sample")
+	}
+}
+
 func TestSamplesSinglePacket(t *testing.T) {
 	addr, _ := mockServer(t, []string{`{"status":"ok","data":[10,20,30],"more":false}`})
 	c := &Client{Addr: addr}
