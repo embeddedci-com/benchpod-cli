@@ -487,6 +487,97 @@ func TestWifiShowParse(t *testing.T) {
 	}
 }
 
+// wifiShowV3Interleaved is a wifi-show reply as a BenchPod v3 prints it while
+// Wi-Fi retries: async log lines before the echo, between the echo and the
+// first field, and between the fields.
+const wifiShowV3Interleaved = "[cloud] state -> backoff [BACKOFF]  retry in 5000 ms\r\n" +
+	"wifi-show\r\n" +
+	"[wifi] association failed — backoff\n" +
+	"  ssid: ATTQRSKVkI\r\n" +
+	"[esp] ESP32-C3 reset released — awaiting boot event\n" +
+	"  state: backoff\r\n" +
+	"[cloud] connect failed (no route)\n" +
+	"  ip: (none)\r\n" +
+	"[wifi] association failed — backoff\n" +
+	"  rssi: -128 dBm\r\n" +
+	"> "
+
+func TestWifiShowInterleavedLogLines(t *testing.T) {
+	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
+		out.WriteString(wifiShowV3Interleaved)
+	}}
+	st, err := newConsole(fc).WifiShow(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := WifiStatus{SSID: "ATTQRSKVkI", State: "backoff", IP: "(none)", RSSI: "-128 dBm"}
+	if st.SSID != want.SSID || st.State != want.State || st.IP != want.IP || st.RSSI != want.RSSI {
+		t.Fatalf("got ssid=%q state=%q ip=%q rssi=%q, want %+v", st.SSID, st.State, st.IP, st.RSSI, want)
+	}
+}
+
+// The firmware writes each reply line in one call but a log printf in chunks,
+// so a reply line can land in the middle of a log line.
+func TestParseWifiShowFieldInsideLogLine(t *testing.T) {
+	raw := "wifi-show\r\n" +
+		"[wifi] association failed  ssid: ATTQRSKVkI\r\n" +
+		" — backoff\n" +
+		"[esp] ESP32-C3 reset released  state: backoff\r\n" +
+		" — awaiting boot event\n" +
+		"  ip: (none)\r\n" +
+		"[wifi] connected  ip=10.9.9.9\n" + // a log "ip=" is not the reply's ip
+		"  rssi: \r\n" +
+		"> "
+	st := parseWifiShow(raw)
+	if st.SSID != "ATTQRSKVkI" || st.State != "backoff" || st.IP != "(none)" || st.RSSI != "" {
+		t.Fatalf("got ssid=%q state=%q ip=%q rssi=%q", st.SSID, st.State, st.IP, st.RSSI)
+	}
+}
+
+// A chunked log line such as "[cloud] state -> connected" can put "> " right
+// after one of the reply's line breaks. That is not the prompt: the read must
+// keep going until the prompt follows the last line.
+func TestWifiShowFalsePromptFromLogFragment(t *testing.T) {
+	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
+		out.WriteString("wifi-show\r\n")
+		out.WriteString("[cloud] state -")
+		out.WriteString("  ssid: ATTQRSKVkI\r\n")
+		out.WriteString("> connected [CONNECTED]\n")
+	}}
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		fc.mu.Lock()
+		fc.toRead.WriteString("  state: connected\r\n  ip: 192.168.1.221\r\n  rssi: -62 dBm\r\n> ")
+		fc.mu.Unlock()
+	}()
+	st, err := newConsole(fc).WifiShow(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.SSID != "ATTQRSKVkI" || st.State != "connected" || st.IP != "192.168.1.221" || st.RSSI != "-62 dBm" {
+		t.Fatalf("got ssid=%q state=%q ip=%q rssi=%q", st.SSID, st.State, st.IP, st.RSSI)
+	}
+}
+
+// A firmware that never prints the rssi line must not hang until the deadline:
+// the read gives up replyGrace after the prompt.
+func TestWifiShowNoRSSILineReturnsAfterGrace(t *testing.T) {
+	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
+		out.WriteString("wifi-show\r\n  ssid: Net\r\n  state: connected\r\n  ip: 10.0.0.2\r\n> ")
+	}}
+	start := time.Now()
+	st, err := newConsole(fc).WifiShow(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > replyGrace+500*time.Millisecond {
+		t.Fatalf("took %v, want about replyGrace", elapsed)
+	}
+	if st.SSID != "Net" || st.IP != "10.0.0.2" {
+		t.Fatalf("got ssid=%q ip=%q", st.SSID, st.IP)
+	}
+}
+
 func TestStatus(t *testing.T) {
 	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
 		if line != "status" {

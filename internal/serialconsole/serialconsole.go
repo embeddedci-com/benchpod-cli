@@ -378,6 +378,21 @@ func (c *Console) sendCommand(ctx context.Context, line string) (string, error) 
 //
 // Non-sensitive callers go through sendCommand (display == line, secret == "").
 func (c *Console) sendCommandRedacted(ctx context.Context, line, display, secret string) (string, error) {
+	return c.sendCommandUntil(ctx, line, display, secret, nil)
+}
+
+// replyGrace bounds how long sendCommandUntil keeps reading after a prompt
+// arrives before the reply looks complete. Async log lines are written in
+// chunks, so a fragment such as "> connected" can land right after one of the
+// reply's own line breaks and look like the prompt; the real prompt follows
+// within milliseconds. The grace only applies when complete() says the reply
+// is short, so a firmware that simply omits a line costs this much, no more.
+const replyGrace = 500 * time.Millisecond
+
+// sendCommandUntil is sendCommandRedacted with an optional completeness check:
+// when complete is non-nil, a prompt only ends the read once complete(acc)
+// reports the whole reply is there, or replyGrace after the first prompt.
+func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret string, complete func(string) bool) (string, error) {
 	c.logln("> %s", display)
 	if err := c.writeLine(line); err != nil {
 		return "", fmt.Errorf("write command: %w", err)
@@ -387,8 +402,13 @@ func (c *Console) sendCommandRedacted(ctx context.Context, line, display, secret
 	}
 
 	var acc []byte
+	var graceEnd time.Time // set when a prompt arrives before the reply is complete
 	buf := make([]byte, 512)
 	for {
+		if !graceEnd.IsZero() && time.Now().After(graceEnd) {
+			c.logln("< reply to %q looks incomplete; using what arrived (%d bytes)", display, len(acc))
+			return string(acc), nil
+		}
 		if err := ctx.Err(); err != nil {
 			c.logln("< no prompt after %q — timed out (%d bytes received: %q)",
 				display, len(acc), maskPassword(tail(acc, 120), secret))
@@ -399,8 +419,13 @@ func (c *Console) sendCommandRedacted(ctx context.Context, line, display, secret
 		if n > 0 {
 			acc = append(acc, buf[:n]...)
 			if promptSeen(string(acc), c.prompt) {
-				c.logln("< got prompt after %q (%d bytes)", display, len(acc))
-				return string(acc), nil
+				if complete == nil || complete(string(acc)) {
+					c.logln("< got prompt after %q (%d bytes)", display, len(acc))
+					return string(acc), nil
+				}
+				if graceEnd.IsZero() {
+					graceEnd = time.Now().Add(replyGrace)
+				}
 			}
 		}
 		if err != nil {
@@ -495,18 +520,82 @@ type WifiStatus struct {
 // WifiShow reports stored SSID, WiFi state, IP, and RSSI. Missing fields are
 // left empty rather than treated as errors, since async log lines may displace
 // them in a given capture window.
+//
+// While Wi-Fi retries, the firmware logs "[wifi] ...", "[esp] ..." and
+// "[cloud] ..." lines every few seconds from other tasks, and those are written
+// in chunks, so the reply's lines can land in the middle of one. The read waits
+// for the last line ("  rssi:") before it trusts a prompt, and the fields are
+// matched anywhere in a line (see wifiField).
 func (c *Console) WifiShow(ctx context.Context) (WifiStatus, error) {
-	out, err := c.sendCommand(ctx, "wifi-show")
+	out, err := c.sendCommandUntil(ctx, "wifi-show", "wifi-show", "", wifiShowComplete)
 	if err != nil {
 		return WifiStatus{Raw: out}, err
 	}
+	return parseWifiShow(out), nil
+}
+
+// parseWifiShow extracts the wifi-show fields from a captured reply.
+func parseWifiShow(out string) WifiStatus {
 	return WifiStatus{
-		SSID:  fieldValue(out, "ssid"),
-		State: fieldValue(out, "state"),
-		IP:    fieldValue(out, "ip"),
-		RSSI:  fieldValue(out, "rssi"),
+		SSID:  wifiField(out, "ssid"),
+		State: wifiField(out, "state"),
+		IP:    wifiField(out, "ip"),
+		RSSI:  wifiField(out, "rssi"),
 		Raw:   out,
-	}, nil
+	}
+}
+
+// wifiShowComplete reports whether the prompt has arrived after the reply's
+// last line. The firmware always prints "  rssi:" last, even with no value.
+func wifiShowComplete(acc string) bool {
+	i := strings.LastIndex(strings.ToLower(acc), "rssi:")
+	return i >= 0 && promptSeen(acc[i:], defaultPrompt)
+}
+
+// wifiField returns the value of a wifi-show "<label>:" line. A line that
+// starts with the label wins (the last one, so a stale earlier reply in the
+// same capture loses). Failing that, it looks for "  <label>:" inside a line
+// that starts with "[": a reply line that landed in the middle of an async log
+// line, e.g. "[wifi] association failed  ssid: Net". The two-space indent is
+// the firmware's, so log text such as "[wifi] connected  ip=..." never matches.
+func wifiField(s, label string) string {
+	s = strings.ReplaceAll(s, "\r", "\n")
+	if v, ok := lastFieldValue(s, label); ok {
+		return v
+	}
+	needle := "  " + strings.ToLower(label) + ":"
+	val, found := "", false
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "[") {
+			continue
+		}
+		if i := strings.LastIndex(strings.ToLower(line), needle); i >= 0 {
+			val, found = strings.TrimSpace(line[i+len(needle):]), true
+		}
+	}
+	if found {
+		return val
+	}
+	return ""
+}
+
+// lastFieldValue is fieldValue that keeps the last matching line and reports
+// whether any line matched, so an empty value ("  ssid: ") still counts.
+func lastFieldValue(s, label string) (string, bool) {
+	label = strings.ToLower(label)
+	val, found := "", false
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		for _, sep := range []string{":", "="} {
+			if prefix := label + sep; strings.HasPrefix(lower, prefix) {
+				val, found = strings.TrimSpace(trimmed[len(prefix):]), true
+				break
+			}
+		}
+	}
+	return val, found
 }
 
 // WifiClear erases stored credentials. A reboot is needed to fully apply.
