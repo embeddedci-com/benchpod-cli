@@ -177,16 +177,19 @@ func validSamples(n int) bool { return n >= 1 && n <= 4096 }
 
 func validOutput(o string) bool { return o == "json" || o == "csv" || o == "ndjson" }
 
+// laPinCount is the number of LA channels on the pod (LA1..LA14).
+const laPinCount = 14
+
 // parseLAPin parses a logic-analyzer pin reference for SWD wiring. These are no
-// longer GPIO numbers: they are the pod's LA pins (1-12) that map to the
-// ice40/FPGA. Accepts an optional "la" prefix, so "la1", "1", "la12", and "12"
-// are all valid.
+// longer GPIO numbers: they are the pod's LA pins (1-14) that map to the
+// ice40/FPGA. Accepts an optional "la" prefix, so "la1", "1", "la14", and "14"
+// are all valid. LA13/LA14 need pod firmware 3.1 or newer; older firmware rejects them.
 func parseLAPin(s string) (int, error) {
 	orig := strings.TrimSpace(s)
 	v := strings.TrimPrefix(strings.ToLower(orig), "la")
 	n, err := strconv.Atoi(strings.TrimSpace(v))
-	if err != nil || n < 1 || n > 12 {
-		return 0, fmt.Errorf("invalid LA pin %q (use 1-12, e.g. la1 or 1)", orig)
+	if err != nil || n < 1 || n > laPinCount {
+		return 0, fmt.Errorf("invalid LA pin %q (use 1-%d, e.g. la1 or 1)", orig, laPinCount)
 	}
 	return n, nil
 }

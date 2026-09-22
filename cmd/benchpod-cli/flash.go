@@ -58,7 +58,7 @@ type flashFlags struct {
 }
 
 // newFlashCmd builds the flash subcommand. It flashes an SWD target wired to the
-// pod's LA pins (1-12, mapped to the ice40/FPGA) by arming the pod's CMSIS-DAP
+// pod's LA pins (1-14, mapped to the ice40/FPGA) by arming the pod's CMSIS-DAP
 // probe, then running host-side OpenOCD bridged over the chosen transport. The
 // pod holds no flash intelligence; OpenOCD's exit code is the verdict.
 //
@@ -79,8 +79,8 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.swclk, "swclk", "", "LA pin for SWCLK, 1-12, e.g. 1 or la1 (required)")
-	fl.StringVar(&f.swdio, "swdio", "", "LA pin for SWDIO, 1-12, e.g. 2 or la2 (required)")
+	fl.StringVar(&f.swclk, "swclk", "", "LA pin for SWCLK, 1-14, e.g. 1 or la1 (required)")
+	fl.StringVar(&f.swdio, "swdio", "", "LA pin for SWDIO, 1-14, e.g. 2 or la2 (required)")
 	fl.BoolVar(&f.nreset, "nreset", false, "the target's NRST is wired to the pod's reset pin ("+nrstPinLocation+"); enables connect-under-reset")
 	fl.StringVar(&f.target, "target", "", "OpenOCD target config (passed as -f), e.g. target/stm32f1x.cfg")
 	fl.StringVar(&f.file, "file", "", "firmware image to flash (used with --target)")

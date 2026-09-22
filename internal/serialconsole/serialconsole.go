@@ -622,7 +622,7 @@ func (c *Console) Dfu(ctx context.Context) error {
 // closing the TCP connection returns the pod to a safe state. The firmware's 60s
 // inactivity watchdog is the backstop if Close never runs.
 //
-// swclk/swdio are LA pin numbers (1-12); the caller is responsible for
+// swclk/swdio are LA pin numbers (1-14); the caller is responsible for
 // parsing/validating them (see parseLAPin in the CLI). Target reset is not a
 // parameter: since pod rev3 nRESET is the pod's own pin on J1 pin 22, driven by
 // the firmware behind CMSIS-DAP SWJ_PINS.
