@@ -30,6 +30,19 @@ const dapHandshakeTimeout = 15 * time.Second
 // rather than relying on OpenOCD's connect retries.
 const targetPowerSettle = 250 * time.Millisecond
 
+// dapOptions are the dap_start extras the CLI asks for: 1 KB CMSIS-DAP packets, 4 in flight,
+// and (when the CLI just powered the target) up to targetAnswerWaitMS for it to answer SWD, so a
+// board that boots slowly (an STM32 NUCLEO: ~2.1 s) is not caught mid-boot by OpenOCD.
+const targetAnswerWaitMS = 5000
+
+func dapOptions(powered bool) tcpclient.DAPOptions {
+	o := tcpclient.DAPOptions{PacketSize: 1024, PacketCount: 4}
+	if powered {
+		o.WaitMS = targetAnswerWaitMS
+	}
+	return o
+}
+
 // Where the pod's target-reset line comes out, and where that is documented.
 // Since rev3 the pod drives NRST from its own pin, so --nreset no longer names an
 // LA channel — it just says whether the target's reset reaches that pin.
@@ -246,7 +259,7 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 			fmt.Fprintf(os.Stderr, "flash: target-power eFuse %d on\n", powerEfuse)
 			settle(ctx, targetPowerSettle)
 		}
-		conn, err := client.DAPStart(ctx, swclk, swdio)
+		conn, err := client.DAPStartWith(ctx, swclk, swdio, dapOptions(powerEfuse != 0))
 		if err != nil {
 			return nil, false, fmt.Errorf("flash: dap_start: %w", err)
 		}

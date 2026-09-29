@@ -29,7 +29,7 @@ func (c *Client) TargetPower(ctx context.Context, efuse int, on bool) error {
 // swallow probe bytes): it reads exactly the one ack line off the wire, then
 // returns the untouched connection for the caller to bridge to OpenOCD. The
 // caller owns closing it; closing returns the pod to a safe JSON state.
-func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int) (net.Conn, error) {
+func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int, extra map[string]any) (net.Conn, error) {
 	addr := strings.TrimSpace(c.Addr)
 	if addr == "" {
 		return nil, fmt.Errorf("bench pod address is empty; run `benchpod set-connection <addr>` first")
@@ -48,6 +48,9 @@ func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int)
 	}
 
 	req := map[string]any{"cmd": cmd, "swclk": swclk, "swdio": swdio}
+	for k, v := range extra {
+		req[k] = v
+	}
 	line, err := json.Marshal(req)
 	if err != nil {
 		conn.Close()

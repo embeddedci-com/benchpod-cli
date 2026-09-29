@@ -35,9 +35,11 @@ const (
 	dapTCPHeaderLen = 8
 	// dapPktResponse is the packet_type OpenOCD expects on device->host frames.
 	dapPktResponse = 0x02
-	// dapMaxPacket mirrors DAP_PACKET_SIZE in the firmware (dap.h) and the pod's
-	// 2-byte frame limit; OpenOCD learns it from DAP_Info.
-	dapMaxPacket = 256
+	// dapMaxPacket is the largest frame the bridge passes: DAP_PACKET_SIZE in the firmware
+	// (dap.h). What the pod actually uses is negotiated in dap_start (256 unless asked) and
+	// OpenOCD learns it from DAP_Info. Up to 0.1.5 this was 256, and a pod advertising more
+	// broke the bridge; that is why the firmware keeps 256 as the default.
+	dapMaxPacket = 1024
 )
 
 // dapStrategy bridges OpenOCD's `cmsis-dap backend tcp` adapter to the pod's

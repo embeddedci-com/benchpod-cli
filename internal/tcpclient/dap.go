@@ -27,5 +27,32 @@ import (
 // /NRST_CONTROL pin (J1 pin 22), driven by the firmware behind CMSIS-DAP
 // SWJ_PINS — it is no longer an LA channel the host has to name.
 func (c *Client) DAPStart(ctx context.Context, swclk, swdio int) (net.Conn, error) {
-	return c.startRawMode(ctx, "dap_start", swclk, swdio)
+	return c.DAPStartWith(ctx, swclk, swdio, DAPOptions{})
+}
+
+// DAPOptions are the optional dap_start fields. Pod firmware that predates them ignores them.
+type DAPOptions struct {
+	// PacketSize / PacketCount ask the pod to advertise larger CMSIS-DAP packets and several in
+	// flight (DAP_Info); 0 keeps the pod's default of 256 x 1. Each packet is a host + network
+	// round trip, so fewer, larger packets flash faster, most of all over the cloud.
+	PacketSize  int
+	PacketCount int
+	// WaitMS makes the pod wait, up to this long, for the target to answer SWD before it acks:
+	// for a target whose rail was just switched on (an STM32 NUCLEO needs ~2.1 s).
+	WaitMS int
+}
+
+// DAPStartWith is DAPStart with the optional dap_start fields.
+func (c *Client) DAPStartWith(ctx context.Context, swclk, swdio int, o DAPOptions) (net.Conn, error) {
+	extra := map[string]any{}
+	if o.PacketSize > 0 {
+		extra["packet_size"] = o.PacketSize
+	}
+	if o.PacketCount > 0 {
+		extra["packet_count"] = o.PacketCount
+	}
+	if o.WaitMS > 0 {
+		extra["wait_ms"] = o.WaitMS
+	}
+	return c.startRawMode(ctx, "dap_start", swclk, swdio, extra)
 }

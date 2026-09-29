@@ -56,3 +56,38 @@ func TestDAPStartError(t *testing.T) {
 		t.Errorf("error = %q, want %q", err.Error(), "swd busy")
 	}
 }
+
+func TestDAPStartWithSendsOptions(t *testing.T) {
+	addr, gotReq := mockServer(t, []string{`{"status":"ok","data":"dap ready"}`})
+	c := &Client{Addr: addr}
+
+	conn, err := c.DAPStartWith(testContext(t), 2, 3, DAPOptions{PacketSize: 1024, PacketCount: 4, WaitMS: 5000})
+	if err != nil {
+		t.Fatalf("DAPStartWith: %v", err)
+	}
+	defer conn.Close()
+
+	req := <-gotReq
+	if req["packet_size"] != float64(1024) || req["packet_count"] != float64(4) || req["wait_ms"] != float64(5000) {
+		t.Errorf("options = %v", req)
+	}
+}
+
+// DAPStart without options must not send them: the pod then keeps its 256 x 1 default.
+func TestDAPStartSendsNoOptions(t *testing.T) {
+	addr, gotReq := mockServer(t, []string{`{"status":"ok","data":"dap ready"}`})
+	c := &Client{Addr: addr}
+
+	conn, err := c.DAPStart(testContext(t), 2, 3)
+	if err != nil {
+		t.Fatalf("DAPStart: %v", err)
+	}
+	defer conn.Close()
+
+	req := <-gotReq
+	for _, k := range []string{"packet_size", "packet_count", "wait_ms"} {
+		if _, ok := req[k]; ok {
+			t.Errorf("%s present in request, want omitted: %v", k, req)
+		}
+	}
+}
