@@ -97,5 +97,12 @@ func sessionErr(ctx context.Context, err error) error {
 	return readErr(ctx, err)
 }
 
+// Broken reports whether an earlier I/O failure made the session unusable.
+func (s *Session) Broken() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.broken != nil
+}
+
 // Close closes the connection.
 func (s *Session) Close() error { return s.conn.Close() }

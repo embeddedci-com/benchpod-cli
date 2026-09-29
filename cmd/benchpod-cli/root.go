@@ -93,6 +93,7 @@ func newRootCmd() *cobra.Command {
 		newLACmd(g),
 		newFlashCmd(g),
 		newFlashSelfCmd(g),
+		newSPIFlashCmd(g),
 		newSetWifiCmd(g),
 		newShowNetworkCmd(g),
 		newClearWifiCmd(g),

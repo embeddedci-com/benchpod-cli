@@ -95,6 +95,9 @@ func TestSessionBrokenAfterTimeout(t *testing.T) {
 	if _, err := s.Command(ctx, map[string]any{"cmd": "hang"}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("hang: got %v, want deadline exceeded", err)
 	}
+	if !s.Broken() {
+		t.Fatal("Broken() = false after a lost reply")
+	}
 	if _, err := s.Command(testContext(t), map[string]any{"cmd": "ping"}); err == nil {
 		t.Fatal("a session that lost a reply must refuse further commands")
 	}
