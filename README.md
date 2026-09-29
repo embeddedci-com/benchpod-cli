@@ -3,8 +3,8 @@
 `benchpod` is the EmbeddedCI **bench pod** command-line tool. It talks to a
 bench pod either over its TCP/JSON API (port 8080) or over its USB console
 (CDC-ACM), and drives the pod's hardware: GPIO, signal generation,
-measurement, scope capture/streaming, Wi-Fi configuration, BOOTSEL, and
-firmware flashing over SWD.
+measurement, scope capture/streaming, Wi-Fi configuration, BOOTSEL,
+firmware flashing over SWD, and SPI NOR flash programming.
 
 ## Installation
 
@@ -126,6 +126,7 @@ benchpod clear-wifi
 
 # Firmware:
 benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP)
+benchpod spi-flash ...    # read/erase/program an SPI NOR flash on four LA pins (network)
 benchpod bootsel          # reboot an RP2350 pod into its UF2 bootloader (USB console only)
 benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (USB console only)
 benchpod flash-self                  # fetch latest firmware + flash the POD over USB DFU (STM32)
@@ -179,6 +180,34 @@ backend up front and fails with clear advice if it is missing.
 
 The legacy per-bit `remote_bitbang` path has been retired — the pod no longer
 speaks it.
+
+#### SPI flash
+
+`spi-flash` reads, erases and programs a 25-series SPI NOR flash (W25Q, MX25,
+GD25, IS25, ...) wired to four LA pins, through the pod's SPI master. It needs
+gateware v45 or newer (`spi_master` in the `status` caps; the CLI checks first)
+and the LA voltage set. Network (TCP) connection only for now.
+
+```bash
+PINS="--sck 3 --mosi 4 --miso 5 --cs 6"
+benchpod spi-flash id $PINS                          # JEDEC ID, size, status register
+benchpod spi-flash write fw.bin $PINS --nreset       # erase, program, verify
+benchpod spi-flash write app.bin $PINS --addr 0x100000 --hz 4000000
+benchpod spi-flash read dump.bin $PINS               # whole part (or --addr/--len, e.g. --len 1M)
+benchpod spi-flash erase $PINS --addr 0 --len 64K    # or --chip
+```
+
+`write` erases the range the file covers (whole 4 KB sectors, 1 MB per command),
+programs it in 768-byte chunks, and has the pod read every chunk back
+(`--no-erase`, `--no-verify` skip those steps). `--hz` picks the SCK rate (the
+pod rounds down, 190 kHz to 6 MHz) and `--mode` is 0 or 3. 3-byte addresses
+reach the first 16 MB.
+
+With `--nreset` the DUT is held in reset (its NRST wired to the pod's reset
+pin) for the whole run, so its own controller stays off the SPI bus. At the end
+the CLI always releases the SPI pins and then the reset, also after an error or
+Ctrl-C. The pod does not clear block-protect bits; a part that ships protected
+fails the write with "write enable did not stick".
 
 #### Flashing the pod itself (STM32, USB DFU)
 
@@ -267,9 +296,10 @@ cross-platform break is caught before tagging.
 | Path                       | Purpose                                                                       |
 |----------------------------|-------------------------------------------------------------------------------|
 | `cmd/benchpod-cli/`        | CLI entry point and all subcommands (Cobra + Viper).                          |
-| `internal/tcpclient/`      | TCP/JSON API client (commands, identity, SWD).                                |
+| `internal/tcpclient/`      | TCP/JSON API client (commands, sessions, identity, SWD).                      |
 | `internal/serialconsole/`  | USB CDC-ACM serial console client and port auto-detection.                    |
 | `internal/openocd/`        | OpenOCD wrapper used by the `flash` command.                                  |
+| `internal/spiflash/`       | SPI NOR flash driver over the pod's `spi_*` JSON commands (`spi-flash`).      |
 | `internal/benchpodconfig/` | Local config (the saved `set-connection` target).                            |
 | `internal/serverapi/`      | HTTP client for `embeddedci-server` (device-login, refresh).                  |
 | `internal/authstore/`      | Token cache (`~/.config/benchpod-cli/token.json`).                            |
