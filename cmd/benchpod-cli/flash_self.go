@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/spf13/cobra"
 )
 
@@ -60,6 +61,8 @@ type flashSelfFlags struct {
 	wait        time.Duration
 	firmwareURL string
 	firmwareVer string
+	skipBlobs   bool
+	blobsDir    string
 }
 
 // firmwareReleaseURL returns the GitHub release download URL for the STM32
@@ -144,7 +147,13 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 				return err
 			}
 
-			// 3. Hand off to dfu-util.
+			// 3. Refuse an image that does not fit this pod's flash (a 1 MB H563 cannot take
+			//    firmware built for the 2 MB part).
+			if err := checkImageFitsPod(ctx, dfuPath, file); err != nil {
+				return err
+			}
+
+			// 4. Hand off to dfu-util.
 			dfuArgs := dfuUtilDownloadArgs(f.address, !f.noLeave, file)
 			fmt.Fprintf(os.Stderr, "flash-self: flashing — %s %s\n", dfuPath, strings.Join(dfuArgs, " "))
 			c := flashSelfCommandContext(ctx, dfuPath, dfuArgs...)
@@ -158,6 +167,15 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 				fmt.Fprintln(os.Stderr, "flash-self: success — firmware written (device left in DFU mode)")
 			} else {
 				fmt.Fprintln(os.Stderr, "flash-self: success, the pod is rebooting into the new firmware.")
+				if !f.skipBlobs {
+					// 5. The gateware and ESP32-C3 images live in the pod's W25Q, not in the
+					//    firmware: install the ones that go with it over the same cable.
+					src := blobSourceForFirmware(arg, f.firmwareURL, f.firmwareVer)
+					if strings.TrimSpace(f.blobsDir) != "" {
+						src = blobSource{base: f.blobsDir}
+					}
+					return installBlobsAfterFlash(g, src)
+				}
 				fmt.Fprintln(os.Stderr, "  If `benchpod discover` does not find it within 30 s, unplug USB-C and plug it back in (without BOOT0).")
 			}
 			return nil
@@ -171,6 +189,8 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 	fl.DurationVar(&f.wait, "wait", 60*time.Second, "how long to wait for the pod to enter / re-enumerate in DFU mode")
 	fl.StringVar(&f.firmwareURL, "firmware-url", "", "override the firmware download URL (default: the latest public release)")
 	fl.StringVar(&f.firmwareVer, "firmware-version", "", "fetch a specific firmware release tag instead of the latest")
+	fl.BoolVar(&f.skipBlobs, "skip-blobs", false, "do not install the gateware and ESP32-C3 images after flashing")
+	fl.StringVar(&f.blobsDir, "blobs-dir", "", "take the blobs from this directory instead of next to the firmware")
 	return cmd
 }
 
@@ -376,4 +396,107 @@ func waitForDfuDevice(ctx context.Context, dfuPath string, wait time.Duration) e
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+// fwInfoOffset is where every firmware image carries its fw_info block (stm32h563/src/fw_info.h):
+// magic "BPFW", layout, min_flash_kb.
+const fwInfoOffset = 0x400
+
+// imageNeedsKB reads the internal flash an image needs. Images from before the block existed
+// were all built for the 2 MB part.
+func imageNeedsKB(image []byte) int {
+	if len(image) < fwInfoOffset+16 || string(image[fwInfoOffset:fwInfoOffset+4]) != "BPFW" {
+		return 2048
+	}
+	kb := int(image[fwInfoOffset+6]) | int(image[fwInfoOffset+7])<<8
+	if kb == 0 {
+		return 2048
+	}
+	return kb
+}
+
+// dfuFlashKB reads the internal flash size from `dfu-util -l`: the ST bootloader names its
+// flash alt setting like "@Internal Flash   /0x08000000/256*08Kg" (sector count * size). 0 when
+// there is no such line.
+func dfuFlashKB(listing string) int {
+	i := strings.Index(listing, "/0x08000000/")
+	if i < 0 {
+		return 0
+	}
+	spec := listing[i+len("/0x08000000/"):]
+	if j := strings.IndexAny(spec, "\"' \n"); j >= 0 {
+		spec = spec[:j]
+	}
+	total := 0
+	for _, part := range strings.Split(spec, ",") {
+		var n, size int
+		var unit byte
+		if _, err := fmt.Sscanf(part, "%d*%d%c", &n, &size, &unit); err != nil {
+			return 0
+		}
+		switch unit {
+		case 'K':
+			total += n * size
+		case 'M':
+			total += n * size * 1024
+		case 'B', ' ':
+			total += n * size / 1024
+		default:
+			return 0
+		}
+	}
+	return total
+}
+
+// checkImageFitsPod refuses to DFU an image the pod in DFU mode cannot hold.
+func checkImageFitsPod(ctx context.Context, dfuPath, file string) error {
+	image, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("firmware file: %w", err)
+	}
+	need := imageNeedsKB(image)
+	lc, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, _ := flashSelfCommandContext(lc, dfuPath, "-l").CombinedOutput()
+	have := dfuFlashKB(string(out))
+	if have == 0 {
+		fmt.Fprintln(os.Stderr, "flash-self: could not read the pod's flash size from dfu-util; not checking the image fits")
+		return nil
+	}
+	if need > have {
+		return fmt.Errorf("this firmware needs %d KB of flash and the pod has %d KB: it was built for the 2 MB H563; use a newer release", need, have)
+	}
+	return nil
+}
+
+// installBlobsAfterFlash waits for the freshly flashed pod's USB console, then installs the
+// blobs that go with its firmware. A pod whose firmware still embeds its blobs (older releases)
+// has no slots to fill and is left alone.
+func installBlobsAfterFlash(g *globalFlags, src blobSource) error {
+	fmt.Fprintln(os.Stderr, "flash-self: waiting for the pod's USB console to install its blobs...")
+	var console *serialconsole.Console
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		c, _, err := g.openBenchpodSerial(g.serialDevice(), 2*time.Second)
+		if err == nil {
+			console = c
+			break
+		}
+		if time.Now().After(deadline) {
+			fmt.Fprintln(os.Stderr, "flash-self: the pod's USB console did not come back; unplug USB-C and plug it back in (without BOOT0), then run `benchpod install-blobs`")
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	defer console.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), blobsInstallTimeout)
+	defer cancel()
+	if _, err := console.Blobs(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "flash-self: this firmware keeps its blobs built in; nothing to install")
+		return nil
+	}
+	if err := installBlobs(ctx, console, src, false, nil); err != nil {
+		return fmt.Errorf("flash-self: the firmware is flashed, but installing its blobs failed (retry with `benchpod install-blobs`): %w", err)
+	}
+	return nil
 }
