@@ -34,13 +34,15 @@ type podUploadSim struct {
 	state   string
 
 	corruptChunkAt int // offset of a chunk whose first arrival is corrupted (-1 = none)
+	muteReplyAt    int // offset of a chunk staged fine but whose reply is lost (-1 = none)
+	received       int // staged high-water mark, as upload-status reports it
 	busyChunkAt    int // offset of a chunk refused once with "busy" (-1 = none)
 	committed      map[string][]byte
 	versions       map[string]int
 }
 
 func newPodUploadSim() *podUploadSim {
-	return &podUploadSim{corruptChunkAt: -1, busyChunkAt: -1,
+	return &podUploadSim{corruptChunkAt: -1, busyChunkAt: -1, muteReplyAt: -1,
 		committed: map[string][]byte{}, versions: map[string]int{}}
 }
 
@@ -112,6 +114,7 @@ func (p *podUploadSim) exec(ln string) {
 		p.sha = f[3]
 		p.version, _ = strconv.Atoi(f[4])
 		p.staged = make([]byte, p.size)
+		p.received = 0
 		p.state = "receiving"
 		p.out.WriteString("[ota] begin\r\n") // log noise between echo and reply
 		p.reply("upload-begin ok")
@@ -136,6 +139,8 @@ func (p *podUploadSim) exec(ln string) {
 			return
 		}
 		p.reply("upload-commit ok")
+	case "upload-status":
+		p.reply("upload-status %s %s %d/%d -", p.state, p.target, p.received, p.size)
 	case "upload-abort":
 		p.state = "idle"
 		p.reply("upload-abort ok")
@@ -166,6 +171,13 @@ func (p *podUploadSim) chunkDone() {
 		return
 	}
 	copy(p.staged[p.rawOff:], buf)
+	if end := p.rawOff + len(buf); end > p.received {
+		p.received = end
+	}
+	if p.rawOff == p.muteReplyAt {
+		p.muteReplyAt = -1
+		return // staged, but the reply never reaches the host
+	}
 	p.reply("upload-data ok %d", p.rawOff)
 }
 
@@ -256,5 +268,23 @@ func TestBlobsParse(t *testing.T) {
 	}
 	if !slots[1].NeedsInstall() || !slots[2].NeedsInstall() || slots[2].SHA256 != "" {
 		t.Fatalf("gw1/esp: %+v %+v", slots[1], slots[2])
+	}
+}
+
+// A chunk that landed but whose reply was lost (a console busy right after boot) is confirmed
+// with upload-status rather than failing the upload.
+func TestUploadSurvivesALostReply(t *testing.T) {
+	orig := uploadReplyTimeout
+	uploadReplyTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { uploadReplyTimeout = orig })
+	sim := newPodUploadSim()
+	sim.muteReplyAt = 2 * UploadChunk
+	c := newConsole(sim)
+	img := testImage(4*UploadChunk + 9)
+	if err := c.Upload(context.Background(), "gw0", img, 45, nil); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if !bytes.Equal(sim.committed["gw0"], img) {
+		t.Fatal("the pod committed different bytes than were sent")
 	}
 }
