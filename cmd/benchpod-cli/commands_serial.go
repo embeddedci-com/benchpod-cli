@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -22,7 +23,7 @@ import (
 
 func newSetWifiCmd(g *globalFlags) *cobra.Command {
 	var ssid, password string
-	var passwordStdin bool
+	var passwordStdin, skipBlobs bool
 	cmd := &cobra.Command{
 		Use:   "set-wifi",
 		Short: "Save WiFi credentials and join (over the pod's USB console)",
@@ -46,6 +47,14 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 			}
 			defer cancel()
 			defer console.Close()
+
+			// Wi-Fi runs on the ESP32-C3, whose image the pod keeps in its W25Q: a pod without
+			// it (fresh board, no network) can only get it over this cable.
+			if !skipBlobs {
+				if err := ensureEspBlob(console); err != nil {
+					return fmt.Errorf("set-wifi: %w", err)
+				}
+			}
 
 			res, err := console.WifiSet(ctx, ssid, pw)
 			// Echo the firmware's WiFi/TCP/ESP32 bring-up lines (incl. the
@@ -81,7 +90,27 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&ssid, "ssid", "", "WiFi SSID (required)")
 	cmd.Flags().StringVar(&password, "password", "", "WiFi password (insecure: visible in shell history); omit to be prompted")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the WiFi password from the first line of stdin")
+	cmd.Flags().BoolVar(&skipBlobs, "skip-blobs", false, "do not install a missing ESP32-C3 image first")
 	return cmd
+}
+
+// ensureEspBlob installs the blobs from the pod's firmware release when its ESP32-C3 slot is
+// empty or holds a different image. Firmware that still embeds its blobs has no slots: nothing
+// to do.
+func ensureEspBlob(console *serialconsole.Console) error {
+	ctx, cancel := context.WithTimeout(context.Background(), blobsInstallTimeout)
+	defer cancel()
+	slots, err := console.Blobs(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, s := range slots {
+		if s.Name == "esp" && s.NeedsInstall() {
+			fmt.Fprintln(os.Stderr, "set-wifi: the pod has no ESP32-C3 image for Wi-Fi yet; installing it over USB first")
+			return installBlobs(ctx, console, releaseBlobSource(podFirmwareRelease(ctx, console)), false, nil)
+		}
+	}
+	return nil
 }
 
 // ── show-network ─────────────────────────────────────────────────────────────
