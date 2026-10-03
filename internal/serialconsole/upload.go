@@ -26,12 +26,14 @@ import (
 // UploadChunk is the largest upload-data chunk the firmware takes.
 const UploadChunk = 512
 
-const (
+// Vars only so tests can shorten them.
+var (
 	uploadReplyTimeout  = 5 * time.Second   // begin, one chunk
 	uploadEndTimeout    = 30 * time.Second  // the pod hashes the whole staged image
 	uploadCommitTimeout = 180 * time.Second // erase + program + hash back a 4 MB slot, or a gateware swap
-	uploadChunkAttempts = 5
 )
+
+const uploadChunkAttempts = 5
 
 // BlobSlot is one line of the firmware's `blobs` command.
 type BlobSlot struct {
@@ -138,7 +140,10 @@ func (c *Console) Upload(ctx context.Context, target string, data []byte, versio
 	return nil
 }
 
-// uploadChunk sends one chunk and waits for "ok", resending on retry/busy.
+// uploadChunk sends one chunk and waits for "ok", resending on retry/busy. A chunk whose reply
+// never comes (the pod's console can stall for seconds while it is still booting) is not resent
+// blindly: the pod is first asked how far it got, so a chunk that did land is not sent twice into
+// a receive ring that may still hold it.
 func (c *Console) uploadChunk(ctx context.Context, off int, chunk []byte) error {
 	head := fmt.Sprintf("upload-data %d %d %08x\n", off, len(chunk), crc32.ChecksumIEEE(chunk))
 	frame := append([]byte(head), chunk...)
@@ -149,7 +154,17 @@ func (c *Console) uploadChunk(ctx context.Context, off int, chunk []byte) error 
 		}
 		reply, err := c.awaitReply(ctx, "upload-data", uploadReplyTimeout)
 		if err != nil {
-			return fmt.Errorf("chunk at %d: %w", off, err)
+			if ctx.Err() != nil {
+				return fmt.Errorf("chunk at %d: %w", off, err)
+			}
+			got, serr := c.uploadReceived(ctx)
+			if serr == nil && got >= off+len(chunk) {
+				c.logln("< chunk at %d: reply lost, but the pod has it", off)
+				return nil
+			}
+			last = "no reply"
+			c.logln("< chunk at %d: no reply (attempt %d)", off, attempt)
+			continue
 		}
 		if strings.HasPrefix(reply, "ok") {
 			return nil
@@ -164,6 +179,39 @@ func (c *Console) uploadChunk(ctx context.Context, off int, chunk []byte) error 
 		}
 	}
 	return fmt.Errorf("chunk at %d: %s", off, last)
+}
+
+// uploadStatusWait is how long to wait for upload-status after a chunk reply went missing: long
+// enough for a console that is busy right after boot to catch up.
+const uploadStatusWait = 15 * time.Second
+
+// uploadReceived asks the pod how many bytes of the current upload it has staged.
+func (c *Console) uploadReceived(ctx context.Context) (int, error) {
+	if err := c.writeLine("upload-status"); err != nil {
+		return 0, err
+	}
+	rctx, cancel := context.WithTimeout(ctx, uploadStatusWait)
+	defer cancel()
+	for {
+		ln, err := c.readLine(rctx)
+		if err != nil {
+			return 0, err
+		}
+		i := strings.Index(ln, "upload-status ")
+		if i < 0 {
+			continue
+		}
+		// "upload-status <state> <target> <received>/<size> <error>"
+		f := strings.Fields(ln[i+len("upload-status "):])
+		if len(f) < 3 || !strings.Contains(f[2], "/") {
+			continue // the echo of the command
+		}
+		n, err := strconv.Atoi(f[2][:strings.Index(f[2], "/")])
+		if err != nil {
+			continue
+		}
+		return n, nil
+	}
 }
 
 // uploadReplyWords are the first words of a reply (as opposed to the echo of the command,
