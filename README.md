@@ -70,6 +70,13 @@ shells out to **dfu-util**. The Homebrew cask declares it as a dependency, so
 otherwise `brew install dfu-util` (or your distro's package). See
 [Flashing the pod itself](#flashing-the-pod-itself-stm32-usb-dfu) below.
 
+Firmware from 3.5.0 on keeps the iCE40 gateware and the ESP32-C3 Wi-Fi image in the pod's
+W25Q flash rather than in its image. After writing the firmware, `flash-self` waits for the
+pod's USB console and installs the ones it lacks from the same release (or from `blobs/`
+next to a local `.bin`); `install-blobs` does that step on its own, and `set-wifi` runs it
+first when the ESP32-C3 image is missing. `flash-self` also refuses an image that does not
+fit the pod's flash (a 1 MB STM32H563 cannot take firmware built for the 2 MB part).
+
 ## Connection
 
 The global `--connection` flag is the single place that says where and how to
@@ -132,6 +139,8 @@ benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (USB
 benchpod flash-self                  # fetch latest firmware + flash the POD over USB DFU (STM32)
 benchpod flash-self --enter-dfu      # …rebooting a running pod into DFU first
 benchpod flash-self ./fw.bin         # …flashing a specific local build instead
+benchpod install-blobs               # gateware + ESP32-C3 images the pod's firmware goes with (USB)
+benchpod install-blobs --dir stm32h563/build/blobs   # …from a local firmware build
 
 # Cloud auth (optional):
 benchpod login [--server-url https://www.embeddedci.com]
