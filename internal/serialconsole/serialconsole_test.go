@@ -966,3 +966,14 @@ func TestParseSerialPodOlderFirmwareLeavesCloudUnknown(t *testing.T) {
 		t.Fatal("unknown must not read as registered")
 	}
 }
+
+// portGone: EOF and wrapped EOF count; an unrelated error does not. (go.bug.st/serial's
+// PortClosed error cannot be built outside its package; portGone matches it by Code().)
+func TestPortGone(t *testing.T) {
+	if !portGone(io.EOF) || !portGone(errors.Join(errors.New("read"), io.EOF)) {
+		t.Error("EOF must count as the port going away")
+	}
+	if portGone(errors.New("read serial: some other failure")) {
+		t.Error("an unrelated error must not count")
+	}
+}

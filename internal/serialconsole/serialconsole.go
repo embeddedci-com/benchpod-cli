@@ -96,6 +96,18 @@ const dapFlushDelay = 50 * time.Millisecond
 // port disappears).
 var errPortVanished = errors.New("USB console vanished (device rebooted)")
 
+// portGone reports whether a read error means the USB console went away (the device
+// rebooted). Linux gives EOF; macOS gives go.bug.st/serial's PortClosed error instead,
+// which made `flash-self --enter-dfu` fail with "read serial: Port has been closed"
+// although the pod had entered DFU.
+func portGone(err error) bool {
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	var pe *serial.PortError
+	return errors.As(err, &pe) && pe.Code() == serial.PortClosed
+}
+
 // portLister is a test seam mirroring capabilities.serialPortLister so unit
 // tests can enumerate fake ports without touching real USB.
 var portLister = enumerator.GetDetailedPortsList
@@ -429,7 +441,7 @@ func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret st
 			}
 		}
 		if err != nil {
-			if errors.Is(err, io.EOF) {
+			if portGone(err) {
 				return string(acc), errPortVanished
 			}
 			return string(acc), fmt.Errorf("read serial: %w", err)
@@ -686,7 +698,7 @@ func (c *Console) Bootsel(ctx context.Context) error {
 // analog of Bootsel; RP2350 pods don't have this command). The device then
 // re-enumerates as an STM32 DFU device and the firmware can be rewritten with
 // dfu-util (see the `flash-self` command). Success is either the "entering DFU"
-// marker or the port vanishing (EOF) as USB re-enumerates right after.
+// marker or the port vanishing (EOF, or PortClosed on macOS) as USB re-enumerates.
 func (c *Console) Dfu(ctx context.Context) error {
 	out, err := c.sendCommand(ctx, "dfu")
 	if strings.Contains(out, "entering DFU") {
@@ -795,7 +807,7 @@ func (c *Console) readLine(ctx context.Context) (string, error) {
 			buf = append(buf, b[0])
 		}
 		if err != nil {
-			if errors.Is(err, io.EOF) {
+			if portGone(err) {
 				return string(buf), errPortVanished
 			}
 			return string(buf), fmt.Errorf("read serial: %w", err)
