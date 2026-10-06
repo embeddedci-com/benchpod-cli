@@ -181,6 +181,10 @@ type Console struct {
 	// logf, when non-nil, receives human-readable diagnostics (connection +
 	// per-command activity). Open wires it to serialLogf; tests leave it nil.
 	logf func(format string, args ...any)
+	// sigProbed / sigSupported cache whether the firmware takes upload-sig (asked once per
+	// console session, on the first signed upload).
+	sigProbed    bool
+	sigSupported bool
 }
 
 // serialLogf emits a "[serial] " diagnostic line to the standard logger (stderr),
