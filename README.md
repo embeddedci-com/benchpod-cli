@@ -109,7 +109,7 @@ Only `flash` (SWD) is implemented over the USB console today; the other
 TCP/JSON commands reject a USB connection with a clear message. The
 `set-wifi` / `show-network` / `clear-wifi` and `bootsel` subcommands always use
 the USB console regardless of `--connection` (a device path still selects
-the port).
+the port). `lan-policy` and `sig-policy` work over USB as well.
 
 ## CLI usage
 
@@ -155,6 +155,12 @@ benchpod install-blobs --dir stm32h563/build/blobs   # …from a local firmware 
 benchpod login [--server-url https://www.embeddedci.com]
 benchpod register ...
 benchpod deregister ...
+
+# Pod policies (cloud with --device-name, or USB):
+benchpod lan-policy --device-name benchpod-baea06          # show
+benchpod lan-policy set locked --device-name benchpod-baea06
+benchpod sig-policy --connection usb                       # show
+benchpod sig-policy set permissive --connection usb
 ```
 
 `deregister` is the inverse of `register`: it detaches the pod from the
@@ -181,6 +187,42 @@ disabling an account deregisters its pods automatically.
 `--device-name`. Names identify pods, so each is unique within an organization:
 if another pod already has it, pick another name. It then waits up to `--wait` (default 30s) for the pod to connect, and if it does
 not, prints the pod's last connection error and exits non-zero.
+
+#### Pod policies: LAN and signatures
+
+Two settings the pod keeps in its config flash:
+
+| `lan-policy` | What the LAN TCP port allows                                              |
+|--------------|---------------------------------------------------------------------------|
+| `open`       | everything (the default)                                                   |
+| `locked`     | read and instrument control only; config and firmware need cloud or USB   |
+| `off`        | nothing: no LAN listener, no mDNS. The cloud and USB keep working          |
+
+| `sig-policy` | How firmware and blob signatures are treated                              |
+|--------------|---------------------------------------------------------------------------|
+| `audit`      | every image is accepted; signatures are only reported                     |
+| `permissive` | unsigned images are accepted, a bad signature is refused                  |
+| `required`   | unsigned images are refused                                               |
+
+`benchpod lan-policy` and `benchpod sig-policy` show the policy; `... set <value>`
+changes it. Pick the pod with `--device-name` / `--device-id` (through
+embeddedci.com, like `deregister`) or with `--connection usb`. Over the LAN the
+commands can only show the policy: the pod refuses changes from the LAN.
+
+```
+$ benchpod lan-policy --device-name benchpod-baea06
+LAN policy of benchpod-baea06: locked (read and instrument control only on the LAN)
+```
+
+- Over the cloud a change needs an organization owner or admin (an API key needs
+  the `benchpod:admin` scope).
+- The cloud can only make `sig-policy` stricter. Only the USB console can loosen
+  it (`benchpod sig-policy set permissive --connection usb`); the CLI says so when
+  the pod refuses.
+- With `lan-policy off`, LAN tools stop working until it is set back: SCPI/VISA,
+  hwe2e `TestHW` and LAN `discover`. Set it back over the cloud or USB.
+- Firmware without these commands gets "this firmware has no LAN policy; update
+  the pod's firmware".
 
 Run `benchpod <command> -h` for the flags of any subcommand.
 
