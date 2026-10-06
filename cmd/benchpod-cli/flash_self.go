@@ -112,6 +112,8 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			"local .bin path or an http(s) URL to flash that instead.\n\n" +
 			"The pod must be in its DFU bootloader; if it isn't, this prints how to get\n" +
 			"there and waits (use --enter-dfu to reboot a running pod automatically).\n\n" +
+			"The release's signature (bench_pod_stm32.bin.sig, or <file>.sig next to a local\n" +
+			"file) is checked and reported before writing; for now it never stops a flash.\n\n" +
 			"Requires dfu-util on PATH (`brew install dfu-util`; the Homebrew cask pulls\n" +
 			"it in automatically).",
 		Args: cobra.MaximumNArgs(1),

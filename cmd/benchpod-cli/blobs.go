@@ -212,7 +212,9 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 		Long: "The pod keeps its iCE40 gateware images and its ESP32-C3 Wi-Fi image in the\n" +
 			"W25Q flash next to the FPGA, not in its firmware. This sends the ones it lacks\n" +
 			"over the USB console. By default they come from the GitHub release that matches\n" +
-			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).",
+			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).\n\n" +
+			"Each blob's signature (blob-*.bin.sig) is checked and reported, and handed to\n" +
+			"firmware that checks it too; for now a missing or failing one never stops an install.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			console, path, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(blobsInstallTimeout))
