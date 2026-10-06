@@ -350,6 +350,78 @@ func (c *Client) DeregisterDevice(ctx context.Context, accessToken, deviceID str
 	return &out, nil
 }
 
+// APIError is a non-2xx answer from an authenticated endpoint. Message is the server's `error`
+// field (the writeJSONError shape), empty when the body carried none; Body is the raw body.
+type APIError struct {
+	Method  string
+	Path    string
+	Status  int
+	Message string
+	Body    string
+}
+
+func (e *APIError) Error() string {
+	msg := e.Message
+	if msg == "" {
+		msg = e.Body
+	}
+	return fmt.Sprintf("%s %s: %d %s", e.Method, e.Path, e.Status, msg)
+}
+
+// PodPolicy is the answer of the pod policy endpoints (lan-policy, sig-policy). Supported is
+// false when the pod's firmware has no such policy (it does not advertise the command).
+type PodPolicy struct {
+	Policy    string `json:"policy"`
+	Supported bool   `json:"supported"`
+}
+
+// GetPodPolicy calls GET /api/benchpod/devices/{id}/{kind}, where kind is "lan-policy" or
+// "sig-policy".
+func (c *Client) GetPodPolicy(ctx context.Context, accessToken, deviceID, kind string) (*PodPolicy, error) {
+	path, err := podPolicyPath(deviceID, kind)
+	if err != nil {
+		return nil, err
+	}
+	var out PodPolicy
+	if err := c.doAuthedJSON(ctx, http.MethodGet, path, accessToken, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetPodPolicy calls PUT /api/benchpod/devices/{id}/{kind} with {"policy":policy}. The server
+// forwards it to the pod; a refusal by the pod (the sig-policy ratchet, say) comes back as an
+// *APIError carrying the pod's message. A 403 means the caller is not an organization owner or
+// admin, or the API key lacks the benchpod:admin scope.
+func (c *Client) SetPodPolicy(ctx context.Context, accessToken, deviceID, kind, policy string) (*PodPolicy, error) {
+	path, err := podPolicyPath(deviceID, kind)
+	if err != nil {
+		return nil, err
+	}
+	var out PodPolicy
+	body := struct {
+		Policy string `json:"policy"`
+	}{Policy: policy}
+	if err := c.doAuthedJSON(ctx, http.MethodPut, path, accessToken, body, &out); err != nil {
+		return nil, err
+	}
+	if out.Policy == "" {
+		out.Policy = policy
+	}
+	return &out, nil
+}
+
+func podPolicyPath(deviceID, kind string) (string, error) {
+	id := strings.TrimSpace(deviceID)
+	if id == "" {
+		return "", errors.New("serverapi: device id is empty")
+	}
+	if kind != "lan-policy" && kind != "sig-policy" {
+		return "", fmt.Errorf("serverapi: unknown policy %q", kind)
+	}
+	return "/api/benchpod/devices/" + url.PathEscape(id) + "/" + kind, nil
+}
+
 // doAuthedJSON performs a bearer-authenticated JSON request and decodes a 2xx body into out
 // (skipped when out is nil). Non-2xx responses are shaped into an error carrying the server's
 // `error` field when it sends one (the writeJSONError shape).
@@ -397,11 +469,8 @@ func (c *Client) doAuthedJSON(ctx context.Context, method, path, accessToken str
 			Detail string `json:"detail"`
 		}
 		_ = json.Unmarshal(data, &errBody)
-		msg := strings.TrimSpace(errBody.Error)
-		if msg == "" {
-			msg = strings.TrimSpace(string(data))
-		}
-		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, msg)
+		return &APIError{Method: method, Path: path, Status: resp.StatusCode,
+			Message: strings.TrimSpace(errBody.Error), Body: strings.TrimSpace(string(data))}
 	}
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
