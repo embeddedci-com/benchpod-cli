@@ -169,10 +169,11 @@ func installBlobs(ctx context.Context, console *serialconsole.Console, src blobS
 		if err != nil {
 			return err
 		}
+		manifest := checkBlobSignature(ctx, src, e, data) // report only
 		fmt.Fprintf(os.Stderr, "blobs: installing %s (%d KB) over USB...\n", e.Name, (e.Size+1023)/1024)
 		last := -1
 		start := time.Now()
-		err = console.Upload(ctx, e.Name, data, e.Version, func(done, total int) {
+		rep, err := console.UploadSigned(ctx, e.Name, data, e.Version, manifest, func(done, total int) {
 			if pct := done * 100 / total; pct/10 != last/10 {
 				last = pct
 				fmt.Fprintf(os.Stderr, "  %s %3d%%\n", e.Name, pct)
@@ -180,6 +181,9 @@ func installBlobs(ctx context.Context, console *serialconsole.Console, src blobS
 		})
 		if err != nil {
 			return err
+		}
+		if line := podSigLine(rep); line != "" {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", e.Name, line)
 		}
 		fmt.Fprintf(os.Stderr, "blobs: %s installed (%.1f s)\n", e.Name, time.Since(start).Seconds())
 	}
