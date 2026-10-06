@@ -169,10 +169,11 @@ func installBlobs(ctx context.Context, console *serialconsole.Console, src blobS
 		if err != nil {
 			return err
 		}
+		manifest := checkBlobSignature(ctx, src, e, data) // report only
 		fmt.Fprintf(os.Stderr, "blobs: installing %s (%d KB) over USB...\n", e.Name, (e.Size+1023)/1024)
 		last := -1
 		start := time.Now()
-		err = console.Upload(ctx, e.Name, data, e.Version, func(done, total int) {
+		rep, err := console.UploadSigned(ctx, e.Name, data, e.Version, manifest, func(done, total int) {
 			if pct := done * 100 / total; pct/10 != last/10 {
 				last = pct
 				fmt.Fprintf(os.Stderr, "  %s %3d%%\n", e.Name, pct)
@@ -180,6 +181,9 @@ func installBlobs(ctx context.Context, console *serialconsole.Console, src blobS
 		})
 		if err != nil {
 			return err
+		}
+		if line := podSigLine(rep); line != "" {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", e.Name, line)
 		}
 		fmt.Fprintf(os.Stderr, "blobs: %s installed (%.1f s)\n", e.Name, time.Since(start).Seconds())
 	}
@@ -208,7 +212,9 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 		Long: "The pod keeps its iCE40 gateware images and its ESP32-C3 Wi-Fi image in the\n" +
 			"W25Q flash next to the FPGA, not in its firmware. This sends the ones it lacks\n" +
 			"over the USB console. By default they come from the GitHub release that matches\n" +
-			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).",
+			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).\n\n" +
+			"Each blob's signature (blob-*.bin.sig) is checked and reported, and handed to\n" +
+			"firmware that checks it too; for now a missing or failing one never stops an install.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			console, path, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(blobsInstallTimeout))

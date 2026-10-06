@@ -112,6 +112,8 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			"local .bin path or an http(s) URL to flash that instead.\n\n" +
 			"The pod must be in its DFU bootloader; if it isn't, this prints how to get\n" +
 			"there and waits (use --enter-dfu to reboot a running pod automatically).\n\n" +
+			"The release's signature (bench_pod_stm32.bin.sig, or <file>.sig next to a local\n" +
+			"file) is checked and reported before writing; for now it never stops a flash.\n\n" +
 			"Requires dfu-util on PATH (`brew install dfu-util`; the Homebrew cask pulls\n" +
 			"it in automatically).",
 		Args: cobra.MaximumNArgs(1),
@@ -134,13 +136,15 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			if len(args) == 1 {
 				arg = args[0]
 			}
-			file, cleanup, err := f.resolveFirmware(ctx, arg)
+			file, location, cleanup, err := f.resolveFirmware(ctx, arg)
 			if cleanup != nil {
 				defer cleanup()
 			}
 			if err != nil {
 				return err
 			}
+			// Report on the release's signature (<asset>.sig). Report only: never refuses.
+			checkFirmwareSignature(ctx, location, file)
 
 			// 2. Make sure the pod is in DFU mode (guiding the user if not).
 			if err := ensureDfuReady(ctx, g, f, dfuPath); err != nil {
@@ -197,17 +201,18 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 // resolveFirmware turns the optional argument into a local file path to flash.
 // Precedence: explicit local file or URL argument > --firmware-url > the default
 // release URL (latest, or --firmware-version). Anything fetched lands in a temp
-// file; the returned cleanup (may be nil) removes it.
-func (f *flashSelfFlags) resolveFirmware(ctx context.Context, arg string) (string, func(), error) {
+// file; the returned cleanup (may be nil) removes it. location is where the image came from
+// (the path or the URL), for finding its .sig.
+func (f *flashSelfFlags) resolveFirmware(ctx context.Context, arg string) (file, location string, cleanup func(), err error) {
 	arg = strings.TrimSpace(arg)
 
 	// An explicit local file path wins outright.
 	if arg != "" && !isHTTPURL(arg) {
 		if _, err := os.Stat(arg); err != nil {
-			return "", nil, fmt.Errorf("firmware file: %w", err)
+			return "", "", nil, fmt.Errorf("firmware file: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "flash-self: using firmware %s\n", arg)
-		return arg, nil, nil
+		return arg, arg, nil, nil
 	}
 
 	// Otherwise pick a URL to download from.
@@ -233,10 +238,9 @@ func (f *flashSelfFlags) resolveFirmware(ctx context.Context, arg string) (strin
 
 	path, err := downloadFirmware(ctx, url)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
-	cleanup := func() { _ = os.Remove(path) }
-	return path, cleanup, nil
+	return path, url, func() { _ = os.Remove(path) }, nil
 }
 
 // downloadFirmware fetches url into a temp file and best-effort verifies a

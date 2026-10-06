@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
@@ -39,11 +40,20 @@ type podUploadSim struct {
 	busyChunkAt    int // offset of a chunk refused once with "busy" (-1 = none)
 	committed      map[string][]byte
 	versions       map[string]int
+
+	// Signed manifests (upload-sig), as firmware that checks signatures takes them. Without
+	// sigAware the sim answers upload-sig like older firmware: unknown command.
+	sigAware   bool
+	sigB64     string            // halves collected for the next upload-begin
+	sigAtBegin map[string][]byte // the manifest each target's upload-begin used
+	sigResult  string            // the last begin's check
+	commands   []string          // every command line the pod executed
 }
 
 func newPodUploadSim() *podUploadSim {
 	return &podUploadSim{corruptChunkAt: -1, busyChunkAt: -1, muteReplyAt: -1,
-		committed: map[string][]byte{}, versions: map[string]int{}}
+		committed: map[string][]byte{}, versions: map[string]int{},
+		sigAtBegin: map[string][]byte{}, sigResult: "none"}
 }
 
 func (p *podUploadSim) Read(b []byte) (int, error) {
@@ -102,6 +112,9 @@ func (p *podUploadSim) exec(ln string) {
 		p.out.WriteString("> ")
 		return
 	}
+	if f[0] != "upload-data" {
+		p.commands = append(p.commands, ln)
+	}
 	switch f[0] {
 	case "upload-data":
 		off, _ := strconv.Atoi(f[1])
@@ -114,6 +127,18 @@ func (p *podUploadSim) exec(ln string) {
 		p.sha = f[3]
 		p.version, _ = strconv.Atoi(f[4])
 		p.staged = make([]byte, p.size)
+		if p.sigAware {
+			p.sigResult = "none"
+			if p.sigB64 != "" {
+				sig, err := base64.RawURLEncoding.DecodeString(p.sigB64)
+				p.sigResult = "format"
+				if err == nil && len(sig) == 128 {
+					p.sigAtBegin[p.target] = sig
+					p.sigResult = "ok"
+				}
+			}
+			p.sigB64 = ""
+		}
 		p.received = 0
 		p.state = "receiving"
 		p.out.WriteString("[ota] begin\r\n") // log noise between echo and reply
@@ -149,9 +174,38 @@ func (p *podUploadSim) exec(ln string) {
 		p.out.WriteString("[wifi] some log line\r\n")
 		p.out.WriteString("blob gw1 outdated 104090 44 0898c1f0d3693d2c39f7d67497a152edb5d0c27b4e4cb15654964886a430b20f\r\n")
 		p.reply("blob esp missing 0 0 -")
+	case "upload-sig":
+		if !p.sigAware {
+			p.unknown(f[0])
+			return
+		}
+		switch {
+		case len(f) == 1:
+			kid := "-"
+			if p.sigResult == "ok" {
+				kid = "ed4242ead4ac6948"
+			}
+			p.reply("upload-sig result %s %s", p.sigResult, kid)
+		case f[1] == "clear":
+			p.sigB64 = ""
+			p.reply("upload-sig ok")
+		case len(f) == 3 && (f[1] == "0" || f[1] == "1"):
+			if f[1] == "0" {
+				p.sigB64 = ""
+			}
+			p.sigB64 += f[2]
+			p.reply("upload-sig ok")
+		default:
+			p.reply("upload-sig error usage: upload-sig <0|1> <base64url> | clear")
+		}
 	default:
-		p.out.WriteString("> ")
+		p.unknown(f[0])
 	}
+}
+
+// unknown answers a command the firmware does not have, as console.c does.
+func (p *podUploadSim) unknown(cmd string) {
+	p.reply("  unknown command '%s' (try 'help')", cmd)
 }
 
 func (p *podUploadSim) chunkDone() {
@@ -287,4 +341,155 @@ func TestUploadSurvivesALostReply(t *testing.T) {
 	if !bytes.Equal(sim.committed["gw0"], img) {
 		t.Fatal("the pod committed different bytes than were sent")
 	}
+}
+
+func testManifest() []byte {
+	m := make([]byte, ManifestLen)
+	for i := range m {
+		m[i] = byte(i * 13)
+	}
+	copy(m, "BPSG")
+	return m
+}
+
+// sigLines are the upload-sig commands the pod executed.
+func (p *podUploadSim) sigLines() []string {
+	var out []string
+	for _, ln := range p.commands {
+		if strings.HasPrefix(ln, "upload-sig") {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
+
+// Firmware that checks signatures gets the manifest in two halves before upload-begin, and its
+// check of the upload is read back. The probe runs once per console session.
+func TestUploadSignedNewFirmware(t *testing.T) {
+	sim := newPodUploadSim()
+	sim.sigAware = true
+	c := newConsole(sim)
+	img := testImage(3*UploadChunk + 5)
+	man := testManifest()
+
+	rep, err := c.UploadSigned(context.Background(), "gw1", img, 46, man, nil)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if !rep.Supported || !rep.Sent || rep.Result != "ok" || rep.KeyID != "ed4242ead4ac6948" {
+		t.Fatalf("report %+v", rep)
+	}
+	if !bytes.Equal(sim.sigAtBegin["gw1"], man) {
+		t.Fatal("upload-begin did not get the manifest that was sent")
+	}
+	if !bytes.Equal(sim.committed["gw1"], img) {
+		t.Fatal("the pod committed different bytes than were sent")
+	}
+	lines := sim.sigLines()
+	b64 := base64.RawURLEncoding.EncodeToString(man)
+	want := []string{"upload-sig", "upload-sig 0 " + b64[:86], "upload-sig 1 " + b64[86:], "upload-sig"}
+	if len(b64) != 171 || strings.Join(lines, "|") != strings.Join(want, "|") {
+		t.Fatalf("upload-sig lines %q, want %q", lines, want)
+	}
+	for _, ln := range lines {
+		if len(ln) >= 128 {
+			t.Fatalf("line of %d chars does not fit the console: %q", len(ln), ln)
+		}
+	}
+	// The order on the wire: probe, both halves, then upload-begin, then the query.
+	var order []string
+	for _, ln := range sim.commands {
+		order = append(order, strings.Fields(ln)[0])
+	}
+	if got := strings.Join(order[:5], " "); got != "upload-sig upload-sig upload-sig upload-begin upload-sig" {
+		t.Fatalf("command order %q", got)
+	}
+
+	// A second upload on the same console does not probe again.
+	sim.commands = nil
+	if _, err := c.UploadSigned(context.Background(), "esp", testImage(700), 0, man, nil); err != nil {
+		t.Fatalf("second upload: %v", err)
+	}
+	if n := len(sim.sigLines()); n != 3 {
+		t.Fatalf("second upload sent %d upload-sig lines, want 3 (two halves + query): %q", n, sim.sigLines())
+	}
+}
+
+// Older firmware answers the probe with "unknown command": nothing else about signatures is
+// sent and the upload goes ahead as before.
+func TestUploadSignedOldFirmware(t *testing.T) {
+	sim := newPodUploadSim()
+	c := newConsole(sim)
+	img := testImage(2*UploadChunk + 77)
+	man := testManifest()
+	for i := 0; i < 2; i++ {
+		rep, err := c.UploadSigned(context.Background(), "gw0", img, 45, man, nil)
+		if err != nil {
+			t.Fatalf("upload %d: %v", i, err)
+		}
+		if rep.Supported || rep.Sent || rep.Result != "" {
+			t.Fatalf("report %+v", rep)
+		}
+	}
+	if lines := sim.sigLines(); len(lines) != 1 || lines[0] != "upload-sig" {
+		t.Fatalf("upload-sig lines %q, want only the one probe", lines)
+	}
+	if !bytes.Equal(sim.committed["gw0"], img) {
+		t.Fatal("the pod committed different bytes than were sent")
+	}
+}
+
+// Without a manifest nothing about signatures goes to the pod, new firmware or not.
+func TestUploadWithoutManifest(t *testing.T) {
+	sim := newPodUploadSim()
+	sim.sigAware = true
+	c := newConsole(sim)
+	img := testImage(900)
+	rep, err := c.UploadSigned(context.Background(), "esp", img, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if rep != (SigReport{}) {
+		t.Fatalf("report %+v", rep)
+	}
+	if err := c.Upload(context.Background(), "esp", img, 0, nil); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if lines := sim.sigLines(); len(lines) != 0 {
+		t.Fatalf("upload-sig lines %q, want none", lines)
+	}
+	if _, ok := sim.sigAtBegin["esp"]; ok {
+		t.Fatal("a manifest reached upload-begin")
+	}
+}
+
+// A refused half clears what the pod collected; the upload then goes ahead without a manifest.
+func TestUploadSignedRefusedHalf(t *testing.T) {
+	sim := newPodUploadSim()
+	sim.sigAware = true
+	c := newConsole(&refuseSigHalf{podUploadSim: sim})
+	img := testImage(600)
+	rep, err := c.UploadSigned(context.Background(), "gw1", img, 46, testManifest(), nil)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if !rep.Supported || rep.Sent || rep.Result != "none" {
+		t.Fatalf("report %+v", rep)
+	}
+	if _, ok := sim.sigAtBegin["gw1"]; ok {
+		t.Fatal("a half manifest reached upload-begin")
+	}
+	if !bytes.Equal(sim.committed["gw1"], img) {
+		t.Fatal("not committed")
+	}
+}
+
+// refuseSigHalf turns the second half into a malformed command, so the pod answers with an error.
+type refuseSigHalf struct{ *podUploadSim }
+
+func (r *refuseSigHalf) Write(b []byte) (int, error) {
+	if i := bytes.Index(b, []byte("upload-sig 1 ")); i >= 0 {
+		b = append(append([]byte(nil), b[:i]...), []byte("upload-sig 7 x\n")...)
+	}
+	return r.podUploadSim.Write(b)
 }

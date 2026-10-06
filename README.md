@@ -77,6 +77,15 @@ next to a local `.bin`); `install-blobs` does that step on its own, and `set-wif
 first when the ESP32-C3 image is missing. `flash-self` also refuses an image that does not
 fit the pod's flash (a 1 MB STM32H563 cannot take firmware built for the 2 MB part).
 
+Releases can publish a signed manifest, `<asset>.sig`, next to `bench_pod_stm32.bin` and each
+`blob-*.bin`. `flash-self` and the blob install check it against the release keys (plus your
+developer key, if `~/.config/benchpod/fw-signing-dev.key` exists) and print one line, for
+example `signature: ok (release-1 key 9b5cc58445e62d88, release 3.6.0)` or `signature: none (this
+release is not signed)`. A local file's signature is read from `<file>.sig`. Firmware that
+checks signatures itself also gets the manifest with each USB upload, and its verdict is
+printed as `pod signature check: ...`. For now this only reports: a missing or failing
+signature never stops a flash or an install.
+
 ## Connection
 
 The global `--connection` flag is the single place that says where and how to
