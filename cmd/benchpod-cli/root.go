@@ -49,7 +49,9 @@ func newRootCmd() *cobra.Command {
 			"USB console. Omit it to use the default saved by `benchpod set-connection`.\n" +
 			"Today only `flash` works over USB; the wifi-*, bootsel and dfu commands\n" +
 			"always use the USB console regardless. `flash-self` reflashes the pod's\n" +
-			"own firmware over USB DFU (STM32) via dfu-util, independent of --connection.",
+			"own firmware over USB DFU (STM32) via dfu-util, independent of --connection.\n" +
+			"`lan-policy` and `sig-policy` work over USB, or over embeddedci.com with\n" +
+			"--device-name.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Apply Viper precedence (flag > env > default) into g before any RunE.
@@ -100,6 +102,8 @@ func newRootCmd() *cobra.Command {
 		newClearWifiCmd(g),
 		newBootselCmd(g),
 		newDfuCmd(g),
+		newLanPolicyCmd(g),
+		newSigPolicyCmd(g),
 	)
 	return root
 }
