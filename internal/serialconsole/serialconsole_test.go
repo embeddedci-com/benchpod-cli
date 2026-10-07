@@ -977,3 +977,82 @@ func TestPortGone(t *testing.T) {
 		t.Error("an unrelated error must not count")
 	}
 }
+
+// slowEchoConsole delivers the echo and reply a little after the write, like a real port: a
+// stale prompt already in the input arrives first.
+type slowEchoConsole struct {
+	fakeConsole
+	resets int
+}
+
+func (s *slowEchoConsole) ResetInputBuffer() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resets++
+	s.toRead.Reset()
+	return nil
+}
+
+// A prompt left over from an earlier command must not end the read before the reply: the
+// input is flushed before the write.
+func TestStalePromptIsFlushedBeforeTheCommand(t *testing.T) {
+	fc := &slowEchoConsole{}
+	fc.toRead.WriteString("\r\n> ") // stale
+	fc.onWrite = func(line string, out *bytes.Buffer) {
+		out.WriteString(line + "\r\n")
+		out.WriteString("device   : benchpod\r\nfirmware : 3.6.0\r\n> ")
+	}
+	out, err := newConsole(fc).Status(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc.resets != 1 || !strings.Contains(out, "firmware : 3.6.0") {
+		t.Fatalf("resets=%d out=%q", fc.resets, out)
+	}
+}
+
+// Without a way to flush (or with the stale prompt arriving late), the prompt only counts once
+// it follows the command's echo.
+func TestStalePromptBeforeTheEchoDoesNotEndTheRead(t *testing.T) {
+	fc := &fakeConsole{}
+	fc.toRead.WriteString("\r\n> ") // stale, read before the echo
+	pending := ""
+	fc.onWrite = func(line string, out *bytes.Buffer) {
+		pending = line + "\r\ndevice   : benchpod\r\nfirmware : 3.6.0\r\n> "
+	}
+	go func() {
+		// The echo and reply arrive after the stale prompt has been read.
+		for {
+			time.Sleep(30 * time.Millisecond)
+			fc.mu.Lock()
+			if pending != "" {
+				fc.toRead.WriteString(pending)
+				fc.mu.Unlock()
+				return
+			}
+			fc.mu.Unlock()
+		}
+	}()
+	out, err := newConsole(fc).Status(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "firmware : 3.6.0") {
+		t.Fatalf("read ended at the stale prompt: %q", out)
+	}
+}
+
+// A console that answers without echoing still works, echoGrace later.
+func TestPromptWithoutEchoIsAcceptedAfterEchoGrace(t *testing.T) {
+	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
+		out.WriteString("device   : benchpod\r\n> ")
+	}}
+	start := time.Now()
+	out, err := newConsole(fc).Status(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "benchpod") || time.Since(start) > echoGrace+400*time.Millisecond {
+		t.Fatalf("out=%q after %v", out, time.Since(start))
+	}
+}

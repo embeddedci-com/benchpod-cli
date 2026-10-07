@@ -174,6 +174,11 @@ type readTimeoutSetter interface {
 	SetReadTimeout(time.Duration) error
 }
 
+// inputResetter is implemented by *serial.Port: it drops bytes received but not yet read.
+type inputResetter interface {
+	ResetInputBuffer() error
+}
+
 // Console is an open serial connection to the firmware command prompt.
 type Console struct {
 	rw     io.ReadWriteCloser
@@ -397,6 +402,17 @@ func (c *Console) sendCommandRedacted(ctx context.Context, line, display, secret
 	return c.sendCommandUntil(ctx, line, display, secret, nil)
 }
 
+// echoGrace bounds how long a prompt that arrives before the command's echo waits for the
+// echo. The firmware echoes typed characters at once, so a prompt ahead of the echo is
+// normally a stale one left from an earlier command; a console that does not echo still
+// answers, this much later.
+const echoGrace = 100 * time.Millisecond
+
+// echoNeedleLen is how much of the command its echo is matched on: enough to be specific,
+// short enough to fit the firmware's line editor and to survive an async log line landing
+// late in a long echo.
+const echoNeedleLen = 24
+
 // replyGrace bounds how long sendCommandUntil keeps reading after a prompt
 // arrives before the reply looks complete. Async log lines are written in
 // chunks, so a fragment such as "> connected" can land right after one of the
@@ -410,6 +426,11 @@ const replyGrace = 500 * time.Millisecond
 // reports the whole reply is there, or replyGrace after the first prompt.
 func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret string, complete func(string) bool) (string, error) {
 	c.logln("> %s", display)
+	// Drop what is still unread (a prompt or the tail of an earlier reply), so it cannot
+	// end this command's read before the reply has arrived.
+	if ir, ok := c.rw.(inputResetter); ok {
+		_ = ir.ResetInputBuffer()
+	}
 	if err := c.writeLine(line); err != nil {
 		return "", fmt.Errorf("write command: %w", err)
 	}
@@ -419,6 +440,25 @@ func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret st
 
 	var acc []byte
 	var graceEnd time.Time // set when a prompt arrives before the reply is complete
+	var echoWait time.Time // set when a prompt arrives before the command's echo
+	echo := line
+	if len(echo) > echoNeedleLen {
+		echo = echo[:echoNeedleLen]
+	}
+	// replyEnded reports whether acc holds this command's closing prompt: one after the
+	// echo, or (for a console that never echoes) any prompt once echoGrace has passed.
+	replyEnded := func(s string) bool {
+		if i := strings.Index(s, echo); i >= 0 && echo != "" {
+			return strings.Contains(s[i+len(echo):], "\n"+c.prompt)
+		}
+		if !promptSeen(s, c.prompt) {
+			return false
+		}
+		if echoWait.IsZero() {
+			echoWait = time.Now().Add(echoGrace)
+		}
+		return time.Now().After(echoWait)
+	}
 	buf := make([]byte, 512)
 	for {
 		if !graceEnd.IsZero() && time.Now().After(graceEnd) {
@@ -434,7 +474,10 @@ func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret st
 		n, err := c.rw.Read(buf)
 		if n > 0 {
 			acc = append(acc, buf[:n]...)
-			if promptSeen(string(acc), c.prompt) {
+		}
+		// Re-check on silence too while a prompt waits for the echo (echoGrace).
+		if n > 0 || (!echoWait.IsZero() && graceEnd.IsZero()) {
+			if replyEnded(string(acc)) {
 				if complete == nil || complete(string(acc)) {
 					c.logln("< got prompt after %q (%d bytes)", display, len(acc))
 					return string(acc), nil
