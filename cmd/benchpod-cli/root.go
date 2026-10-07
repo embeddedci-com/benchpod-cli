@@ -104,6 +104,7 @@ func newRootCmd() *cobra.Command {
 		newDfuCmd(g),
 		newLanPolicyCmd(g),
 		newSigPolicyCmd(g),
+		newIdentityCmd(g),
 		newCloudCmd(g),
 	)
 	return root
