@@ -292,3 +292,19 @@ func orEmpty(p *string) *string {
 	}
 	return p
 }
+
+func TestPodHostFor(t *testing.T) {
+	cases := []struct{ server, override, want string }{
+		{"www.embeddedci.com", "", "api.embeddedci.com"},
+		{"EmbeddedCI.com", "", "api.embeddedci.com"},
+		{"localhost", "", "localhost"},
+		{"192.168.1.10", "", "192.168.1.10"},
+		{"www.embeddedci.com", "www.embeddedci.com", "www.embeddedci.com"},
+		{"www.embeddedci.com", " API2.example.com ", "api2.example.com"},
+	}
+	for _, c := range cases {
+		if got := podHostFor(c.server, c.override); got != c.want {
+			t.Errorf("podHostFor(%q, %q) = %q, want %q", c.server, c.override, got, c.want)
+		}
+	}
+}
