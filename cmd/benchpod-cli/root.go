@@ -51,7 +51,7 @@ func newRootCmd() *cobra.Command {
 			"always use the USB console regardless. `flash-self` reflashes the pod's\n" +
 			"own firmware over USB DFU (STM32) via dfu-util, independent of --connection.\n" +
 			"`lan-policy` and `sig-policy` work over USB, or over embeddedci.com with\n" +
-			"--device-name.",
+			"--device-name. `cloud ca` and `cloud proxy` work over USB or the LAN.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Apply Viper precedence (flag > env > default) into g before any RunE.
@@ -104,6 +104,7 @@ func newRootCmd() *cobra.Command {
 		newDfuCmd(g),
 		newLanPolicyCmd(g),
 		newSigPolicyCmd(g),
+		newCloudCmd(g),
 	)
 	return root
 }

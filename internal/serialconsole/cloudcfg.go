@@ -37,8 +37,8 @@ func (e *CommandError) Error() string { return e.Cmd + ": " + e.Reason }
 
 // CACert is one certificate of the pod's company CA, as the pod reports it.
 type CACert struct {
-	Subject string
-	SHA256  string // hex SHA-256 of the DER certificate
+	Subject string `json:"subject"`
+	SHA256  string `json:"sha256"` // hex SHA-256 of the DER certificate
 }
 
 // ProxyConfig is the pod's HTTP proxy. Addr is "" when no proxy is set.

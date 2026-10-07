@@ -365,6 +365,12 @@ func resolveConfigPath(flagVal string) (string, error) {
 // flag, then --password-stdin (one line from stdin), then an interactive masked
 // prompt when stdin is a TTY.
 func resolveWifiPassword(flagVal string, stdin bool) (string, error) {
+	return resolvePassword(flagVal, stdin, "WiFi password")
+}
+
+// resolvePassword is resolveWifiPassword for any password: what names it in the
+// interactive prompt ("WiFi password", "Proxy password").
+func resolvePassword(flagVal string, stdin bool, what string) (string, error) {
 	if flagVal != "" {
 		return flagVal, nil
 	}
@@ -383,7 +389,7 @@ func resolveWifiPassword(flagVal string, stdin bool) (string, error) {
 	if !term.IsTerminal(fd) {
 		return "", errors.New("no password provided; pass --password, --password-stdin, or run in an interactive terminal")
 	}
-	fmt.Fprint(os.Stderr, "WiFi password: ")
+	fmt.Fprint(os.Stderr, what+": ")
 	b, err := term.ReadPassword(fd)
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
