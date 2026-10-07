@@ -33,6 +33,8 @@ import (
 // --connection picks the transport: the USB console (`ca`, `proxy`, ... and the upload path
 // with target "ca") or the LAN JSON API (`cloud_ca`, `cloud_proxy`, ota_* with target "ca").
 // Both settings are T2 commands, so a pod whose LAN policy is locked refuses changes on the LAN.
+// Newer firmware goes further: it refuses every change to them from the LAN, whatever the LAN
+// policy ("cloud_ca: change it from the cloud or the USB console"); only reading works there.
 
 const (
 	caMaxPEM      = 16 * 1024   // the pod's limit on the stored PEM
@@ -41,7 +43,19 @@ const (
 	caMissing     = "this firmware has no company CA support; update the pod's firmware"
 	proxyMissing  = "this firmware has no HTTP proxy support; update the pod's firmware"
 	lockedUSBHint = "the pod's LAN policy is locked; run this over the pod's USB console with --connection usb"
+	lanGateHint   = "the pod only takes this change over USB or from the cloud, never from the LAN; run it over the pod's USB console with --connection usb"
 )
+
+// lanGateRefusal is the tail of the firmware's refusal of a cloud link change from the LAN
+// (pod_policy_cloud_link_gate): "cloud_ca: ..." or "cloud_proxy: ...".
+const lanGateRefusal = ": change it from the cloud or the USB console"
+
+// isLANGateRefusal reports whether msg is the firmware's refusal to change the company CA or
+// the HTTP proxy from the LAN.
+func isLANGateRefusal(msg string) bool {
+	verb, ok := strings.CutSuffix(strings.TrimSpace(msg), lanGateRefusal)
+	return ok && (verb == "cloud_ca" || verb == "cloud_proxy")
+}
 
 func newCloudCmd(g *globalFlags) *cobra.Command {
 	root := &cobra.Command{
@@ -50,9 +64,9 @@ func newCloudCmd(g *globalFlags) *cobra.Command {
 		Long: "Configure the pod's link to embeddedci.com on networks that need it.\n\n" +
 			"  ca     a company root certificate, for networks whose proxy inspects TLS\n" +
 			"  proxy  an HTTP proxy the pod tunnels its cloud connection through\n\n" +
-			"Both work over the pod's USB console (--connection usb) or the LAN\n" +
-			"(--connection <address>). A pod whose LAN policy is locked only shows them on\n" +
-			"the LAN; change them over USB. The pod reconnects to the cloud after a change.",
+			"Both work over the pod's USB console (--connection usb). The LAN\n" +
+			"(--connection <address>) can show them; current firmware refuses changes from\n" +
+			"the LAN, so change them over USB. The pod reconnects to the cloud after a change.",
 		Args: cobra.NoArgs,
 	}
 	root.AddCommand(newCloudCACmd(g), newCloudProxyCmd(g))
@@ -329,8 +343,8 @@ func sameCerts(local []caCert, pod []serialconsole.CACert) bool {
 	return true
 }
 
-// cloudCfgError turns a failed command into one clear line: old firmware, a locked LAN, or the
-// pod's own reason.
+// cloudCfgError turns a failed command into one clear line: old firmware, a locked LAN, a change
+// the pod refuses from the LAN, or the pod's own reason.
 func cloudCfgError(what, missing string, lan bool, err error) error {
 	if errors.Is(err, serialconsole.ErrUnknownCommand) {
 		return errors.New(missing)
@@ -347,6 +361,9 @@ func cloudCfgError(what, missing string, lan bool, err error) error {
 	if errors.As(err, &re) {
 		if lan && strings.HasPrefix(re.msg, "locked:") {
 			return fmt.Errorf("%s: the pod refused: %s (%s)", what, re.msg, lockedUSBHint)
+		}
+		if lan && isLANGateRefusal(re.msg) {
+			return fmt.Errorf("%s: the pod refused: %s (%s)", what, re.msg, lanGateHint)
 		}
 		return fmt.Errorf("%s: the pod refused: %s", what, re.msg)
 	}

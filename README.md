@@ -235,8 +235,9 @@ LAN policy of benchpod-baea06: locked (read and instrument control only on the L
 
 On a network whose proxy inspects TLS, the pod's cloud link fails: the proxy
 re-signs embeddedci.com with a company root the pod does not trust. Some networks
-also only reach the internet through an HTTP proxy. `benchpod cloud` sets both,
-over the USB console (`--connection usb`) or the LAN (`--connection <address>`):
+also only reach the internet through an HTTP proxy. `benchpod cloud` sets both
+over the USB console (`--connection usb`). The LAN (`--connection <address>`) can
+show them; current firmware refuses changes from the LAN:
 
 ```
 $ benchpod cloud ca set acme-root.pem --connection usb
@@ -249,9 +250,9 @@ Company CA of the pod on /dev/cu.usbmodem1101 is now 1 certificate
     SHA-256 3b1f...c2d9
 The pod reconnects to the cloud, trusting this CA in addition to its built-in roots.
 
-$ benchpod cloud proxy set proxy.corp:3128 --user alice --connection 192.168.1.50
+$ benchpod cloud proxy set proxy.corp:3128 --user alice --connection usb
 Proxy password:
-HTTP proxy of 192.168.1.50:8080 is now proxy.corp:3128 (with a user and password)
+HTTP proxy of the pod on /dev/cu.usbmodem1101 is now proxy.corp:3128 (with a user and password)
 The pod reconnects to the cloud through proxy.corp:3128.
 ```
 
@@ -266,8 +267,17 @@ The pod reconnects to the cloud through proxy.corp:3128.
   password back and the CLI never prints it. `cloud proxy clear` removes the proxy.
 - `show` (the default) reports what the pod holds. The pod reconnects to the
   cloud after every change.
-- A pod whose LAN policy is `locked` only shows these settings on the LAN; change
-  them with `--connection usb`.
+- Current firmware refuses `set` and `clear` from the LAN, whatever its LAN
+  policy: only USB or the cloud link may change the company CA or the proxy. The
+  CLI then prints the pod's reason and a hint to rerun with `--connection usb`:
+
+  ```
+  $ benchpod cloud proxy clear --connection 192.168.1.50
+  [benchpod] cloud proxy clear: the pod refused: cloud_proxy: change it from the cloud or the USB console (the pod only takes this change over USB or from the cloud, never from the LAN; run it over the pod's USB console with --connection usb)
+  ```
+
+  Older firmware with its LAN policy `locked` refuses the same way, with its own
+  message.
 - Firmware without them gets "this firmware has no company CA support; update the
   pod's firmware" (or the same for the HTTP proxy).
 
