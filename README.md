@@ -109,7 +109,8 @@ Only `flash` (SWD) is implemented over the USB console today; the other
 TCP/JSON commands reject a USB connection with a clear message. The
 `set-wifi` / `show-network` / `clear-wifi` and `bootsel` subcommands always use
 the USB console regardless of `--connection` (a device path still selects
-the port). `lan-policy` and `sig-policy` work over USB as well.
+the port). `lan-policy`, `sig-policy`, `cloud ca` and `cloud proxy` work over
+USB as well.
 
 ## CLI usage
 
@@ -161,6 +162,12 @@ benchpod lan-policy --device-name benchpod-baea06          # show
 benchpod lan-policy set locked --device-name benchpod-baea06
 benchpod sig-policy --connection usb                       # show
 benchpod sig-policy set permissive --connection usb
+
+# Cloud link behind a company network (USB or LAN):
+benchpod cloud ca set acme-root.pem --connection usb
+benchpod cloud ca show
+benchpod cloud proxy set proxy.corp:3128 --user alice   # prompts for the password
+benchpod cloud proxy clear
 ```
 
 `deregister` is the inverse of `register`: it detaches the pod from the
@@ -223,6 +230,46 @@ LAN policy of benchpod-baea06: locked (read and instrument control only on the L
   hwe2e `TestHW` and LAN `discover`. Set it back over the cloud or USB.
 - Firmware without these commands gets "this firmware has no LAN policy; update
   the pod's firmware".
+
+#### Cloud link: company CA and HTTP proxy
+
+On a network whose proxy inspects TLS, the pod's cloud link fails: the proxy
+re-signs embeddedci.com with a company root the pod does not trust. Some networks
+also only reach the internet through an HTTP proxy. `benchpod cloud` sets both,
+over the USB console (`--connection usb`) or the LAN (`--connection <address>`):
+
+```
+$ benchpod cloud ca set acme-root.pem --connection usb
+acme-root.pem: 1 certificate
+  CN=Acme Root CA,O=Acme Corp
+    SHA-256 3b1f...c2d9
+Uploading 652 bytes to the pod on /dev/cu.usbmodem1101 ...
+Company CA of the pod on /dev/cu.usbmodem1101 is now 1 certificate
+  CN=Acme Root CA,O=Acme Corp
+    SHA-256 3b1f...c2d9
+The pod reconnects to the cloud, trusting this CA in addition to its built-in roots.
+
+$ benchpod cloud proxy set proxy.corp:3128 --user alice --connection 192.168.1.50
+Proxy password:
+HTTP proxy of 192.168.1.50:8080 is now proxy.corp:3128 (with a user and password)
+The pod reconnects to the cloud through proxy.corp:3128.
+```
+
+- `cloud ca set` takes a PEM file with one or more certificates (at most 16 KB
+  as PEM). It checks them first, prints each subject and SHA-256, warns about a
+  certificate that is not marked as a CA, refuses anything that is not a
+  certificate (a private key, for example), and uploads only the certificate
+  blocks. The CA is used in addition to the built-in roots; host name and chain
+  checks stay on. `cloud ca clear` removes it.
+- `cloud proxy set <host:port>` with `--user` takes the password from
+  `--password`, `--password-stdin` or a prompt. The pod never reports the
+  password back and the CLI never prints it. `cloud proxy clear` removes the proxy.
+- `show` (the default) reports what the pod holds. The pod reconnects to the
+  cloud after every change.
+- A pod whose LAN policy is `locked` only shows these settings on the LAN; change
+  them with `--connection usb`.
+- Firmware without them gets "this firmware has no company CA support; update the
+  pod's firmware" (or the same for the HTTP proxy).
 
 Run `benchpod <command> -h` for the flags of any subcommand.
 
