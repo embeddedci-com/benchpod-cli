@@ -110,7 +110,7 @@ TCP/JSON commands reject a USB connection with a clear message. The
 `set-wifi` / `show-network` / `clear-wifi` and `bootsel` subcommands always use
 the USB console regardless of `--connection` (a device path still selects
 the port). `lan-policy`, `sig-policy`, `cloud ca` and `cloud proxy` work over
-USB as well.
+USB as well; `identity` and `identity wipe` work only over USB.
 
 ## CLI usage
 
@@ -162,6 +162,10 @@ benchpod lan-policy --device-name benchpod-baea06          # show
 benchpod lan-policy set locked --device-name benchpod-baea06
 benchpod sig-policy --connection usb                       # show
 benchpod sig-policy set permissive --connection usb
+
+# Device identity (USB console only):
+benchpod identity --connection usb                         # show
+benchpod identity wipe --connection usb                    # erase the key, make a new one
 
 # Cloud link behind a company network (USB or LAN):
 benchpod cloud ca set acme-root.pem --connection usb
@@ -230,6 +234,41 @@ LAN policy of benchpod-baea06: locked (read and instrument control only on the L
   hwe2e `TestHW` and LAN `discover`. Set it back over the cloud or USB.
 - Firmware without these commands gets "this firmware has no LAN policy; update
   the pod's firmware".
+
+#### Device identity: show and wipe
+
+The pod's identity is an Ed25519 key in its own flash sector; its name
+`benchpod-a1b2c3` is the first three bytes of the public key, and embeddedci.com
+knows the pod by that key. The firmware makes the key once, on a blank sector,
+and never writes over a record it does not recognize (an older or newer layout,
+or damage): such a pod stays offline and says why, rather than lose the key it
+is registered with.
+
+```
+$ benchpod identity --connection usb
+Identity of the pod on /dev/cu.usbmodem1101: none: unknown identity record (magic 0xc0ffee02 v2), not replaced
+The pod stays offline without an identity. Recover it with: benchpod identity wipe --connection usb
+```
+
+`benchpod identity wipe` erases the key and makes a new one. It works only over
+the pod's USB console (`--connection usb` or a serial device path): the pod
+refuses it over the LAN and the cloud, so it needs someone at the pod. The CLI
+shows the current identity and asks before it wipes (`--yes` skips the question
+for scripts); the pod also checks a confirmation token (the current short id, or
+`unknown`), so a stray command cannot wipe a key.
+
+After a wipe the pod is a new pod to embeddedci.com, and its cloud login is
+refused until it is registered again:
+
+1. `benchpod deregister --device-name <old name>`: the old record keeps its
+   captures, waveforms and wiring, and the name is freed. Works while the pod is
+   offline; an organization owner or admin can also do it on the BenchPod page.
+2. Power-cycle the pod, so it advertises its new name on the LAN.
+3. `benchpod register --connection <pod address> --device-name <old name>`.
+4. Set the wiring profile again on the BenchPod page.
+
+No server-side login reset is needed: the host-bound login state (`ws_auth.v2`)
+belongs to the old record.
 
 #### Cloud link: company CA and HTTP proxy
 
