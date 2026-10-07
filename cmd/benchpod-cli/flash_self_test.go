@@ -1,8 +1,12 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 )
 
 func TestDfuUtilDownloadArgs(t *testing.T) {
@@ -92,5 +96,20 @@ func TestDfuLeaveBenign(t *testing.T) {
 	}
 	if dfuLeaveBenign(true, "dfu-util: Cannot open DFU device 0483:df11\n") {
 		t.Fatal("a flash that never downloaded is a failure")
+	}
+}
+
+// A pod whose USB console never comes back after flashing has no blobs installed: flash-self
+// must fail rather than report success.
+func TestInstallBlobsAfterFlashFailsWhenTheConsoleNeverReturns(t *testing.T) {
+	oldWait, oldRetry, oldOpen := flashedConsoleWait, flashedConsoleRetry, openFlashedConsole
+	t.Cleanup(func() { flashedConsoleWait, flashedConsoleRetry, openFlashedConsole = oldWait, oldRetry, oldOpen })
+	flashedConsoleWait, flashedConsoleRetry = 20*time.Millisecond, 5*time.Millisecond
+	openFlashedConsole = func(*globalFlags) (*serialconsole.Console, error) {
+		return nil, errors.New("no BenchPod found")
+	}
+	err := installBlobsAfterFlash(&globalFlags{}, blobSource{base: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "install-blobs") {
+		t.Fatalf("err = %v, want an error naming install-blobs", err)
 	}
 }

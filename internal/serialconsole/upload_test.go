@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"strconv"
@@ -492,4 +493,22 @@ func (r *refuseSigHalf) Write(b []byte) (int, error) {
 		b = append(append([]byte(nil), b[:i]...), []byte("upload-sig 7 x\n")...)
 	}
 	return r.podUploadSim.Write(b)
+}
+
+// Firmware without the blobs command keeps its blobs built in: a distinct error the installer
+// can tell from a failure.
+func TestBlobsOnFirmwareWithoutSlots(t *testing.T) {
+	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
+		out.WriteString(line + "\r\n  unknown command 'blobs' (try 'help')\r\n> ")
+	}}
+	_, err := newConsole(fc).Blobs(testContext(t))
+	if !errors.Is(err, ErrNoBlobSlots) {
+		t.Fatalf("err = %v, want ErrNoBlobSlots", err)
+	}
+	garbled := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
+		out.WriteString(line + "\r\n[wifi] log noise\r\n> ")
+	}}
+	if _, err := newConsole(garbled).Blobs(testContext(t)); err == nil || errors.Is(err, ErrNoBlobSlots) {
+		t.Fatalf("a reply without slots is a failure, got %v", err)
+	}
 }

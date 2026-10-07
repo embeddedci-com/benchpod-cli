@@ -60,11 +60,18 @@ type BlobSlot struct {
 // NeedsInstall reports whether an installer should send this slot's blob.
 func (b BlobSlot) NeedsInstall() bool { return b.State == "missing" || b.State == "outdated" }
 
+// ErrNoBlobSlots is what Blobs returns for firmware without the blobs command: it keeps the
+// gateware and ESP32-C3 images built in, so there is nothing to install.
+var ErrNoBlobSlots = errors.New("this firmware keeps its blobs built in (no blob slots)")
+
 // Blobs lists the pod's W25Q blob slots.
 func (c *Console) Blobs(ctx context.Context) ([]BlobSlot, error) {
 	out, err := c.sendCommand(ctx, "blobs")
 	if err != nil {
 		return nil, err
+	}
+	if strings.Contains(out, "unknown command") {
+		return nil, ErrNoBlobSlots
 	}
 	slots := parseBlobs(out)
 	if len(slots) == 0 {

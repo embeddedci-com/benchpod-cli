@@ -29,6 +29,9 @@ type ConnSpec struct {
 	Device string // serial device path; "" means auto-detect (USB VID 2E8A)
 }
 
+// cloudConnPrefix is the SDK's and MCP's connection form for a pod on embeddedci.com.
+const cloudConnPrefix = "embeddedci:"
+
 // comPattern matches a Windows serial device name like COM3 / COM12.
 var comPattern = regexp.MustCompile(`^(?i:COM)\d+$`)
 
@@ -59,6 +62,13 @@ func classifyConnection(raw string) (ConnSpec, error) {
 		return ConnSpec{Kind: connSerial}, nil
 	case "wifi", "tcp":
 		return ConnSpec{}, fmt.Errorf("--connection %s needs an address, e.g. --connection 192.168.1.5", strings.ToLower(raw))
+	}
+	// The SDK's cloud form. Parsed as host:port it would be dialed (host "embeddedci", port
+	// "<name>") and retried until the timeout, so say what it is instead.
+	if strings.HasPrefix(strings.ToLower(raw), cloudConnPrefix) {
+		return ConnSpec{}, fmt.Errorf("--connection %s names a pod on embeddedci.com; the benchpod CLI talks to a pod over the network or USB. "+
+			"Pass the pod's address (`benchpod discover` finds it) or `usb`. Drive a cloud pod from the web app, the Python SDK or the MCP server (they take %s<name>)",
+			raw, cloudConnPrefix)
 	}
 	if isSerialDevice(raw) {
 		return ConnSpec{Kind: connSerial, Device: raw}, nil

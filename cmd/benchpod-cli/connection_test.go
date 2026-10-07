@@ -53,6 +53,17 @@ func TestClassifyConnectionErrors(t *testing.T) {
 	}
 }
 
+// The SDK's cloud form is refused at once instead of being dialed as host "embeddedci",
+// port "<name>" until the timeout.
+func TestClassifyConnectionRejectsTheCloudForm(t *testing.T) {
+	for _, in := range []string{"embeddedci:bench-1", "EmbeddedCI:bench-1", " embeddedci:x "} {
+		_, err := classifyConnection(in)
+		if err == nil || !strings.Contains(err.Error(), "embeddedci.com") || !strings.Contains(err.Error(), "benchpod discover") {
+			t.Errorf("classifyConnection(%q) = %v, want the cloud-form error", in, err)
+		}
+	}
+}
+
 func TestRequireWifi(t *testing.T) {
 	wifi, _ := classifyConnection("192.168.1.5")
 	if err := wifi.RequireWifi("ping"); err != nil {
