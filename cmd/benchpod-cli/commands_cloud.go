@@ -199,7 +199,7 @@ func runLogin(serverURL, tokenFile string, noOpen bool) error {
 // ── register (register device by public key + provision direct cloud connection) ──
 
 func newRegisterCmd(g *globalFlags) *cobra.Command {
-	var serverURL, tokenFile, deviceName string
+	var serverURL, tokenFile, deviceName, podHost string
 	var insecureSkipVerify bool
 	var wait time.Duration
 	cmd := &cobra.Command{
@@ -208,7 +208,7 @@ func newRegisterCmd(g *globalFlags) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runRegister(g, registerOptions{
-				serverURL: serverURL, tokenFile: tokenFile, deviceName: deviceName,
+				serverURL: serverURL, tokenFile: tokenFile, deviceName: deviceName, podHost: podHost,
 				insecureSkipVerify: insecureSkipVerify, wait: wait,
 			})
 		},
@@ -216,6 +216,8 @@ func newRegisterCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&serverURL, "server-url", "https://www.embeddedci.com", "embeddedci-server base URL")
 	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to token cache (default: ~/.config/benchpod-cli/token.json)")
 	cmd.Flags().StringVar(&deviceName, "device-name", "", "device name, URL-safe (default: the pod's own name, e.g. benchpod-a1b2c3)")
+	cmd.Flags().StringVar(&podHost, "pod-host", "",
+		"host the pod connects to (default: api.embeddedci.com for embeddedci.com, else the --server-url host)")
 	cmd.Flags().DurationVar(&wait, "wait", 30*time.Second, "how long to wait for the pod to connect to the server (0 = don't wait)")
 	cmd.Flags().BoolVar(&insecureSkipVerify, "insecure-skip-verify", false,
 		"provision the pod to skip TLS certificate verification (bring-up only; default verifies against the ESP x509 cert bundle)")
@@ -223,9 +225,9 @@ func newRegisterCmd(g *globalFlags) *cobra.Command {
 }
 
 type registerOptions struct {
-	serverURL, tokenFile, deviceName string
-	insecureSkipVerify               bool
-	wait                             time.Duration
+	serverURL, tokenFile, deviceName, podHost string
+	insecureSkipVerify                        bool
+	wait                                      time.Duration
 }
 
 // deviceNameFromPublicKey returns the name the pod advertises over mDNS ("benchpod-a1b2c3"): the
@@ -284,6 +286,7 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 	if err != nil {
 		return fmt.Errorf("parse --server-url: %w", err)
 	}
+	host = podHostFor(host, opts.podHost)
 	// Verify the server cert by default when using TLS; --insecure-skip-verify opts out for bring-up.
 	verify := tls && !opts.insecureSkipVerify
 	spec, err := g.resolveConnection()
@@ -646,6 +649,20 @@ func findDeviceToDeregister(devices []serverapi.DeviceResponse, publicKey, name 
 // parseServerEndpoint derives host, port, and a TLS flag from --server-url so the bench pod can
 // open the connection itself. https/wss → TLS (default :443); http/ws → plaintext (default :80),
 // which is handy for local bring-up against a non-TLS server.
+// podHostFor is the host the pod is provisioned to connect to: override when set, otherwise
+// api.embeddedci.com for the embeddedci.com service (its own name, so the pods' path can be moved
+// on or off Cloudflare by DNS alone, without reprovisioning them), otherwise the server's host.
+func podHostFor(serverHost, override string) string {
+	if o := strings.TrimSpace(override); o != "" {
+		return strings.ToLower(o)
+	}
+	switch strings.ToLower(serverHost) {
+	case "www.embeddedci.com", "embeddedci.com":
+		return "api.embeddedci.com"
+	}
+	return serverHost
+}
+
 func parseServerEndpoint(raw string) (host string, port int, tls bool, err error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
