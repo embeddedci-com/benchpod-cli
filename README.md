@@ -96,6 +96,7 @@ reach the pod; the transport is inferred from its value:
 | `192.168.1.5[:8080]`             | TCP/JSON API (an address ⇒ Wi-Fi).                     |
 | `/dev/tty...`, `COM3`            | USB console, explicit device path.                     |
 | `usb`                            | USB console, auto-detected by probing the ports.       |
+| `embeddedci:<name>`              | The pod named `<name>` on embeddedci.com (see below).  |
 | *(omitted)*                      | the default saved by `benchpod set-connection`.        |
 
 Every flag is also settable via a `BENCHPOD_*` environment variable
@@ -111,6 +112,11 @@ TCP/JSON commands reject a USB connection with a clear message. The
 the USB console regardless of `--connection` (a device path still selects
 the port). `lan-policy`, `sig-policy`, `cloud ca` and `cloud proxy` work over
 USB as well; `identity` and `identity wipe` work only over USB.
+
+`embeddedci:<name>` (the form the Python SDK and the MCP server take) works where a
+command can go through embeddedci.com: `lan-policy`, `sig-policy` and `deregister`,
+where it is the same as `--device-name <name>`. The other commands talk to the pod
+itself and say so when given a cloud target.
 
 ## CLI usage
 

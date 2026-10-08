@@ -26,9 +26,9 @@ import (
 //   - sig-policy: audit < permissive < required. The cloud may only make it stricter; the USB
 //     console may set anything. The LAN can never change it.
 //
-// The target follows the CLI's conventions: --device-name / --device-id go through embeddedci.com
-// (like deregister), otherwise --connection picks the USB console or, for show only, the LAN
-// JSON API.
+// The target follows the CLI's conventions: --device-name / --device-id or --connection
+// embeddedci:<name> go through embeddedci.com (like deregister), otherwise --connection picks the
+// USB console or, for show only, the LAN JSON API.
 
 // podPolicy describes one of the two policies.
 type podPolicy struct {
@@ -107,9 +107,9 @@ func newLanPolicyCmd(g *globalFlags) *cobra.Command {
 			"          firmware changes need the cloud or the USB console\n"+
 			"  off     no LAN access at all: the pod stops listening on the LAN and stops\n"+
 			"          advertising itself; the cloud and USB keep working\n\n"+
-			"Over the cloud (--device-name or --device-id) the change needs an organization\n"+
-			"owner or admin. Over USB (--connection usb) it always works. The LAN itself can\n"+
-			"only show the policy, never change it.")
+			"Over the cloud (--device-name, --device-id or --connection embeddedci:<name>)\n"+
+			"the change needs an organization owner or admin. Over USB (--connection usb)\n"+
+			"it always works. The LAN itself can only show the policy, never change it.")
 }
 
 func newSigPolicyCmd(g *globalFlags) *cobra.Command {
@@ -119,9 +119,10 @@ func newSigPolicyCmd(g *globalFlags) *cobra.Command {
 			"  audit       every image is accepted; signatures are only reported\n"+
 			"  permissive  unsigned images are accepted, a bad signature is refused\n"+
 			"  required    unsigned images are refused\n\n"+
-			"Over the cloud (--device-name or --device-id) the policy can only be made\n"+
-			"stricter, and only by an organization owner or admin. Only the USB console\n"+
-			"(--connection usb) can loosen it. The LAN can only show it.")
+			"Over the cloud (--device-name, --device-id or --connection embeddedci:<name>)\n"+
+			"the policy can only be made stricter, and only by an organization owner or\n"+
+			"admin. Only the USB console (--connection usb) can loosen it. The LAN can only\n"+
+			"show it.")
 }
 
 func newPolicyCmd(g *globalFlags, p podPolicy, short, long string) *cobra.Command {
@@ -186,9 +187,13 @@ func runPolicy(g *globalFlags, p podPolicy, t policyTarget, set string, out, war
 	if raw == "" {
 		return fmt.Errorf("%s: no pod selected; pass --device-name <name> (over embeddedci.com) or --connection usb", p.cmd)
 	}
-	spec, err := classifyConnection(raw)
+	spec, err := parseTarget(raw)
 	if err != nil {
 		return err
+	}
+	if spec.IsCloud() {
+		t.deviceName = spec.Name
+		return runPolicyCloud(g, p, t, set, out, warn)
 	}
 	if spec.IsSerial() {
 		return runPolicyUSB(g, p, spec.Device, set, out, warn)

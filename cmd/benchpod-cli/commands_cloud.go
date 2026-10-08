@@ -501,7 +501,8 @@ func newDeregisterCmd(g *globalFlags) *cobra.Command {
 			"account gives that account a fresh device and leaves this one's history alone.\n\n" +
 			"By default the pod is identified by asking the attached bench pod for its public\n" +
 			"key (so --connection must point at it) and is then told to stop connecting to the\n" +
-			"cloud. Use --device-name/--device-id to deregister a pod you cannot reach.",
+			"cloud. Use --device-name/--device-id (or --connection embeddedci:<name>) to\n" +
+			"deregister a pod you cannot reach.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runDeregister(g, serverURL, tokenFile, deviceName, deviceID, keepPodConfig)
@@ -540,14 +541,19 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 
 	var client *tcpclient.Client
 	if usePod {
-		spec, err := g.resolveConnection()
+		spec, err := g.resolveTarget()
 		if err != nil {
 			return err
 		}
-		if err := spec.RequireWifi("deregister"); err != nil {
-			return err
+		if spec.IsCloud() {
+			// --connection embeddedci:<name> is --device-name <name>.
+			deviceName, usePod = spec.Name, false
+		} else {
+			if err := spec.RequireWifi("deregister"); err != nil {
+				return err
+			}
+			client = &tcpclient.Client{Addr: spec.Addr}
 		}
-		client = &tcpclient.Client{Addr: spec.Addr}
 	}
 
 	tokenPath, err := resolveTokenPath(tokenFile)
