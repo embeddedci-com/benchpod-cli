@@ -82,7 +82,7 @@ func (s *Session) Command(ctx context.Context, req map[string]any) (json.RawMess
 	case "ok":
 		return r.Data, nil
 	case "error":
-		return nil, fmt.Errorf("%s", firmwareMessage(r.Message))
+		return nil, podError(r.Message)
 	default:
 		return nil, fmt.Errorf("unexpected response status %q", r.Status)
 	}

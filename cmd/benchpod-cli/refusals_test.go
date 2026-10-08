@@ -8,6 +8,7 @@ import (
 
 	"github.com/embeddedci-com/benchpod-cli/internal/fwrefusals"
 	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // The hints the CLI adds to a refusal hang on the firmware's exact wording
@@ -15,12 +16,12 @@ import (
 
 func TestALockedLANRefusalGetsTheUSBHint(t *testing.T) {
 	msg := fwrefusals.Example("lan_locked")
-	err := cloudCfgError("cloud ca set", caMissing, true, &podRefusal{msg: msg})
+	err := cloudCfgError("cloud ca set", caMissing, true, &tcpclient.PodError{Reason: msg})
 	if !strings.Contains(err.Error(), msg) || !strings.Contains(err.Error(), lockedUSBHint) {
 		t.Fatalf("got %v", err)
 	}
 	// Not over the cloud or USB: there the refusal stands alone.
-	if err := cloudCfgError("cloud ca set", caMissing, false, &podRefusal{msg: msg}); strings.Contains(err.Error(), lockedUSBHint) {
+	if err := cloudCfgError("cloud ca set", caMissing, false, &tcpclient.PodError{Reason: msg}); strings.Contains(err.Error(), lockedUSBHint) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -31,7 +32,7 @@ func TestTheCloudLinkGateRefusalsGetTheLANHint(t *testing.T) {
 		if !isLANGateRefusal(msg) {
 			t.Errorf("%s: %q not recognized", id, msg)
 		}
-		if err := cloudCfgError("cloud", caMissing, true, &podRefusal{msg: msg}); !strings.Contains(err.Error(), lanGateHint) {
+		if err := cloudCfgError("cloud", caMissing, true, &tcpclient.PodError{Reason: msg}); !strings.Contains(err.Error(), lanGateHint) {
 			t.Errorf("%s: got %v", id, err)
 		}
 	}

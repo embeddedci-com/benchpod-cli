@@ -354,9 +354,8 @@ func runPolicyUSB(g *globalFlags, p podPolicy, device, set string, out, warn io.
 		if errors.Is(err, serialconsole.ErrPolicyUnsupported) {
 			return errors.New(p.missing)
 		}
-		var pe *serialconsole.PolicyError
-		if errors.As(err, &pe) {
-			return fmt.Errorf("%s: the pod refused: %s", what, pe.Reason)
+		if pe, ok := tcpclient.AsPodError(err); ok {
+			return refusedError(what, pe, false)
 		}
 		return fmt.Errorf("%s: %w", what, err)
 	}

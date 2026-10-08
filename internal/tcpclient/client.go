@@ -81,7 +81,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 	case "ok":
 		return r.Data, nil
 	case "error":
-		return nil, fmt.Errorf("%s", firmwareMessage(r.Message))
+		return nil, podError(r.Message)
 	default:
 		return nil, fmt.Errorf("unexpected response status %q", r.Status)
 	}
@@ -132,7 +132,7 @@ func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error)
 				return out, nil
 			}
 		case "error":
-			return nil, fmt.Errorf("%s", firmwareMessage(r.Message))
+			return nil, podError(r.Message)
 		default:
 			return nil, fmt.Errorf("unexpected response status %q", r.Status)
 		}
@@ -276,12 +276,4 @@ func readReply(reader *bufio.Reader) (*reply, error) {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	return &r, nil
-}
-
-func firmwareMessage(msg string) string {
-	msg = strings.TrimSpace(msg)
-	if msg == "" {
-		return "bench pod returned an error"
-	}
-	return msg
 }

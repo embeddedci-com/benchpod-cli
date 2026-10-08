@@ -117,7 +117,7 @@ func Execute() int {
 	log.SetFlags(0)
 	log.SetPrefix("[benchpod] ")
 	if err := newRootCmd().Execute(); err != nil {
-		log.Printf("%v", err)
+		log.Printf("%v", withRefusalHint(err))
 		return 1
 	}
 	return 0

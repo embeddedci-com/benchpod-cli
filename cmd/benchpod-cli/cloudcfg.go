@@ -37,13 +37,12 @@ import (
 // policy ("cloud_ca: change it from the cloud or the USB console"); only reading works there.
 
 const (
-	caMaxPEM      = 16 * 1024   // the pod's limit on the stored PEM
-	caMaxFile     = 1024 * 1024 // refuse to even read a larger file
-	caLANChunk    = 768         // raw bytes per ota_data line (as the hwe2e LAN OTA sends)
-	caMissing     = "this firmware has no company CA support; update the pod's firmware"
-	proxyMissing  = "this firmware has no HTTP proxy support; update the pod's firmware"
-	lockedUSBHint = "the pod's LAN policy is locked; run this over the pod's USB console with --connection usb"
-	lanGateHint   = "the pod only takes this change over USB or from the cloud, never from the LAN; run it over the pod's USB console with --connection usb"
+	caMaxPEM     = 16 * 1024   // the pod's limit on the stored PEM
+	caMaxFile    = 1024 * 1024 // refuse to even read a larger file
+	caLANChunk   = 768         // raw bytes per ota_data line (as the hwe2e LAN OTA sends)
+	caMissing    = "this firmware has no company CA support; update the pod's firmware"
+	proxyMissing = "this firmware has no HTTP proxy support; update the pod's firmware"
+	lanGateHint  = "the pod only takes this change over USB or from the cloud, never from the LAN; run it over the pod's USB console with --connection usb"
 )
 
 // lanGateRefusal is the tail of the firmware's refusal of a cloud link change from the LAN
@@ -353,27 +352,16 @@ func cloudCfgError(what, missing string, lan bool, err error) error {
 	if strings.Contains(msg, "unknown cmd") || strings.Contains(msg, "unknown target") {
 		return errors.New(missing)
 	}
-	var ce *serialconsole.CommandError
-	if errors.As(err, &ce) {
-		return fmt.Errorf("%s: the pod refused: %s", what, ce.Reason)
-	}
-	var re *podRefusal
-	if errors.As(err, &re) {
-		if lan && strings.HasPrefix(re.msg, "locked:") {
-			return fmt.Errorf("%s: the pod refused: %s (%s)", what, re.msg, lockedUSBHint)
+	if pe, ok := tcpclient.AsPodError(err); ok {
+		// A console refusal (Cmd set) came over USB, a JSON reply over the LAN.
+		lan = lan && pe.Cmd == ""
+		if lan && isLANGateRefusal(pe.Reason) {
+			return fmt.Errorf("%s: the pod refused: %s (%s)", what, pe.Reason, lanGateHint)
 		}
-		if lan && isLANGateRefusal(re.msg) {
-			return fmt.Errorf("%s: the pod refused: %s (%s)", what, re.msg, lanGateHint)
-		}
-		return fmt.Errorf("%s: the pod refused: %s", what, re.msg)
+		return refusedError(what, pe, lan)
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }
-
-// podRefusal is an error reply from the pod's JSON API (as opposed to a transport failure).
-type podRefusal struct{ msg string }
-
-func (e *podRefusal) Error() string { return e.msg }
 
 // ── USB console ─────────────────────────────────────────────────────────────
 
@@ -427,16 +415,16 @@ func cloudCAUSB(g *globalFlags, device, action string, upload []byte, warn io.Wr
 
 // ── LAN ─────────────────────────────────────────────────────────────────────
 
-// lanSession runs JSON commands on one connection; error replies come back as *podRefusal.
+// lanSession runs JSON commands on one connection; error replies come back as *tcpclient.PodError.
 type lanSession struct{ s *tcpclient.Session }
 
 func (l lanSession) cmd(ctx context.Context, req map[string]any, out any) error {
 	data, err := l.s.Command(ctx, req)
 	if err != nil {
-		if l.s.Broken() {
+		if _, ok := tcpclient.AsPodError(err); ok || l.s.Broken() {
 			return err
 		}
-		return &podRefusal{msg: err.Error()}
+		return &tcpclient.PodError{Reason: err.Error()}
 	}
 	if out == nil {
 		return nil
@@ -521,13 +509,13 @@ func uploadCALAN(ctx context.Context, lan lanSession, data []byte) error {
 		return err
 	}
 	if st.State != "verified" {
-		return &podRefusal{msg: "verify: " + valueOr(st.Error, st.State)}
+		return &tcpclient.PodError{Reason: "verify: " + valueOr(st.Error, st.State)}
 	}
 	if err := lan.cmd(ctx, map[string]any{"cmd": "ota_commit"}, &st); err != nil {
 		return err
 	}
 	if st.State == "error" {
-		return &podRefusal{msg: "commit: " + valueOr(st.Error, "failed")}
+		return &tcpclient.PodError{Reason: "commit: " + valueOr(st.Error, "failed")}
 	}
 	return nil
 }

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // testCertPEM makes a self-signed certificate; isCA sets the CA basic constraint and cert-sign
@@ -613,10 +614,10 @@ func TestCloudCfgErrorLANGate(t *testing.T) {
 	}
 	msg := "cloud_proxy: change it from the cloud or the USB console"
 	// Only a LAN connection gets the hint; the same words from elsewhere pass through as is.
-	if err := cloudCfgError("cloud proxy clear", proxyMissing, true, &podRefusal{msg: msg}); !strings.Contains(err.Error(), lanGateHint) {
+	if err := cloudCfgError("cloud proxy clear", proxyMissing, true, &tcpclient.PodError{Reason: msg}); !strings.Contains(err.Error(), lanGateHint) {
 		t.Fatalf("LAN: %v", err)
 	}
-	if err := cloudCfgError("cloud proxy clear", proxyMissing, false, &podRefusal{msg: msg}); err.Error() != "cloud proxy clear: the pod refused: "+msg {
+	if err := cloudCfgError("cloud proxy clear", proxyMissing, false, &tcpclient.PodError{Reason: msg}); err.Error() != "cloud proxy clear: the pod refused: "+msg {
 		t.Fatalf("not LAN: %v", err)
 	}
 	ce := &serialconsole.CommandError{Cmd: "proxy", Reason: msg}
