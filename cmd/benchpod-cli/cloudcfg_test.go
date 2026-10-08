@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // testCertPEM makes a self-signed certificate; isCA sets the CA basic constraint and cert-sign
@@ -613,10 +614,10 @@ func TestCloudCfgErrorLANGate(t *testing.T) {
 	}
 	msg := "cloud_proxy: change it from the cloud or the USB console"
 	// Only a LAN connection gets the hint; the same words from elsewhere pass through as is.
-	if err := cloudCfgError("cloud proxy clear", proxyMissing, true, &podRefusal{msg: msg}); !strings.Contains(err.Error(), lanGateHint) {
+	if err := cloudCfgError("cloud proxy clear", proxyMissing, true, &tcpclient.PodError{Reason: msg}); !strings.Contains(err.Error(), lanGateHint) {
 		t.Fatalf("LAN: %v", err)
 	}
-	if err := cloudCfgError("cloud proxy clear", proxyMissing, false, &podRefusal{msg: msg}); err.Error() != "cloud proxy clear: the pod refused: "+msg {
+	if err := cloudCfgError("cloud proxy clear", proxyMissing, false, &tcpclient.PodError{Reason: msg}); err.Error() != "cloud proxy clear: the pod refused: "+msg {
 		t.Fatalf("not LAN: %v", err)
 	}
 	ce := &serialconsole.CommandError{Cmd: "proxy", Reason: msg}
@@ -678,5 +679,20 @@ func TestCloudCfgNeedsATarget(t *testing.T) {
 	g := &globalFlags{configFile: filepath.Join(t.TempDir(), "none.yaml")}
 	if _, _, err := runProxyCapture(g, "show", "", "", ""); err == nil || !strings.Contains(err.Error(), "--connection usb") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestProxyPasswordOverTheLANIsWarnedAbout(t *testing.T) {
+	var warn bytes.Buffer
+	warnPlainLANPassword(&globalFlags{connection: "192.168.1.220"}, &warn)
+	if !strings.Contains(warn.String(), "plain TCP") || !strings.Contains(warn.String(), "--connection usb") {
+		t.Fatalf("LAN: %q", warn.String())
+	}
+	for _, conn := range []string{"usb", "/dev/cu.usbmodem1", "embeddedci:bench"} {
+		warn.Reset()
+		warnPlainLANPassword(&globalFlags{connection: conn}, &warn)
+		if warn.Len() != 0 {
+			t.Fatalf("%s: %q", conn, warn.String())
+		}
 	}
 }

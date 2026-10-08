@@ -124,7 +124,7 @@ func TestIdentityWipeNeedsTerminalOrYes(t *testing.T) {
 
 func TestIdentityWipeRefusalAndOldFirmware(t *testing.T) {
 	fc := &fakeIdentityConsole{state: serialconsole.IdentityState{ShortID: "a1b2c3"},
-		wipeErr: &serialconsole.IdentityError{Reason: "hardware RNG failed; nothing was erased"}}
+		wipeErr: &serialconsole.IdentityError{Cmd: "identity-wipe", Reason: "hardware RNG failed; nothing was erased"}}
 	withFakeIdentityConsole(t, fc, true)
 	err := runIdentityWipe(&globalFlags{connection: "usb"}, true, nil, &bytes.Buffer{})
 	if err == nil || err.Error() != "identity wipe: the pod refused: hardware RNG failed; nothing was erased" {

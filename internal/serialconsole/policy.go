@@ -27,13 +27,8 @@ type PolicyReply struct {
 	Keys   int // sig-policy only: the public keys the firmware trusts (-1 when not reported)
 }
 
-// PolicyError is the pod refusing a value ("<cmd> error <why>").
-type PolicyError struct {
-	Cmd    string
-	Reason string
-}
-
-func (e *PolicyError) Error() string { return e.Cmd + ": " + e.Reason }
+// PolicyError is the pod refusing a value ("<cmd> error <why>"): a CommandError.
+type PolicyError = CommandError
 
 // Policy runs the console command cmd ("lan-policy" or "sig-policy"), setting the policy to set
 // when it is not empty, and returns what the pod reports afterwards.
