@@ -109,8 +109,10 @@ func portGone(err error) bool {
 }
 
 // portLister is a test seam mirroring capabilities.serialPortLister so unit
-// tests can enumerate fake ports without touching real USB.
-var portLister = enumerator.GetDetailedPortsList
+// tests can enumerate fake ports without touching real USB. It wraps the call
+// because go.bug.st/serial 1.8 made GetDetailedPortsList variadic (optional
+// active-probe filters), which the seam does not need.
+var portLister = func() ([]*enumerator.PortDetails, error) { return enumerator.GetDetailedPortsList() }
 
 // DetectPort chooses the bench-pod serial console.
 //
