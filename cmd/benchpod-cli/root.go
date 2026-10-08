@@ -50,11 +50,13 @@ func newRootCmd() *cobra.Command {
 			"USB console. Omit it to use the default saved by `benchpod set-connection`.\n" +
 			"`embeddedci:<name>` names a pod on embeddedci.com: lan-policy, sig-policy and\n" +
 			"deregister take it; the other commands need the network or USB.\n" +
-			"Over USB, `flash`, `status` and `la voltage` work; the wifi-*, bootsel and\n" +
-			"dfu commands always use the USB console regardless. `flash-self` reflashes the pod's\n" +
-			"own firmware over USB DFU (STM32) via dfu-util, independent of --connection.\n" +
-			"`lan-policy` and `sig-policy` work over USB, or over embeddedci.com with\n" +
-			"--device-name. `cloud ca` and `cloud proxy` work over USB or the LAN.\n\n" +
+			"Over USB, `flash` (SWD), `status`, `la voltage`, `lan-policy`, `sig-policy`,\n" +
+			"`cloud ca` and `cloud proxy` work; the other network commands refuse a USB\n" +
+			"connection. `identity`, `install-blobs`, `set-wifi`, `show-network`,\n" +
+			"`clear-wifi`, `bootsel` and `dfu` always use the USB console. `flash-self`\n" +
+			"reflashes the pod's own firmware over USB DFU (STM32) via dfu-util, independent\n" +
+			"of --connection. `lan-policy` and `sig-policy` also work over embeddedci.com\n" +
+			"with --device-name.\n\n" +
 			exitCodesHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,

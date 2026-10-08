@@ -510,23 +510,50 @@ func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret st
 }
 
 // TargetPower enables (on) or disables a target power eFuse over the console
-// (firmware: `target-power <1|2> <on|off>`). efuse is 1 (internal 5V) or 2
-// (external). An "ERROR:" line from the firmware is reported as an error.
+// (firmware console.c: `power <1|2> <on|off>`, which answers "eFuse1 ON",
+// "eFuse1 OFF" or "bad eFuse index"). efuse is 1 (internal 5V) or 2 (external).
+// Anything but the matching eFuse line is reported as an error, so a console
+// that does not know the command can no longer pass for a powered target.
 func (c *Console) TargetPower(ctx context.Context, efuse int, on bool) error {
-	state := "off"
+	state, want := "off", "OFF"
 	if on {
-		state = "on"
+		state, want = "on", "ON"
 	}
-	out, err := c.sendCommand(ctx, fmt.Sprintf("target-power %d %s", efuse, state))
+	line := fmt.Sprintf("power %d %s", efuse, state)
+	complete := func(acc string) bool {
+		return !errors.Is(parsePowerReply(acc, efuse, want), errNoPowerReply)
+	}
+	out, err := c.sendCommandUntil(ctx, line, line, "", complete)
+	perr := parsePowerReply(out, efuse, want)
+	if !errors.Is(perr, errNoPowerReply) {
+		return perr
+	}
 	if err != nil {
 		return err
 	}
-	for _, line := range strings.Split(out, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "ERROR:") {
-			return fmt.Errorf("firmware rejected target-power: %s", trimmed)
+	return fmt.Errorf("power: no reply from the pod (got: %q)", tail([]byte(out), 200))
+}
+
+var errNoPowerReply = errors.New("no power reply yet")
+
+// parsePowerReply finds the `power` reply in raw console output; log lines
+// interleave freely.
+func parsePowerReply(raw string, efuse int, want string) error {
+	ok := fmt.Sprintf("eFuse%d %s", efuse, want)
+	s := strings.ReplaceAll(raw, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	for _, ln := range strings.Split(s, "\n") {
+		ln = strings.TrimSpace(strings.TrimLeft(ln, "> \t\x08"))
+		switch {
+		case strings.Contains(ln, "unknown command"):
+			return ErrUnknownCommand
+		case ln == ok:
+			return nil
+		case strings.HasPrefix(ln, "bad eFuse"), strings.HasPrefix(ln, "ERROR:"):
+			return &CommandError{Cmd: "power", Reason: ln}
 		}
 	}
-	return nil
+	return errNoPowerReply
 }
 
 // Status runs the firmware's `status` console command and returns its output as

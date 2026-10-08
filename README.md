@@ -513,7 +513,7 @@ Blocking ADC snapshot (network). Prints the samples.
 |---------------------|---------|------------------------------------------------------|
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
 | `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
-| `--sample-rate`     | max     | ADC sample-clock rate, e.g. `10MHz`; leave it out for the maximum. |
+| `--sample-rate`     | max     | ADC sample rate, e.g. `100kHz`; leave it out for the maximum (400 kSPS). |
 | `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod stream`
@@ -524,7 +524,7 @@ Asynchronous ADC capture (network). Same flags and output as `capture`.
 |---------------------|---------|------------------------------------------------------|
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
 | `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
-| `--sample-rate`     | max     | ADC sample-clock rate, e.g. `10MHz`; leave it out for the maximum. |
+| `--sample-rate`     | max     | ADC sample rate, e.g. `100kHz`; leave it out for the maximum (400 kSPS). |
 | `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod measure`
@@ -714,7 +714,8 @@ Reboot a (retired) RP2350 pod into its UF2 bootloader (USB).
 ### `benchpod set-wifi`
 
 Save Wi-Fi credentials and join (USB). Installs the ESP32-C3 image first when the
-pod lacks it.
+pod lacks it; if the pod's image slots cannot be read, it stops and says so
+(`--skip-blobs` sets Wi-Fi without the check).
 
 | Flag               | Default    | Purpose                                                   |
 |--------------------|------------|-----------------------------------------------------------|

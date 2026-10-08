@@ -225,8 +225,8 @@ func newSampleCmd(g *globalFlags, name, short string) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&samples, "samples", 256, "number of ADC samples (1-4096)")
 	cmd.Flags().StringVar(&output, "output", "json", "output format: json|csv|ndjson")
-	cmd.Flags().Var(newFrequencyValue(0, &sampleRateHz), "sample-rate", "ADC sample-clock rate, e.g. 10MHz (omit for the maximum)")
-	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "ADC sample-clock rate in MHz (omit for max 12 MSPS); same as --sample-rate")
+	cmd.Flags().Var(newFrequencyValue(0, &sampleRateHz), "sample-rate", "ADC sample rate, e.g. 100kHz (omit for the maximum, 400 kSPS)")
+	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "ADC sample rate in MHz, e.g. 0.1 (omit for the maximum, 400 kSPS); same as --sample-rate")
 	return cmd
 }
 
@@ -296,7 +296,7 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 	var value, samples int
 	cmd := &cobra.Command{
 		Use:   "test",
-		Short: "Pico-side diagnostic pattern (no FPGA)",
+		Short: "MCU-side diagnostic pattern (no FPGA)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !validSamples(samples) {

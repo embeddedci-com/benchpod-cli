@@ -95,22 +95,35 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 }
 
 // ensureEspBlob installs the blobs from the pod's firmware release when its ESP32-C3 slot is
-// empty or holds a different image. Firmware that still embeds its blobs has no slots: nothing
-// to do.
+// empty or holds a different image, so set-wifi works on a pod that has never had a network.
 func ensureEspBlob(console *serialconsole.Console) error {
 	ctx, cancel := context.WithTimeout(context.Background(), blobsInstallTimeout)
 	defer cancel()
 	slots, err := console.Blobs(ctx)
+	missing, err := espBlobMissing(slots, err)
+	if err != nil || !missing {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "set-wifi: the pod has no ESP32-C3 image for Wi-Fi yet; installing it over USB first")
+	return installBlobs(ctx, console, releaseBlobSource(podFirmwareRelease(ctx, console)), false, nil)
+}
+
+// espBlobMissing reads the pod's blob listing for set-wifi: whether the ESP32-C3 image needs
+// installing. Firmware without blob slots keeps the image built in, which is fine; any other
+// error reading the slots is reported, with --skip-blobs as the way past it.
+func espBlobMissing(slots []serialconsole.BlobSlot, err error) (bool, error) {
+	if errors.Is(err, serialconsole.ErrNoBlobSlots) {
+		return false, nil
+	}
 	if err != nil {
-		return nil
+		return false, fmt.Errorf("check the pod's ESP32-C3 image: %w (pass --skip-blobs to set Wi-Fi without the check)", err)
 	}
 	for _, s := range slots {
 		if s.Name == "esp" && s.NeedsInstall() {
-			fmt.Fprintln(os.Stderr, "set-wifi: the pod has no ESP32-C3 image for Wi-Fi yet; installing it over USB first")
-			return installBlobs(ctx, console, releaseBlobSource(podFirmwareRelease(ctx, console)), false, nil)
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // ── show-network ─────────────────────────────────────────────────────────────
