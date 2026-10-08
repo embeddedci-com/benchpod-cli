@@ -1,6 +1,7 @@
 package tcpclient
 
 import (
+	"context"
 	"errors"
 	"strings"
 )
@@ -66,6 +67,24 @@ func AsPodError(err error) (*PodError, bool) {
 		return pe, true
 	}
 	return nil, false
+}
+
+// ErrUnreachable matches (errors.Is) a failure to reach the pod at all: nothing answered on
+// its address within the connect budget, or (serialconsole) no pod on USB.
+var ErrUnreachable = errors.New("bench pod unreachable")
+
+// dialError is a failed connect. Its text is the one the CLI always printed; it also matches
+// ErrUnreachable and unwraps to the underlying dial error.
+type dialError struct {
+	addr string
+	err  error
+}
+
+func (e *dialError) Error() string { return "connect to bench pod at " + e.addr + ": " + e.err.Error() }
+func (e *dialError) Unwrap() error { return e.err }
+func (e *dialError) Is(target error) bool {
+	// An interrupted connect (Ctrl+C) is not an unreachable pod.
+	return target == ErrUnreachable && !errors.Is(e.err, context.Canceled)
 }
 
 func firmwareMessage(msg string) string {

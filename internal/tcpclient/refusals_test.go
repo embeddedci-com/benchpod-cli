@@ -3,7 +3,10 @@ package tcpclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,5 +83,25 @@ func TestPodErrorText(t *testing.T) {
 		if k := ClassifyRefusal(msg); k != Refused {
 			t.Errorf("%q: kind %d", msg, k)
 		}
+	}
+}
+
+func TestAFailedConnectIsUnreachable(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	_, err = (&Client{Addr: addr, DialTimeout: 300 * time.Millisecond}).Command(context.Background(), map[string]any{"cmd": "ping"})
+	if !errors.Is(err, ErrUnreachable) || !strings.HasPrefix(err.Error(), "connect to bench pod at "+addr+": ") {
+		t.Fatalf("err = %v", err)
+	}
+	// Ctrl+C while connecting is not an unreachable pod.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = (&Client{Addr: addr}).Command(ctx, map[string]any{"cmd": "ping"})
+	if err == nil || errors.Is(err, ErrUnreachable) {
+		t.Fatalf("canceled: err = %v", err)
 	}
 }

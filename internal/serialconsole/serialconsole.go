@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
 )
@@ -144,7 +145,7 @@ func DetectPort(explicit string) (string, error) {
 
 	switch len(cands) {
 	case 0:
-		return "", fmt.Errorf("no bench-pod USB console found (USB VID %s). Is the device plugged in? Pass --connection <device> to override", strings.Join(benchPodVIDs, "/"))
+		return "", noPod(fmt.Errorf("no bench-pod USB console found (USB VID %s). Is the device plugged in? Pass --connection <device> to override", strings.Join(benchPodVIDs, "/")))
 	case 1:
 		return cands[0].name, nil
 	default:
@@ -216,13 +217,23 @@ func Open(explicitDevice string) (*Console, string, error) {
 	serialLogf("connecting to bench-pod USB console at %s (%d 8N1)...", name, baudRate)
 	port, err := serial.Open(name, &serial.Mode{BaudRate: baudRate})
 	if err != nil {
-		return nil, "", fmt.Errorf("open USB port %s: %w", name, err)
+		return nil, "", noPod(fmt.Errorf("open USB port %s: %w", name, err))
 	}
 	serialLogf("connected to %s", name)
 	c := newConsole(port)
 	c.logf = serialLogf
 	return c, name, nil
 }
+
+// noPodError is a failure to find or open the pod's USB console. Its text is err's; it also
+// matches tcpclient.ErrUnreachable, so the CLI exits as for a pod it cannot reach.
+type noPodError struct{ err error }
+
+func noPod(err error) error { return &noPodError{err: err} }
+
+func (e *noPodError) Error() string        { return e.err.Error() }
+func (e *noPodError) Unwrap() error        { return e.err }
+func (e *noPodError) Is(target error) bool { return target == tcpclient.ErrUnreachable }
 
 // newConsole wraps an already-open transport. Used by Open and by tests.
 func newConsole(rw io.ReadWriteCloser) *Console {
@@ -249,7 +260,7 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 	}
 	cands = preferFirst(strings.TrimSpace(preferred), cands)
 	if len(cands) == 0 {
-		return nil, "", errors.New("no USB ports found; plug in the bench pod or pass --connection <device>")
+		return nil, "", noPod(errors.New("no USB ports found; plug in the bench pod or pass --connection <device>"))
 	}
 	var tried []string
 	for _, name := range cands {
@@ -272,8 +283,8 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 		_ = c.Close()
 		tried = append(tried, name)
 	}
-	return nil, "", fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]; pass --connection <device> to force one",
-		len(tried), strings.Join(tried, ", "))
+	return nil, "", noPod(fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]; pass --connection <device> to force one",
+		len(tried), strings.Join(tried, ", ")))
 }
 
 // serialGlobs are the /dev node patterns scanned (in addition to the enumerator)

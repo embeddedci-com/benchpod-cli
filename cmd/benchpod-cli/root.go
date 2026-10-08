@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -51,7 +52,8 @@ func newRootCmd() *cobra.Command {
 			"always use the USB console regardless. `flash-self` reflashes the pod's\n" +
 			"own firmware over USB DFU (STM32) via dfu-util, independent of --connection.\n" +
 			"`lan-policy` and `sig-policy` work over USB, or over embeddedci.com with\n" +
-			"--device-name. `cloud ca` and `cloud proxy` work over USB or the LAN.",
+			"--device-name. `cloud ca` and `cloud proxy` work over USB or the LAN.\n\n" +
+			exitCodesHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Apply Viper precedence (flag > env > default) into g before any RunE.
@@ -111,14 +113,22 @@ func newRootCmd() *cobra.Command {
 }
 
 // Execute builds and runs the root command, translating any error into a
-// process exit code. Commands log their own diagnostics (and Cobra's output is
-// silenced), so a non-nil error here just needs a final line and code 1.
+// process exit code (exitCode). Commands log their own diagnostics (and Cobra's
+// output is silenced), so a non-nil error here just needs a final line.
 func Execute() int {
 	log.SetFlags(0)
 	log.SetPrefix("[benchpod] ")
-	if err := newRootCmd().Execute(); err != nil {
+	return run(os.Args[1:])
+}
+
+// run runs the CLI with args and returns its exit code.
+func run(args []string) int {
+	root := newRootCmd()
+	markUsageErrors(root)
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
 		log.Printf("%v", withRefusalHint(err))
-		return 1
+		return exitCode(err)
 	}
-	return 0
+	return exitOK
 }

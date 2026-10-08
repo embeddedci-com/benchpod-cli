@@ -414,6 +414,22 @@ flow the firmware `make flash-dfu` target uses).
 | `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.             |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
 
+### Exit codes
+
+Scripts can tell why a command failed from its exit code:
+
+| Code | Meaning                                                                                   |
+|------|-------------------------------------------------------------------------------------------|
+| `0`  | Success.                                                                                  |
+| `1`  | Any other error.                                                                          |
+| `2`  | Usage: a bad flag, argument or subcommand.                                                |
+| `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
+| `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
+| `5`  | Unreachable: nothing answered on the pod's address, or no pod was found on USB.           |
+
+A refusal is printed word for word as the pod sent it. For a `locked:` (LAN policy),
+`busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
+
 ### Makefile targets
 
 | Target        | What it does                                                 |

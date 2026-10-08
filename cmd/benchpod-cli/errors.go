@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
+	"github.com/spf13/cobra"
 )
 
 // ── refusals ────────────────────────────────────────────────────────────────
@@ -66,4 +68,82 @@ func withRefusalHint(err error) error {
 		return err
 	}
 	return fmt.Errorf("%w (%s)", err, hint)
+}
+
+// ── exit codes ──────────────────────────────────────────────────────────────
+
+// The CLI's exit codes, so a script can tell a refusal from an unreachable pod. Documented in
+// the root command's help and the README.
+const (
+	exitOK          = 0
+	exitError       = 1 // anything else
+	exitUsage       = 2 // a bad flag, argument or subcommand
+	exitRefused     = 3 // the pod refused the command (locked LAN, missing role, bad request)
+	exitBusy        = 4 // the pod or one of its engines is in use (a cloud lease, another session)
+	exitUnreachable = 5 // the pod did not answer on its address, or no pod on USB
+)
+
+// exitCodesHelp is the exit-code table for the root command's help.
+const exitCodesHelp = "Exit codes:\n" +
+	"  0  success\n" +
+	"  1  any other error\n" +
+	"  2  usage: a bad flag, argument or subcommand\n" +
+	"  3  refused: the pod refused the command (a locked LAN, a missing role, a bad request)\n" +
+	"  4  busy: the pod or one of its engines is in use (a cloud job's lease, another session)\n" +
+	"  5  unreachable: nothing answered on the pod's address, or no pod found on USB"
+
+// usageError marks a command-line mistake (exit code 2).
+type usageError struct{ err error }
+
+func (e *usageError) Error() string { return e.err.Error() }
+func (e *usageError) Unwrap() error { return e.err }
+
+// usageErrorf is a usage error built like fmt.Errorf.
+func usageErrorf(format string, args ...any) error {
+	return &usageError{err: fmt.Errorf(format, args...)}
+}
+
+// exitCode maps a command's error to the CLI's exit code.
+func exitCode(err error) int {
+	if err == nil {
+		return exitOK
+	}
+	var ue *usageError
+	if errors.As(err, &ue) {
+		return exitUsage
+	}
+	// Cobra's own complaint about an unknown subcommand is not a typed error.
+	if strings.HasPrefix(err.Error(), "unknown command ") {
+		return exitUsage
+	}
+	if pe, ok := tcpclient.AsPodError(err); ok {
+		if pe.Kind() == tcpclient.Busy {
+			return exitBusy
+		}
+		return exitRefused
+	}
+	if errors.Is(err, tcpclient.ErrUnreachable) {
+		return exitUnreachable
+	}
+	return exitError
+}
+
+// markUsageErrors makes every flag and argument error of cmd and its subcommands a usageError.
+func markUsageErrors(cmd *cobra.Command) {
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err: err} })
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if args := c.Args; args != nil {
+			c.Args = func(c *cobra.Command, a []string) error {
+				if err := args(c, a); err != nil {
+					return &usageError{err: err}
+				}
+				return nil
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(cmd)
 }

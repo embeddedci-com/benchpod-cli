@@ -213,15 +213,15 @@ func dialWithRetry(ctx context.Context, network, addr string, total, perAttempt,
 
 		// Stop if the caller cancelled or we've spent the whole budget.
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("connect to bench pod at %s: %w", addr, ctx.Err())
+			return nil, &dialError{addr: addr, err: ctx.Err()}
 		}
 		if !time.Now().Add(backoff).Before(deadline) {
-			return nil, fmt.Errorf("connect to bench pod at %s: %w", addr, lastErr)
+			return nil, &dialError{addr: addr, err: lastErr}
 		}
 
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("connect to bench pod at %s: %w", addr, ctx.Err())
+			return nil, &dialError{addr: addr, err: ctx.Err()}
 		case <-time.After(backoff):
 		}
 	}

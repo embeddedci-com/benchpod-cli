@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 
@@ -57,5 +59,59 @@ func TestWithRefusalHintAddsTheHintOnce(t *testing.T) {
 	plain := errors.New("connect to bench pod at 10.0.0.1:8080: i/o timeout")
 	if got := withRefusalHint(plain); got != plain {
 		t.Fatalf("got %v", got)
+	}
+}
+
+// The exit code tells a script what went wrong; run with real arguments against a fake pod.
+func TestExitCodes(t *testing.T) {
+	t.Setenv("BENCHPOD_CONNECTION", "")
+	t.Setenv("BENCHPOD_TIMEOUT", "")
+	reply := func(id string) string {
+		b, _ := json.Marshal(map[string]string{"status": "error", "message": fwrefusals.Example(id)})
+		return string(b)
+	}
+	locked, _ := fakeLANPod(t, reply("lan_locked"))
+	leased, _ := fakeLANPod(t, reply("lease_busy"))
+	swd, _ := fakeLANPod(t, reply("swd_busy"))
+	forbidden, _ := fakeLANPod(t, reply("tunnel_forbidden"))
+	ok, _ := fakeLANPod(t, `{"status":"ok","data":"pong"}`)
+	// A port nothing listens on: grab one, then close it.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := ln.Addr().String()
+	ln.Close()
+
+	for _, c := range []struct {
+		args []string
+		want int
+	}{
+		{[]string{"ping", "--connection", ok}, exitOK},
+		{[]string{"ping", "--connection", ok, "--no-such-flag"}, exitUsage},
+		{[]string{"ping", "--connection", ok, "extra"}, exitUsage},
+		{[]string{"no-such-command"}, exitUsage},
+		{[]string{"la", "pullup", "1"}, exitUsage},
+		{[]string{"ping", "--connection", locked}, exitRefused},
+		{[]string{"ping", "--connection", forbidden}, exitRefused},
+		{[]string{"ping", "--connection", leased}, exitBusy},
+		{[]string{"ping", "--connection", swd}, exitBusy},
+		{[]string{"ping", "--connection", closed, "--timeout", "1s"}, exitUnreachable},
+	} {
+		if got := run(c.args); got != c.want {
+			t.Errorf("%v: exit %d, want %d", c.args, got, c.want)
+		}
+	}
+}
+
+func TestExitCodeOfWrappedErrors(t *testing.T) {
+	if got := exitCode(fmt.Errorf("x: %w", usageErrorf("--voltage: bad"))); got != exitUsage {
+		t.Errorf("usage: %d", got)
+	}
+	if got := exitCode(fmt.Errorf("x: %w", &tcpclient.PodError{Cmd: "proxy-set", Reason: "w25q write failed"})); got != exitRefused {
+		t.Errorf("console refusal: %d", got)
+	}
+	if got := exitCode(errors.New("something else")); got != exitError {
+		t.Errorf("other: %d", got)
 	}
 }
