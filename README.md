@@ -180,6 +180,11 @@ benchpod cloud proxy set proxy.corp:3128 --user alice   # prompts for the passwo
 benchpod cloud proxy clear
 ```
 
+Flags that take a physical quantity accept it with its unit: `--freq 2kHz`,
+`--sample-rate 10MHz`, `--duration 2s`, `--delay 50us`, and `benchpod la voltage 3.3V`.
+The older flags with the unit in their name (`--sample-rate-mhz`, `--duration-ms`,
+`--delay-us`) keep working; pass one or the other, not both.
+
 `deregister` is the inverse of `register`: it detaches the pod from the
 logged-in account and clears the pod's cloud configuration so it stops
 connecting. The server **keeps** everything recorded for that pod (captures,
