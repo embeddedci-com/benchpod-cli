@@ -1,13 +1,13 @@
 {
   "_comment": "Firmware refusal texts the CLI shows or matches on, copied from benchpod-firmware main (897f057). format is the C string literal exactly as it appears in the source (adjacent literals joined, escapes kept); example is one rendering of it. The CLI tests check every example against its format, that the CLI shows or classifies it as intended, and, when a benchpod-firmware checkout is available (CI checks it out; locally the sibling directory), that each format is still in its source file, so a firmware wording change fails here. tiers pins cmd_tier.c entries for commands the CLI sends.",
   "refusals": [
-    {"id": "lan_locked", "file": "stm32h563/src/command_handler.c", "kind": "json",
+    {"id": "lan_locked", "file": "stm32h563/src/cmd_gate.c", "kind": "json",
      "format": "locked: %s needs the cloud or the USB console",
      "example": "locked: cloud_set needs the cloud or the USB console"},
-    {"id": "lease_busy", "file": "stm32h563/src/command_handler.c", "kind": "json",
+    {"id": "lease_busy", "file": "stm32h563/src/cmd_gate.c", "kind": "json",
      "format": "busy: a cloud job holds this pod (%s, %lu s left)",
      "example": "busy: a cloud job holds this pod (ci-run-42, 37 s left)"},
-    {"id": "tunnel_forbidden", "file": "stm32h563/src/command_handler.c", "kind": "json",
+    {"id": "tunnel_forbidden", "file": "stm32h563/src/cmd_gate.c", "kind": "json",
      "format": "forbidden: %s needs an organization owner or admin",
      "example": "forbidden: ota_begin needs an organization owner or admin"},
     {"id": "heavy_busy", "file": "stm32h563/src/command_handler.c", "kind": "json",
