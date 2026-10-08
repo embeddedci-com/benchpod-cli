@@ -681,3 +681,18 @@ func TestCloudCfgNeedsATarget(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestProxyPasswordOverTheLANIsWarnedAbout(t *testing.T) {
+	var warn bytes.Buffer
+	warnPlainLANPassword(&globalFlags{connection: "192.168.1.220"}, &warn)
+	if !strings.Contains(warn.String(), "plain TCP") || !strings.Contains(warn.String(), "--connection usb") {
+		t.Fatalf("LAN: %q", warn.String())
+	}
+	for _, conn := range []string{"usb", "/dev/cu.usbmodem1", "embeddedci:bench"} {
+		warn.Reset()
+		warnPlainLANPassword(&globalFlags{connection: conn}, &warn)
+		if warn.Len() != 0 {
+			t.Fatalf("%s: %q", conn, warn.String())
+		}
+	}
+}

@@ -134,6 +134,7 @@ benchpod ping
 benchpod status
 
 # Hardware:
+benchpod la voltage 3.3V  # the DUT's I/O voltage; LA operations need it (network or USB)
 benchpod set-gpio PIN STATE
 benchpod step-gpio
 benchpod generate ...
@@ -315,6 +316,8 @@ The pod reconnects to the cloud through proxy.corp:3128.
 - `cloud proxy set <host:port>` with `--user` takes the password from
   `--password`, `--password-stdin` or a prompt. The pod never reports the
   password back and the CLI never prints it. `cloud proxy clear` removes the proxy.
+  With a LAN address as the target, the CLI first warns that the LAN API is plain
+  TCP and the password would cross the network unencrypted.
 - `show` (the default) reports what the pod holds. The pod reconnects to the
   cloud after every change.
 - Current firmware refuses `set` and `clear` from the LAN, whatever its LAN

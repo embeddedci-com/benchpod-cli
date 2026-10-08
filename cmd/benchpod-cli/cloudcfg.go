@@ -156,6 +156,8 @@ func newCloudProxyCmd(g *globalFlags) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			password := ""
 			if pf.user != "" {
+				// Before the prompt, so nobody types the password without knowing.
+				warnPlainLANPassword(g, os.Stderr)
 				pw, err := resolvePassword(pf.password, pf.passwordStdin, "Proxy password")
 				if err != nil {
 					return fmt.Errorf("cloud proxy set: %w", err)
@@ -186,6 +188,19 @@ func newCloudProxyCmd(g *globalFlags) *cobra.Command {
 		},
 	})
 	return root
+}
+
+// plainLANPasswordWarning is printed before a proxy password goes to the pod over the LAN.
+const plainLANPasswordWarning = "Warning: the pod's LAN API is plain TCP, so the proxy password crosses the network unencrypted.\n" +
+	"Set it over the pod's USB console (--connection usb) instead; current firmware refuses this\n" +
+	"change from the LAN anyway."
+
+// warnPlainLANPassword warns when the proxy password would go to the pod over the LAN. It stays
+// quiet when the target is USB or cannot be resolved (the command then fails with the reason).
+func warnPlainLANPassword(g *globalFlags, warn io.Writer) {
+	if spec, err := cloudCfgTarget(g, "cloud proxy set"); err == nil && spec.IsWifi() {
+		fmt.Fprintln(warn, plainLANPasswordWarning)
+	}
 }
 
 // cloudCfgTarget resolves --connection for the cloud ca/proxy commands: a serial device ("" =
