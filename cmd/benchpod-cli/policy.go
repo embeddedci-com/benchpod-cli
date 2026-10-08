@@ -300,19 +300,26 @@ func cloudPolicyError(p podPolicy, set string, err error) error {
 		if msg == "" {
 			msg = adminNeeded
 		}
-		return fmt.Errorf("%s: %s", what, msg)
+		return relayedRefusal(p, what+": "+msg, msg)
 	}
 	if msg == "" {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	if set != "" && p.cmd == sigPolicy.cmd && strings.Contains(strings.ToLower(msg), "loosen") {
-		return fmt.Errorf("%s: the pod refused: %s. Loosen it over the pod's USB console: benchpod sig-policy set %s --connection usb",
-			what, msg, set)
+		return relayedRefusal(p, fmt.Sprintf("%s: the pod refused: %s. Loosen it over the pod's USB console: benchpod sig-policy set %s --connection usb",
+			what, msg, set), msg)
 	}
 	if set != "" {
-		return fmt.Errorf("%s: the pod refused: %s", what, msg)
+		return relayedRefusal(p, what+": the pod refused: "+msg, msg)
 	}
 	return fmt.Errorf("%s: %s", what, msg)
+}
+
+// relayedRefusal is a refusal the server relayed (or its own 403), shown as text; it carries a
+// refusal so the exit code says refused. Cmd names the JSON command, so it is not taken for a
+// LAN reply.
+func relayedRefusal(p podPolicy, text, reason string) error {
+	return &shownRefusal{msg: text, pe: &tcpclient.PodError{Cmd: p.jsonCmd, Reason: reason}}
 }
 
 // podMessage strips the pod's "sig_policy: " / "lan_policy: " prefix from a relayed message, so

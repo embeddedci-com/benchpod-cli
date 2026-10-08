@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/fwrefusals"
+	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
@@ -113,5 +115,26 @@ func TestExitCodeOfWrappedErrors(t *testing.T) {
 	}
 	if got := exitCode(errors.New("something else")); got != exitError {
 		t.Errorf("other: %d", got)
+	}
+}
+
+// A refusal worded for the user still exits as a refusal.
+func TestShownRefusalsKeepTheirExitCode(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want int
+	}{
+		{cloudCfgError("cloud ca set", caMissing, true, &tcpclient.PodError{Reason: fwrefusals.Example("lan_locked")}), exitRefused},
+		{cloudCfgError("cloud proxy clear", proxyMissing, true, &tcpclient.PodError{Reason: fwrefusals.Example("cloud_proxy_from_lan")}), exitRefused},
+		{cloudCfgError("cloud ca set", caMissing, false, &tcpclient.PodError{Cmd: "ca", Reason: fwrefusals.Example("ota_owner_busy")}), exitBusy},
+		{cloudPolicyError(sigPolicy, "audit", &serverapi.APIError{Status: http.StatusConflict, Message: fwrefusals.Example("sig_policy_loosen")}), exitRefused},
+		{cloudPolicyError(lanPolicy, "off", &serverapi.APIError{Status: http.StatusForbidden}), exitRefused},
+	} {
+		if got := exitCode(c.err); got != c.want {
+			t.Errorf("%v: exit %d, want %d", c.err, got, c.want)
+		}
+		if got := withRefusalHint(c.err); got.Error() != c.err.Error() {
+			t.Errorf("hint added twice: %v", got)
+		}
 	}
 }

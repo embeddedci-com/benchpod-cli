@@ -48,11 +48,27 @@ func explainRefusal(msg string, overLAN bool) string {
 // refusedError is the one line for a refusal from a command: "<what>: the pod refused: <why>",
 // plus explainRefusal's hint.
 func refusedError(what string, pe *tcpclient.PodError, overLAN bool) error {
-	if hint := explainRefusal(pe.Reason, overLAN); hint != "" {
-		return fmt.Errorf("%s: the pod refused: %s (%s)", what, pe.Reason, hint)
-	}
-	return fmt.Errorf("%s: the pod refused: %s", what, pe.Reason)
+	return refusedWithHint(what, pe, explainRefusal(pe.Reason, overLAN))
 }
+
+// refusedWithHint is refusedError with the hint given ("" for none).
+func refusedWithHint(what string, pe *tcpclient.PodError, hint string) error {
+	msg := what + ": the pod refused: " + pe.Reason
+	if hint != "" {
+		msg += " (" + hint + ")"
+	}
+	return &shownRefusal{msg: msg, pe: pe}
+}
+
+// shownRefusal is a refusal worded for the user; it still unwraps to the refusal, so the exit
+// code follows it.
+type shownRefusal struct {
+	msg string
+	pe  *tcpclient.PodError
+}
+
+func (e *shownRefusal) Error() string { return e.msg }
+func (e *shownRefusal) Unwrap() error { return e.pe }
 
 // withRefusalHint adds explainRefusal's hint to an error that carries a refusal and does not
 // show the hint yet. Execute applies it to every command's error, so a command that just wraps

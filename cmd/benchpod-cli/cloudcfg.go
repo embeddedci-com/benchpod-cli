@@ -356,7 +356,7 @@ func cloudCfgError(what, missing string, lan bool, err error) error {
 		// A console refusal (Cmd set) came over USB, a JSON reply over the LAN.
 		lan = lan && pe.Cmd == ""
 		if lan && isLANGateRefusal(pe.Reason) {
-			return fmt.Errorf("%s: the pod refused: %s (%s)", what, pe.Reason, lanGateHint)
+			return refusedWithHint(what, pe, lanGateHint)
 		}
 		return refusedError(what, pe, lan)
 	}
