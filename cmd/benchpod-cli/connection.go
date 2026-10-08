@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
+	"github.com/spf13/cobra"
 )
 
 // connKind is the transport implied by the --connection value.
@@ -129,4 +132,48 @@ func (c ConnSpec) RequireWifi(cmd string) error {
 	return fmt.Errorf("%s needs the pod on the network; it is not available over a USB connection. "+
 		"Run `benchpod discover` to find the pod's address, then pass --connection <address>. "+
 		"If it has no address yet, plug in Ethernet or run `benchpod set-wifi --ssid <ssid>`", cmd)
+}
+
+// ── set-connection ───────────────────────────────────────────────────────────
+
+func newSetConnectionCmd(g *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:     "set-connection <addr|device|usb>",
+		Aliases: []string{"set-bench-pod"},
+		Short:   `Store the default connection: a TCP address, a device path, or "usb"`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runSetConnection(g, args[0])
+		},
+	}
+}
+
+func runSetConnection(g *globalFlags, arg string) error {
+	target := strings.TrimSpace(arg)
+	if target == "" {
+		return errors.New("connection target cannot be empty")
+	}
+	// Validate now (and report the inferred transport) rather than failing later.
+	spec, err := classifyConnection(target)
+	if err != nil {
+		return err
+	}
+	cfgPath, err := resolveConfigPath(g.configFile)
+	if err != nil {
+		return fmt.Errorf("resolve config path: %w", err)
+	}
+	cfg, err := benchpodconfig.Load(cfgPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if cfg == nil {
+		cfg = &benchpodconfig.Config{}
+	}
+	cfg.Connection = target
+	cfg.BenchPodAddr = "" // Connection is the source of truth; drop the legacy field.
+	if err := benchpodconfig.Save(cfgPath, cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Default connection set to %s (saved to %s).\n", describeConn(spec), cfgPath)
+	return nil
 }
