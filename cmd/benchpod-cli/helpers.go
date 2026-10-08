@@ -60,6 +60,17 @@ func (g *globalFlags) resolveConnection() (ConnSpec, error) {
 	return classifyConnection(raw)
 }
 
+// resolveTarget is resolveConnection for the commands that can also work over
+// embeddedci.com: the cloud form (embeddedci:<name>) comes back as a cloud ConnSpec
+// instead of an error.
+func (g *globalFlags) resolveTarget() (ConnSpec, error) {
+	raw, err := g.rawConnection()
+	if err != nil {
+		return ConnSpec{}, err
+	}
+	return parseTarget(raw)
+}
+
 // serialDevice resolves the serial device for the always-serial commands
 // (set/show/clear-wifi, bootsel). It honors an explicit device path from the
 // connection (flag or stored default) and otherwise auto-detects (""). It never

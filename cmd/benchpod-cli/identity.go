@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -135,9 +136,8 @@ func identityErr(what string, err error) error {
 	if errors.Is(err, serialconsole.ErrIdentityUnsupported) {
 		return errors.New(identityMissing)
 	}
-	var ie *serialconsole.IdentityError
-	if errors.As(err, &ie) {
-		return fmt.Errorf("%s: the pod refused: %s", what, ie.Reason)
+	if pe, ok := tcpclient.AsPodError(err); ok {
+		return refusedError(what, pe, false)
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }

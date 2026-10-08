@@ -114,15 +114,24 @@ func runStatusSerial(g *globalFlags, device string) error {
 
 func newGenerateCmd(g *globalFlags) *cobra.Command {
 	var waveform string
-	var freq, sampleRate float64
+	var freq, sampleRate, sampleRateHz float64
 	var amplitude, offset, durationMS int
+	var duration time.Duration
 	cmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Start DAC waveform output",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !validWaveform(waveform) {
 				return fmt.Errorf("--waveform is required (sine|square|sawtooth)")
+			}
+			sampleRate, err := sampleRateMHz(cmd, sampleRateHz, sampleRate)
+			if err != nil {
+				return err
+			}
+			durationMS, err := wholeUnits(cmd, "duration", duration, "duration-ms", durationMS, time.Millisecond)
+			if err != nil {
+				return err
 			}
 			ctx, cancel, client, err := g.wifiClient("generate", 30*time.Second)
 			if err != nil {
@@ -159,11 +168,13 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&waveform, "waveform", "", "waveform: sine|square|sawtooth (required)")
-	cmd.Flags().Float64Var(&freq, "freq", 1000, "output frequency in Hz")
+	cmd.Flags().Var(newFrequencyValue(1000, &freq), "freq", "output frequency, e.g. 1kHz (a bare number is Hz)")
 	cmd.Flags().IntVar(&amplitude, "amplitude", 127, "half-scale amplitude 0-127")
 	cmd.Flags().IntVar(&offset, "offset", 128, "DC offset 0-255")
-	cmd.Flags().IntVar(&durationMS, "duration-ms", 0, "duration in ms (0 = run until next command)")
-	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "FPGA sample-clock rate in MHz (omit to auto-pick)")
+	cmd.Flags().DurationVar(&duration, "duration", 0, "how long to output, e.g. 2s or 500ms (0 = run until next command)")
+	cmd.Flags().IntVar(&durationMS, "duration-ms", 0, "duration in ms (0 = run until next command); same as --duration")
+	cmd.Flags().Var(newFrequencyValue(0, &sampleRateHz), "sample-rate", "FPGA sample-clock rate, e.g. 10MHz (omit to auto-pick)")
+	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "FPGA sample-clock rate in MHz (omit to auto-pick); same as --sample-rate")
 	return cmd
 }
 
@@ -179,12 +190,16 @@ func newStreamCmd(g *globalFlags) *cobra.Command {
 func newSampleCmd(g *globalFlags, name, short string) *cobra.Command {
 	var samples int
 	var output string
-	var sampleRate float64
+	var sampleRate, sampleRateHz float64
 	cmd := &cobra.Command{
 		Use:   name,
 		Short: short,
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			sampleRate, err := sampleRateMHz(cmd, sampleRateHz, sampleRate)
+			if err != nil {
+				return err
+			}
 			if !validSamples(samples) {
 				return fmt.Errorf("--samples must be between 1 and 4096")
 			}
@@ -210,7 +225,8 @@ func newSampleCmd(g *globalFlags, name, short string) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&samples, "samples", 256, "number of ADC samples (1-4096)")
 	cmd.Flags().StringVar(&output, "output", "json", "output format: json|csv|ndjson")
-	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "ADC sample-clock rate in MHz (omit for max 12 MSPS)")
+	cmd.Flags().Var(newFrequencyValue(0, &sampleRateHz), "sample-rate", "ADC sample-clock rate, e.g. 10MHz (omit for the maximum)")
+	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "ADC sample-clock rate in MHz (omit for max 12 MSPS); same as --sample-rate")
 	return cmd
 }
 
@@ -218,15 +234,19 @@ func newSampleCmd(g *globalFlags, name, short string) *cobra.Command {
 
 func newMeasureCmd(g *globalFlags) *cobra.Command {
 	var waveform, output string
-	var freq, sampleRate float64
+	var freq, sampleRate, sampleRateHz float64
 	var amplitude, offset, samples int
 	cmd := &cobra.Command{
 		Use:   "measure",
 		Short: "DAC + ADC loopback capture",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !validWaveform(waveform) {
 				return fmt.Errorf("--waveform is required (sine|square|sawtooth)")
+			}
+			sampleRate, err := sampleRateMHz(cmd, sampleRateHz, sampleRate)
+			if err != nil {
+				return err
 			}
 			if !validSamples(samples) {
 				return fmt.Errorf("--samples must be between 1 and 4096")
@@ -259,11 +279,12 @@ func newMeasureCmd(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&waveform, "waveform", "", "waveform: sine|square|sawtooth (required)")
-	cmd.Flags().Float64Var(&freq, "freq", 1000, "output frequency in Hz")
+	cmd.Flags().Var(newFrequencyValue(1000, &freq), "freq", "output frequency, e.g. 1kHz (a bare number is Hz)")
 	cmd.Flags().IntVar(&amplitude, "amplitude", 127, "half-scale amplitude 0-127")
 	cmd.Flags().IntVar(&offset, "offset", 128, "DC offset 0-255")
 	cmd.Flags().IntVar(&samples, "samples", 256, "number of ADC samples (1-4096)")
-	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "sample-clock rate in MHz (omit to auto-pick)")
+	cmd.Flags().Var(newFrequencyValue(0, &sampleRateHz), "sample-rate", "sample-clock rate, e.g. 10MHz (omit to auto-pick)")
+	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "sample-clock rate in MHz (omit to auto-pick); same as --sample-rate")
 	cmd.Flags().StringVar(&output, "output", "json", "output format: json|csv|ndjson")
 	return cmd
 }
@@ -325,9 +346,9 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 func newLACmd(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "la",
-		Short: "Logic-analyzer pin control (pull-ups and step pulses)",
+		Short: "Logic-analyzer pin control (bank voltage, pull-ups and step pulses)",
 	}
-	cmd.AddCommand(newLAPullupCmd(g), newLAStatusCmd(g), newLAStepCmd(g))
+	cmd.AddCommand(newLAVoltageCmd(g), newLAPullupCmd(g), newLAStatusCmd(g), newLAStepCmd(g))
 	return cmd
 }
 
@@ -409,6 +430,7 @@ func newLAStatusCmd(g *globalFlags) *cobra.Command {
 func newLAStepCmd(g *globalFlags) *cobra.Command {
 	var laArg, dirLAArg string
 	var steps, delayUS, direction int
+	var delay time.Duration
 	cmd := &cobra.Command{
 		Use:   "step",
 		Short: "Pulse an LA pin N times (step/dir stepper drivers)",
@@ -424,8 +446,12 @@ func newLAStepCmd(g *globalFlags) *cobra.Command {
 			if steps <= 0 {
 				return fmt.Errorf("--steps must be positive")
 			}
+			delayUS, err := wholeUnits(cmd, "delay", delay, "delay-us", delayUS, time.Microsecond)
+			if err != nil {
+				return err
+			}
 			if delayUS <= 0 {
-				return fmt.Errorf("--delay-us must be positive")
+				return fmt.Errorf("--delay (or --delay-us) must be positive")
 			}
 
 			req := map[string]any{
@@ -477,7 +503,8 @@ func newLAStepCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&laArg, "la", "", "LA pin to pulse, e.g. 6 or la6 (required)")
 	cmd.Flags().IntVar(&steps, "steps", 0, "number of pulses (required, positive)")
-	cmd.Flags().IntVar(&delayUS, "delay-us", 0, "high/low half-period in microseconds (required, positive)")
+	cmd.Flags().DurationVar(&delay, "delay", 0, "high/low half-period, e.g. 50us or 1ms (this or --delay-us is required)")
+	cmd.Flags().IntVar(&delayUS, "delay-us", 0, "high/low half-period in microseconds; same as --delay")
 	cmd.Flags().StringVar(&dirLAArg, "dir-la", "", "optional direction LA pin, driven before stepping")
 	cmd.Flags().IntVar(&direction, "direction", 0, "direction level 0|1 applied to --dir-la")
 	return cmd

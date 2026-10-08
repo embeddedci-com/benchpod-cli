@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -47,11 +48,14 @@ func newRootCmd() *cobra.Command {
 			"is inferred from its value: an address (192.168.1.5[:8080]) uses the TCP/JSON\n" +
 			"API; a device path (/dev/tty..., COM3) or the keyword `usb` uses the pod's\n" +
 			"USB console. Omit it to use the default saved by `benchpod set-connection`.\n" +
-			"Today only `flash` works over USB; the wifi-*, bootsel and dfu commands\n" +
-			"always use the USB console regardless. `flash-self` reflashes the pod's\n" +
+			"`embeddedci:<name>` names a pod on embeddedci.com: lan-policy, sig-policy and\n" +
+			"deregister take it; the other commands need the network or USB.\n" +
+			"Over USB, `flash`, `status` and `la voltage` work; the wifi-*, bootsel and\n" +
+			"dfu commands always use the USB console regardless. `flash-self` reflashes the pod's\n" +
 			"own firmware over USB DFU (STM32) via dfu-util, independent of --connection.\n" +
 			"`lan-policy` and `sig-policy` work over USB, or over embeddedci.com with\n" +
-			"--device-name. `cloud ca` and `cloud proxy` work over USB or the LAN.",
+			"--device-name. `cloud ca` and `cloud proxy` work over USB or the LAN.\n\n" +
+			exitCodesHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Apply Viper precedence (flag > env > default) into g before any RunE.
@@ -66,7 +70,7 @@ func newRootCmd() *cobra.Command {
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&g.connection, "connection", "",
-		`how to reach the pod: an address (192.168.1.5[:8080]), a device path (/dev/tty..., COM3), or "usb" to auto-detect the pod over USB (default: the saved set-connection target)`)
+		`how to reach the pod: an address (192.168.1.5[:8080]), a device path (/dev/tty..., COM3), "usb" to auto-detect the pod over USB, or embeddedci:<name> for a pod on embeddedci.com where a command supports it (default: the saved set-connection target)`)
 	pf.StringVar(&g.configFile, "config-file", "", "path to config file")
 	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")
@@ -111,14 +115,22 @@ func newRootCmd() *cobra.Command {
 }
 
 // Execute builds and runs the root command, translating any error into a
-// process exit code. Commands log their own diagnostics (and Cobra's output is
-// silenced), so a non-nil error here just needs a final line and code 1.
+// process exit code (exitCode). Commands log their own diagnostics (and Cobra's
+// output is silenced), so a non-nil error here just needs a final line.
 func Execute() int {
 	log.SetFlags(0)
 	log.SetPrefix("[benchpod] ")
-	if err := newRootCmd().Execute(); err != nil {
-		log.Printf("%v", err)
-		return 1
+	return run(os.Args[1:])
+}
+
+// run runs the CLI with args and returns its exit code.
+func run(args []string) int {
+	root := newRootCmd()
+	markUsageErrors(root)
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		log.Printf("%v", withRefusalHint(err))
+		return exitCode(err)
 	}
-	return 0
+	return exitOK
 }

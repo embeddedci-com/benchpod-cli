@@ -81,7 +81,7 @@ func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int,
 		return conn, nil
 	case "error":
 		conn.Close()
-		return nil, fmt.Errorf("%s", firmwareMessage(r.Message))
+		return nil, podError(r.Message)
 	default:
 		conn.Close()
 		return nil, fmt.Errorf("unexpected response status %q", r.Status)

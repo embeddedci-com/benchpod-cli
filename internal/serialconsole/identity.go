@@ -45,10 +45,9 @@ func (s IdentityState) ConfirmToken() string {
 	return s.ShortID
 }
 
-// IdentityError is the pod refusing identity-wipe ("identity-wipe error <why>").
-type IdentityError struct{ Reason string }
-
-func (e *IdentityError) Error() string { return "identity-wipe: " + e.Reason }
+// IdentityError is the pod refusing identity-wipe ("identity-wipe error <why>"): a CommandError
+// with Cmd "identity-wipe".
+type IdentityError = CommandError
 
 // Identity asks the pod for its device identity.
 func (c *Console) Identity(ctx context.Context) (IdentityState, error) {
@@ -105,7 +104,7 @@ func (c *Console) IdentityWipe(ctx context.Context, token string) (string, error
 	reply, refused, perr := parseConsoleReply(out, "identity-wipe", line)
 	switch {
 	case perr == nil && refused:
-		return "", &IdentityError{Reason: reply}
+		return "", &IdentityError{Cmd: "identity-wipe", Reason: reply}
 	case perr == nil:
 		f := strings.Fields(reply)
 		if len(f) < 2 || f[0] != "ok" {

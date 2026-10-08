@@ -64,6 +64,27 @@ func TestClassifyConnectionRejectsTheCloudForm(t *testing.T) {
 	}
 }
 
+// parseTarget is the one parser; it accepts the cloud form for the commands that can use it.
+func TestParseTargetCloudForm(t *testing.T) {
+	for in, name := range map[string]string{"embeddedci:bench-1": "bench-1", "EmbeddedCI:bench-1": "bench-1", " embeddedci:x ": "x"} {
+		spec, err := parseTarget(in)
+		if err != nil || !spec.IsCloud() || spec.Name != name {
+			t.Errorf("parseTarget(%q) = %+v, %v", in, spec, err)
+		}
+		if got := describeConn(spec); got != "embeddedci.com device "+name {
+			t.Errorf("describeConn = %q", got)
+		}
+	}
+	if _, err := parseTarget("embeddedci:"); err == nil || !strings.Contains(err.Error(), "device name") {
+		t.Errorf("empty name: %v", err)
+	}
+	for in, want := range map[string]connKind{"192.168.1.5": connWifi, "usb": connSerial, "/dev/tty.usbmodem1": connSerial} {
+		if spec, err := parseTarget(in); err != nil || spec.Kind != want {
+			t.Errorf("parseTarget(%q) = %+v, %v", in, spec, err)
+		}
+	}
+}
+
 func TestRequireWifi(t *testing.T) {
 	wifi, _ := classifyConnection("192.168.1.5")
 	if err := wifi.RequireWifi("ping"); err != nil {

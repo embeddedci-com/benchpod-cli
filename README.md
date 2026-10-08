@@ -97,6 +97,7 @@ reach the pod; the transport is inferred from its value:
 | `192.168.1.5[:8080]`             | TCP/JSON API (an address ⇒ Wi-Fi).                     |
 | `/dev/tty...`, `COM3`            | USB console, explicit device path.                     |
 | `usb`                            | USB console, auto-detected by probing the ports.       |
+| `embeddedci:<name>`              | The pod named `<name>` on embeddedci.com (see below).  |
 | *(omitted)*                      | the default saved by `benchpod set-connection`.        |
 
 The global flags are also settable via a `BENCHPOD_*` environment variable
@@ -108,13 +109,18 @@ The firmware itself is unauthenticated; `benchpod login` is independent of the
 device path and authenticates with `embeddedci-server` (device-login flow) for
 cloud features. Direct firmware commands do not send tokens.
 
-Over the USB console, `flash` (SWD) and `status` work; the other TCP/JSON
-commands reject a USB connection with a clear message. The
+Over the USB console, `flash` (SWD), `status` and `la voltage` work; the other
+TCP/JSON commands reject a USB connection with a clear message. The
 `set-wifi` / `show-network` / `clear-wifi` and `bootsel` subcommands always use
 the USB console regardless of `--connection` (a device path still selects
 the port). `lan-policy`, `sig-policy`, `cloud ca` and `cloud proxy` work over
 USB as well; `identity`, `identity wipe`, `install-blobs` and `dfu` work only over
 USB.
+
+`embeddedci:<name>` (the form the Python SDK and the MCP server take) works where a
+command can go through embeddedci.com: `lan-policy`, `sig-policy` and `deregister`,
+where it is the same as `--device-name <name>`. The other commands talk to the pod
+itself and say so when given a cloud target.
 
 ## CLI usage
 
@@ -132,14 +138,15 @@ benchpod ping
 benchpod status
 
 # Hardware (network):
-benchpod generate --waveform sine --freq 1000     # DAC waveform
+benchpod la voltage 3.3V                          # the DUT's I/O voltage; LA operations need it (network or USB)
+benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --output csv      # ADC snapshot
 benchpod stream ...
 benchpod test ...
 benchpod la pullup 3 on                           # LA pin pull-up
 benchpod la status
-benchpod la step --la 6 --steps 200 --delay-us 500 --dir-la 7 --direction 1
+benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 
 # Network (always over the USB console):
 benchpod set-wifi
@@ -179,6 +186,11 @@ benchpod cloud ca show
 benchpod cloud proxy set proxy.corp:3128 --user alice   # prompts for the password
 benchpod cloud proxy clear
 ```
+
+Flags that take a physical quantity accept it with its unit: `--freq 2kHz`,
+`--sample-rate 10MHz`, `--duration 2s`, `--delay 50us`, and `benchpod la voltage 3.3V`.
+The older flags with the unit in their name (`--sample-rate-mhz`, `--duration-ms`,
+`--delay-us`) keep working; pass one or the other, not both.
 
 `deregister` is the inverse of `register`: it detaches the pod from the
 logged-in account and clears the pod's cloud configuration so it stops
@@ -310,6 +322,8 @@ The pod reconnects to the cloud through proxy.corp:3128.
 - `cloud proxy set <host:port>` with `--user` takes the password from
   `--password`, `--password-stdin` or a prompt. The pod never reports the
   password back and the CLI never prints it. `cloud proxy clear` removes the proxy.
+  With a LAN address as the target, the CLI first warns that the LAN API is plain
+  TCP and the password would cross the network unencrypted.
 - `show` (the default) reports what the pod holds. The pod reconnects to the
   cloud after every change.
 - Current firmware refuses `set` and `clear` from the LAN, whatever its LAN
@@ -427,15 +441,27 @@ for the saved connection and `token.json` for the embeddedci.com session.
 
 | Flag                | Default                          | Purpose                                                           |
 |---------------------|----------------------------------|-------------------------------------------------------------------|
-| `--connection`      | (saved `set-connection` target)  | Address, device path, or `usb`; see [Connection](#connection).    |
+| `--connection`      | (saved `set-connection` target)  | Address, device path, `usb`, or `embeddedci:<name>` where a command supports it; see [Connection](#connection). |
 | `--config-file`     | `~/.config/benchpod-cli/config.json` | The CLI's config file, where `set-connection` saves the default. |
 | `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.              |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
 
 ### Exit codes
 
-`0` when the command succeeded, `1` for any error. The error is printed on stderr
-with a `[benchpod]` prefix; a refusal from the pod is printed word for word.
+Scripts can tell why a command failed from its exit code. The error is printed on
+stderr with a `[benchpod]` prefix.
+
+| Code | Meaning                                                                                   |
+|------|-------------------------------------------------------------------------------------------|
+| `0`  | Success.                                                                                  |
+| `1`  | Any other error.                                                                          |
+| `2`  | Usage: a bad flag, argument or subcommand.                                                |
+| `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
+| `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
+| `5`  | Unreachable: nothing answered on the pod's address, or no pod was found on USB.           |
+
+A refusal is printed word for word as the pod sent it. For a `locked:` (LAN policy),
+`busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
 
 ### `benchpod set-connection <addr|device|usb>`
 
@@ -471,11 +497,13 @@ Start DAC waveform output (network).
 | Flag                | Default | Purpose                                                   |
 |---------------------|---------|-----------------------------------------------------------|
 | `--waveform`        | (required) | `sine`, `square` or `sawtooth`.                        |
-| `--freq`            | `1000`  | Output frequency in Hz.                                   |
+| `--freq`            | `1kHz`  | Output frequency with its unit, e.g. `2kHz`; a bare number is Hz. |
 | `--amplitude`       | `127`   | Half-scale amplitude code, 0-127.                         |
 | `--offset`          | `128`   | DC offset code, 0-255.                                    |
-| `--duration-ms`     | `0`     | How long to play, in ms; `0` runs until the next command. |
-| `--sample-rate-mhz` | auto    | FPGA sample-clock rate in MHz; leave it out to auto-pick. |
+| `--duration`        | `0`     | How long to play, e.g. `2s` or `500ms`; `0` runs until the next command. |
+| `--duration-ms`     | `0`     | The same in ms (older form of `--duration`).              |
+| `--sample-rate`     | auto    | FPGA sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
+| `--sample-rate-mhz` | auto    | The same in MHz (older form of `--sample-rate`).          |
 
 ### `benchpod capture`
 
@@ -485,7 +513,8 @@ Blocking ADC snapshot (network). Prints the samples.
 |---------------------|---------|------------------------------------------------------|
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
 | `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
-| `--sample-rate-mhz` | max     | ADC sample-clock rate in MHz; leave it out for the maximum. |
+| `--sample-rate`     | max     | ADC sample-clock rate, e.g. `10MHz`; leave it out for the maximum. |
+| `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod stream`
 
@@ -495,7 +524,8 @@ Asynchronous ADC capture (network). Same flags and output as `capture`.
 |---------------------|---------|------------------------------------------------------|
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
 | `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
-| `--sample-rate-mhz` | max     | ADC sample-clock rate in MHz; leave it out for the maximum. |
+| `--sample-rate`     | max     | ADC sample-clock rate, e.g. `10MHz`; leave it out for the maximum. |
+| `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod measure`
 
@@ -504,12 +534,13 @@ DAC plus ADC loopback capture (network): play a waveform and capture the ADC.
 | Flag                | Default | Purpose                                              |
 |---------------------|---------|------------------------------------------------------|
 | `--waveform`        | (required) | `sine`, `square` or `sawtooth`.                   |
-| `--freq`            | `1000`  | Output frequency in Hz.                              |
+| `--freq`            | `1kHz`  | Output frequency with its unit, e.g. `2kHz`; a bare number is Hz. |
 | `--amplitude`       | `127`   | Half-scale amplitude code, 0-127.                    |
 | `--offset`          | `128`   | DC offset code, 0-255.                               |
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
 | `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
-| `--sample-rate-mhz` | auto    | Sample-clock rate in MHz; leave it out to auto-pick. |
+| `--sample-rate`     | auto    | Sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
+| `--sample-rate-mhz` | auto    | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod test`
 
@@ -524,8 +555,16 @@ A diagnostic sample pattern made by the pod's MCU, without the FPGA (network).
 
 ### `benchpod la`
 
-Logic-analyzer pin control (network): pull-ups and step pulses. Pins are `1`-`14`
-or `la1`-`la14`.
+Logic-analyzer pin control: the bank voltage, pull-ups and step pulses. Pins are
+`1`-`14` or `la1`-`la14`. Everything but `la voltage` needs the network.
+
+### `benchpod la voltage [VOLTAGE]`
+
+Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
+(also `1800mV`, `3.3` or `3300`). Leave it out to show the setting. The pod refuses
+LA capture, UART, SWD flash, pull-ups and I2C-sensor emulation until it is set;
+1.8 V needs a v3 pod, and the pod refuses a change while an LA pin is in use. Works
+over the network and over USB. No flags.
 
 ### `benchpod la pullup PIN STATE`
 
@@ -543,7 +582,8 @@ Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
 |---------------|---------|--------------------------------------------------------------|
 | `--la`        | (required) | LA pin to pulse, e.g. `6` or `la6`.                       |
 | `--steps`     | (required) | Number of pulses, positive.                               |
-| `--delay-us`  | (required) | High and low half-period in microseconds, positive.       |
+| `--delay`     | (required) | High and low half-period, e.g. `50us` or `1ms` (this or `--delay-us`). |
+| `--delay-us`  | (required) | The same in microseconds (older form of `--delay`).       |
 | `--dir-la`    | (none)  | Direction pin, driven before stepping.                       |
 | `--direction` | `0`     | Level for `--dir-la`: `0` or `1`.                            |
 
@@ -731,7 +771,7 @@ pod's last connection error, when the pod does not connect within `--wait`.
 
 Detach the pod from your account (its data is kept) and clear its cloud
 configuration. By default the pod reached with `--connection` is identified by its
-key.
+key; `--connection embeddedci:<name>` is the same as `--device-name <name>`.
 
 | Flag                | Default                      | Purpose                                                       |
 |---------------------|------------------------------|---------------------------------------------------------------|
@@ -745,7 +785,8 @@ key.
 
 Show the pod's LAN policy: `open`, `locked` or `off`. See
 [Pod policies](#pod-policies-lan-and-signatures). Over the cloud with
-`--device-name`/`--device-id`, or over USB; the LAN can only show it. These flags
+`--device-name`/`--device-id` or `--connection embeddedci:<name>`, or over USB; the
+LAN can only show it. These flags
 apply to `show` and `set` too.
 
 | Flag            | Default                      | Purpose                                                  |
