@@ -76,8 +76,9 @@ func testContext(t *testing.T) context.Context {
 
 func withLister(t *testing.T, fn func() ([]*enumerator.PortDetails, error)) {
 	t.Helper()
+	saved := portLister
 	portLister = fn
-	t.Cleanup(func() { portLister = enumerator.GetDetailedPortsList })
+	t.Cleanup(func() { portLister = saved })
 }
 
 // withGlobber stubs the /dev glob scan so candidatePorts tests don't pick up the
