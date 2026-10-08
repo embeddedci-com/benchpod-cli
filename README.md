@@ -714,7 +714,8 @@ Reboot a (retired) RP2350 pod into its UF2 bootloader (USB).
 ### `benchpod set-wifi`
 
 Save Wi-Fi credentials and join (USB). Installs the ESP32-C3 image first when the
-pod lacks it.
+pod lacks it; if the pod's image slots cannot be read, it stops and says so
+(`--skip-blobs` sets Wi-Fi without the check).
 
 | Flag               | Default    | Purpose                                                   |
 |--------------------|------------|-----------------------------------------------------------|
