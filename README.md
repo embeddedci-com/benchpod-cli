@@ -435,6 +435,10 @@ from the `release` workflow, triggered by pushing a `v*` tag:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+The tag is the version (GoReleaser sets `main.version` from it). Before anything
+is published, the workflow checks that the tag is `vX.Y.Z` on a commit in `main`
+and runs the full `ci` workflow (vet, tests, snapshot build).
+
 The job runs on a **macOS** runner (the macOS binaries need cgo/IOKit; Linux and
 Windows cross-compile from there with cgo off) and produces:
 
