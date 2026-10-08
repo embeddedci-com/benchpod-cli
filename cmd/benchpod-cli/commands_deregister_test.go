@@ -97,6 +97,15 @@ func TestRunDeregisterByName(t *testing.T) {
 	if len(deregistered) != 1 || deregistered[0] != "id-b" {
 		t.Fatalf("deregistered = %v, want [id-b]", deregistered)
 	}
+
+	// The cloud target form is the same selector.
+	deregistered = nil
+	if err := runDeregister(&globalFlags{connection: "embeddedci:bench-b"}, ts.URL, tokenPath, "", "", false); err != nil {
+		t.Fatalf("runDeregister embeddedci:bench-b: %v", err)
+	}
+	if len(deregistered) != 1 || deregistered[0] != "id-b" {
+		t.Fatalf("deregistered = %v, want [id-b]", deregistered)
+	}
 }
 
 // TestRunDeregisterRejectsBothSelectors guards the ambiguous invocation rather than silently

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // The pod's company CA certificate and HTTP proxy over the console (firmware
@@ -27,13 +29,9 @@ var ErrUnknownCommand = ErrPolicyUnsupported
 // is 128 including the terminating NUL).
 const ConsoleLineMax = 127
 
-// CommandError is the pod refusing a console command ("<cmd> error <why>").
-type CommandError struct {
-	Cmd    string
-	Reason string
-}
-
-func (e *CommandError) Error() string { return e.Cmd + ": " + e.Reason }
+// CommandError is the pod refusing a console command ("<cmd> error <why>"). It is the CLI's one
+// refusal type, tcpclient.PodError, with Cmd set.
+type CommandError = tcpclient.PodError
 
 // CACert is one certificate of the pod's company CA, as the pod reports it.
 type CACert struct {

@@ -2,9 +2,10 @@
 
 `benchpod` is the EmbeddedCI **bench pod** command-line tool. It talks to a
 bench pod either over its TCP/JSON API (port 8080) or over its USB console
-(CDC-ACM), and drives the pod's hardware: GPIO, signal generation,
-measurement, scope capture/streaming, Wi-Fi configuration, BOOTSEL,
-firmware flashing over SWD, and SPI NOR flash programming.
+(CDC-ACM), and drives the pod's hardware: signal generation, ADC capture,
+logic-analyzer pins, Wi-Fi configuration, firmware flashing over SWD, SPI NOR
+flash programming, and the pod's own firmware, policies and cloud link. Every
+command and flag is listed in the [command reference](#command-reference).
 
 ## Installation
 
@@ -96,21 +97,30 @@ reach the pod; the transport is inferred from its value:
 | `192.168.1.5[:8080]`             | TCP/JSON API (an address ⇒ Wi-Fi).                     |
 | `/dev/tty...`, `COM3`            | USB console, explicit device path.                     |
 | `usb`                            | USB console, auto-detected by probing the ports.       |
+| `embeddedci:<name>`              | The pod named `<name>` on embeddedci.com (see below).  |
 | *(omitted)*                      | the default saved by `benchpod set-connection`.        |
 
-Every flag is also settable via a `BENCHPOD_*` environment variable
-(e.g. `BENCHPOD_CONNECTION=usb`), with precedence flag > env > default.
+The global flags are also settable via a `BENCHPOD_*` environment variable
+(`BENCHPOD_CONNECTION=usb`, `BENCHPOD_TIMEOUT=2m`, `BENCHPOD_CONFIG_FILE`,
+`BENCHPOD_OUTPUT_FILENAME`), with precedence flag > env > default. Command flags
+are flags only.
 
 The firmware itself is unauthenticated; `benchpod login` is independent of the
 device path and authenticates with `embeddedci-server` (device-login flow) for
 cloud features. Direct firmware commands do not send tokens.
 
-Only `flash` (SWD) is implemented over the USB console today; the other
+Over the USB console, `flash` (SWD), `status` and `la voltage` work; the other
 TCP/JSON commands reject a USB connection with a clear message. The
 `set-wifi` / `show-network` / `clear-wifi` and `bootsel` subcommands always use
 the USB console regardless of `--connection` (a device path still selects
 the port). `lan-policy`, `sig-policy`, `cloud ca` and `cloud proxy` work over
-USB as well; `identity` and `identity wipe` work only over USB.
+USB as well; `identity`, `identity wipe`, `install-blobs` and `dfu` work only over
+USB.
+
+`embeddedci:<name>` (the form the Python SDK and the MCP server take) works where a
+command can go through embeddedci.com: `lan-policy`, `sig-policy` and `deregister`,
+where it is the same as `--device-name <name>`. The other commands talk to the pod
+itself and say so when given a cloud target.
 
 ## CLI usage
 
@@ -127,14 +137,16 @@ benchpod discover --save     # save it as the default when exactly one is found
 benchpod ping
 benchpod status
 
-# Hardware:
-benchpod set-gpio PIN STATE
-benchpod step-gpio
-benchpod generate ...
-benchpod measure ...
-benchpod capture ...
+# Hardware (network):
+benchpod la voltage 3.3V                          # the DUT's I/O voltage; LA operations need it (network or USB)
+benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
+benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
+benchpod capture --samples 1024 --output csv      # ADC snapshot
 benchpod stream ...
 benchpod test ...
+benchpod la pullup 3 on                           # LA pin pull-up
+benchpod la status
+benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 
 # Network (always over the USB console):
 benchpod set-wifi
@@ -144,7 +156,7 @@ benchpod clear-wifi
 # Firmware:
 benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP)
 benchpod spi-flash ...    # read/erase/program an SPI NOR flash on four LA pins (network)
-benchpod bootsel          # reboot an RP2350 pod into its UF2 bootloader (USB console only)
+benchpod bootsel          # reboot a (retired) RP2350 pod into its UF2 bootloader (USB console only)
 benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (USB console only)
 benchpod flash-self                  # fetch latest firmware + flash the POD over USB DFU (STM32)
 benchpod flash-self --enter-dfu      # …rebooting a running pod into DFU first
@@ -154,8 +166,9 @@ benchpod install-blobs --dir stm32h563/build/blobs   # …from a local firmware 
 
 # Cloud auth (optional):
 benchpod login [--server-url https://www.embeddedci.com]
-benchpod register ...
+benchpod register --connection 192.168.1.5
 benchpod deregister ...
+benchpod logout
 
 # Pod policies (cloud with --device-name, or USB):
 benchpod lan-policy --device-name benchpod-baea06          # show
@@ -173,6 +186,11 @@ benchpod cloud ca show
 benchpod cloud proxy set proxy.corp:3128 --user alice   # prompts for the password
 benchpod cloud proxy clear
 ```
+
+Flags that take a physical quantity accept it with its unit: `--freq 2kHz`,
+`--sample-rate 10MHz`, `--duration 2s`, `--delay 50us`, and `benchpod la voltage 3.3V`.
+The older flags with the unit in their name (`--sample-rate-mhz`, `--duration-ms`,
+`--delay-us`) keep working; pass one or the other, not both.
 
 `deregister` is the inverse of `register`: it detaches the pod from the
 logged-in account and clears the pod's cloud configuration so it stops
@@ -304,6 +322,8 @@ The pod reconnects to the cloud through proxy.corp:3128.
 - `cloud proxy set <host:port>` with `--user` takes the password from
   `--password`, `--password-stdin` or a prompt. The pod never reports the
   password back and the CLI never prints it. `cloud proxy clear` removes the proxy.
+  With a LAN address as the target, the CLI first warns that the LAN API is plain
+  TCP and the password would cross the network unencrypted.
 - `show` (the default) reports what the pod holds. The pod reconnects to the
   cloud after every change.
 - Current firmware refuses `set` and `clear` from the LAN, whatever its LAN
@@ -405,14 +425,469 @@ starts the new firmware once the write verifies. The firmware side is the `dfu`
 console command, which jumps to the STM32 system-memory bootloader (the same
 flow the firmware `make flash-dfu` target uses).
 
-### Global flags
+## Command reference
+
+Every command and flag. "Network" means the pod's TCP/JSON API (`--connection
+<address>`), "USB" its USB console (`--connection usb` or a device path). Run
+`benchpod <command> -h` for the same list in the terminal. `benchpod completion
+bash|zsh|fish|powershell` prints a shell completion script, and `benchpod --version`
+the CLI version.
+
+### `benchpod` (global flags)
+
+These apply to every command. The CLI keeps its files in
+`~/.config/benchpod-cli/` (or `$XDG_CONFIG_HOME/benchpod-cli/`): `config.json`
+for the saved connection and `token.json` for the embeddedci.com session.
 
 | Flag                | Default                          | Purpose                                                           |
 |---------------------|----------------------------------|-------------------------------------------------------------------|
-| `--connection`      | (saved `set-connection` target)  | Address, device path, or `usb` — see the table above.             |
-| `--config-file`     | (none)                           | Path to a config file.                                            |
-| `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.             |
+| `--connection`      | (saved `set-connection` target)  | Address, device path, `usb`, or `embeddedci:<name>` where a command supports it; see [Connection](#connection). |
+| `--config-file`     | `~/.config/benchpod-cli/config.json` | The CLI's config file, where `set-connection` saves the default. |
+| `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.              |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
+
+### Exit codes
+
+Scripts can tell why a command failed from its exit code. The error is printed on
+stderr with a `[benchpod]` prefix.
+
+| Code | Meaning                                                                                   |
+|------|-------------------------------------------------------------------------------------------|
+| `0`  | Success.                                                                                  |
+| `1`  | Any other error.                                                                          |
+| `2`  | Usage: a bad flag, argument or subcommand.                                                |
+| `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
+| `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
+| `5`  | Unreachable: nothing answered on the pod's address, or no pod was found on USB.           |
+
+A refusal is printed word for word as the pod sent it. For a `locked:` (LAN policy),
+`busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
+
+### `benchpod set-connection <addr|device|usb>`
+
+Save the default connection (an address, a device path or `usb`) in the config
+file, so later commands can leave out `--connection`. No flags.
+
+### `benchpod discover`
+
+Find every pod on USB and on the LAN (mDNS), check each one answers its API, and
+report whether it is registered.
+
+| Flag              | Default | Purpose                                                         |
+|-------------------|---------|-----------------------------------------------------------------|
+| `--save`          | off     | Save the pod as the default connection when exactly one is found (the network address first). |
+| `--no-usb`        | off     | Skip probing USB ports.                                          |
+| `--no-network`    | off     | Skip mDNS browsing of the LAN.                                   |
+| `--wait`          | `3s`    | How long to browse the LAN for mDNS replies.                     |
+| `--probe-timeout` | `2s`    | How long each USB port gets to answer `status`.                  |
+
+### `benchpod ping`
+
+Connectivity check over the network. No flags.
+
+### `benchpod status`
+
+Firmware, gateware, capabilities and network details: JSON over the network, the
+console's `status` text over USB. No flags.
+
+### `benchpod generate`
+
+Start DAC waveform output (network).
+
+| Flag                | Default | Purpose                                                   |
+|---------------------|---------|-----------------------------------------------------------|
+| `--waveform`        | (required) | `sine`, `square` or `sawtooth`.                        |
+| `--freq`            | `1kHz`  | Output frequency with its unit, e.g. `2kHz`; a bare number is Hz. |
+| `--amplitude`       | `127`   | Half-scale amplitude code, 0-127.                         |
+| `--offset`          | `128`   | DC offset code, 0-255.                                    |
+| `--duration`        | `0`     | How long to play, e.g. `2s` or `500ms`; `0` runs until the next command. |
+| `--duration-ms`     | `0`     | The same in ms (older form of `--duration`).              |
+| `--sample-rate`     | auto    | FPGA sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
+| `--sample-rate-mhz` | auto    | The same in MHz (older form of `--sample-rate`).          |
+
+### `benchpod capture`
+
+Blocking ADC snapshot (network). Prints the samples.
+
+| Flag                | Default | Purpose                                              |
+|---------------------|---------|------------------------------------------------------|
+| `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
+| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
+| `--sample-rate`     | max     | ADC sample-clock rate, e.g. `10MHz`; leave it out for the maximum. |
+| `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
+
+### `benchpod stream`
+
+Asynchronous ADC capture (network). Same flags and output as `capture`.
+
+| Flag                | Default | Purpose                                              |
+|---------------------|---------|------------------------------------------------------|
+| `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
+| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
+| `--sample-rate`     | max     | ADC sample-clock rate, e.g. `10MHz`; leave it out for the maximum. |
+| `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
+
+### `benchpod measure`
+
+DAC plus ADC loopback capture (network): play a waveform and capture the ADC.
+
+| Flag                | Default | Purpose                                              |
+|---------------------|---------|------------------------------------------------------|
+| `--waveform`        | (required) | `sine`, `square` or `sawtooth`.                   |
+| `--freq`            | `1kHz`  | Output frequency with its unit, e.g. `2kHz`; a bare number is Hz. |
+| `--amplitude`       | `127`   | Half-scale amplitude code, 0-127.                    |
+| `--offset`          | `128`   | DC offset code, 0-255.                               |
+| `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
+| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
+| `--sample-rate`     | auto    | Sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
+| `--sample-rate-mhz` | auto    | The same in MHz (older form of `--sample-rate`).     |
+
+### `benchpod test`
+
+A diagnostic sample pattern made by the pod's MCU, without the FPGA (network).
+
+| Flag        | Default | Purpose                                                                  |
+|-------------|---------|--------------------------------------------------------------------------|
+| `--pattern` | `sine`  | `sine`, `counter`, `ramp` or `const` (`const` when only `--value` is set). |
+| `--value`   | `255`   | Constant byte value, 0-255, for the `const` pattern.                      |
+| `--samples` | `256`   | Number of samples, 1-4096.                                               |
+| `--output`  | `json`  | Output format: `json`, `csv` or `ndjson`.                                |
+
+### `benchpod la`
+
+Logic-analyzer pin control: the bank voltage, pull-ups and step pulses. Pins are
+`1`-`14` or `la1`-`la14`. Everything but `la voltage` needs the network.
+
+### `benchpod la voltage [VOLTAGE]`
+
+Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
+(also `1800mV`, `3.3` or `3300`). Leave it out to show the setting. The pod refuses
+LA capture, UART, SWD flash, pull-ups and I2C-sensor emulation until it is set;
+1.8 V needs a v3 pod, and the pod refuses a change while an LA pin is in use. Works
+over the network and over USB. No flags.
+
+### `benchpod la pullup PIN STATE`
+
+Switch an LA pin's pull-up: `PIN` is 1-8 (or `la1`), `STATE` is `on` or `off`. No flags.
+
+### `benchpod la status [PIN]`
+
+Report the pull-up state of one pin, or the bitmask of all of them. No flags.
+
+### `benchpod la step`
+
+Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
+
+| Flag          | Default | Purpose                                                      |
+|---------------|---------|--------------------------------------------------------------|
+| `--la`        | (required) | LA pin to pulse, e.g. `6` or `la6`.                       |
+| `--steps`     | (required) | Number of pulses, positive.                               |
+| `--delay`     | (required) | High and low half-period, e.g. `50us` or `1ms` (this or `--delay-us`). |
+| `--delay-us`  | (required) | The same in microseconds (older form of `--delay`).       |
+| `--dir-la`    | (none)  | Direction pin, driven before stepping.                       |
+| `--direction` | `0`     | Level for `--dir-la`: `0` or `1`.                            |
+
+### `benchpod flash`
+
+Flash an SWD target wired to the pod, through host-side OpenOCD and the pod's
+CMSIS-DAP backend (network or USB). See [Flashing: CMSIS-DAP](#flashing-cmsis-dap).
+
+| Flag                       | Default | Purpose                                                                 |
+|----------------------------|---------|-------------------------------------------------------------------------|
+| `--swclk`                  | (required) | LA pin for SWCLK, 1-14 (`1` or `la1`).                               |
+| `--swdio`                  | (required) | LA pin for SWDIO, 1-14.                                              |
+| `--target`                 | (none)  | OpenOCD target config, passed as `-f`, e.g. `target/stm32f1x.cfg`.      |
+| `--file`                   | (none)  | Firmware image to flash, used with `--target`.                          |
+| `--load-address`           | (none)  | Load address for a raw `.bin` image.                                    |
+| `--nreset`                 | off     | The target's NRST is wired to the pod's reset pin (DUT header J1 pin 22); turns on connect-under-reset. |
+| `--no-connect-under-reset` | off     | Do not hold the target in reset while connecting.                       |
+| `--no-verify`              | off     | Do not verify after programming.                                        |
+| `--no-reset`               | off     | Do not reset the target after programming.                              |
+| `--keep-reset-init`        | off     | Keep the target config's reset-init clock boost (cleared by default because it glitches the link). |
+| `--target-power`           | (none)  | Turn on a target power eFuse first: `1` (internal 5 V) or `2` (external). |
+| `--openocd`                | (`PATH`) | Path to the `openocd` binary.                                          |
+| `--command`, `-c`          | (none)  | Extra OpenOCD command, repeatable, appended last.                       |
+| `--openocd-arg`            | (none)  | Extra raw OpenOCD argument, repeatable, appended last.                  |
+
+Pass `--target` (with `--file`) or at least one `-c`/`--openocd-arg`.
+
+### `benchpod spi-flash`
+
+Read, erase and program a 25-series SPI NOR flash on four LA pins (network). See
+[SPI flash](#spi-flash). These flags apply to every subcommand.
+
+| Flag       | Default   | Purpose                                                              |
+|------------|-----------|----------------------------------------------------------------------|
+| `--sck`    | (required) | LA pin for SCK, 1-14.                                               |
+| `--mosi`   | (required) | LA pin for MOSI, 1-14.                                              |
+| `--miso`   | (required) | LA pin for MISO, 1-14.                                              |
+| `--cs`     | (required) | LA pin for CS, 1-14.                                                |
+| `--hz`     | `1000000` | SCK rate in Hz; the pod uses the nearest rate at or below it (190 kHz to 6 MHz). |
+| `--mode`   | `0`       | SPI mode, `0` or `3`.                                                |
+| `--nreset` | off       | Hold the DUT in reset through the pod's reset pin for the whole run.  |
+
+### `benchpod spi-flash id`
+
+Read the JEDEC ID, size and status register. No flags of its own.
+
+### `benchpod spi-flash read OUT`
+
+Read flash contents into a file (`-` for stdout).
+
+| Flag     | Default | Purpose                                                      |
+|----------|---------|--------------------------------------------------------------|
+| `--addr` | `0`     | Flash address to read from.                                  |
+| `--len`  | (to the end) | Bytes to read, e.g. `4096` or `1M`.                     |
+
+### `benchpod spi-flash write FILE`
+
+Erase, program and verify a raw image.
+
+| Flag          | Default | Purpose                                                   |
+|---------------|---------|-----------------------------------------------------------|
+| `--addr`      | `0`     | Flash address to write at, e.g. `0x10000`.                |
+| `--no-erase`  | off     | Do not erase first (the range must already be erased).    |
+| `--no-verify` | off     | Do not read each chunk back.                              |
+
+### `benchpod spi-flash erase`
+
+Erase a range or the whole part.
+
+| Flag     | Default | Purpose                                  |
+|----------|---------|------------------------------------------|
+| `--addr` | `0`     | First address to erase.                  |
+| `--len`  | (none)  | Bytes to erase, e.g. `65536` or `1M`.    |
+| `--chip` | off     | Erase the whole part instead of a range. |
+
+### `benchpod flash-self [firmware.bin | URL]`
+
+Flash the pod's own firmware over USB DFU (STM32) with dfu-util, then install its
+blobs. With no argument it fetches the latest release. See
+[Flashing the pod itself](#flashing-the-pod-itself-stm32-usb-dfu).
+
+| Flag                 | Default      | Purpose                                                       |
+|----------------------|--------------|---------------------------------------------------------------|
+| `--enter-dfu`        | off          | First reboot a running pod into DFU over its USB console.     |
+| `--wait`             | `1m` (60s)   | How long to wait for the pod to show up in DFU mode.          |
+| `--firmware-version` | (latest)     | Fetch this release tag instead of the latest.                 |
+| `--firmware-url`     | (latest)     | Download the firmware from this URL instead.                  |
+| `--address`          | `0x08000000` | Flash base address (STM32 main flash).                        |
+| `--dfu-util`         | (`PATH`)     | Path to the `dfu-util` binary.                                |
+| `--no-leave`         | off          | Stay in DFU after flashing instead of starting the firmware.  |
+| `--skip-blobs`       | off          | Do not install the gateware and ESP32-C3 images afterwards.   |
+| `--blobs-dir`        | (next to the firmware) | Take the blobs from this directory.                 |
+
+It prints a `signature:` line for the release's `.sig` (report only, see
+[dfu-util](#dfu-util-for-flash-self)) and exits non-zero when the firmware does not
+fit the pod's flash, the download's checksum does not match, or dfu-util fails.
+
+### `benchpod install-blobs`
+
+Install the gateware and ESP32-C3 images the pod's firmware goes with (USB). By
+default they come from the release that matches the firmware the pod runs. Each
+blob's signature is reported; for now a missing or failing one never stops it.
+
+| Flag        | Default         | Purpose                                                        |
+|-------------|-----------------|----------------------------------------------------------------|
+| `--release` | (the pod's)     | Take the blobs from this firmware release tag.                 |
+| `--dir`     | (none)          | Take the blobs from this directory (holding `blobs-manifest.json`), e.g. `stm32h563/build/blobs`. |
+| `--only`    | (all)           | Comma-separated slots to install: `gw0`, `gw1`, `esp`.         |
+| `--force`   | off             | Install even the blobs the pod already holds.                  |
+
+### `benchpod dfu`
+
+Reboot an STM32 pod into its USB DFU bootloader (USB). Then flash it with
+`flash-self` or dfu-util.
+
+| Flag    | Default | Purpose                         |
+|---------|---------|---------------------------------|
+| `--yes` | off     | Skip the confirmation prompt.   |
+
+### `benchpod bootsel`
+
+Reboot a (retired) RP2350 pod into its UF2 bootloader (USB).
+
+| Flag    | Default | Purpose                         |
+|---------|---------|---------------------------------|
+| `--yes` | off     | Skip the confirmation prompt.   |
+
+### `benchpod set-wifi`
+
+Save Wi-Fi credentials and join (USB). Installs the ESP32-C3 image first when the
+pod lacks it.
+
+| Flag               | Default    | Purpose                                                   |
+|--------------------|------------|-----------------------------------------------------------|
+| `--ssid`           | (required) | Wi-Fi SSID.                                               |
+| `--password`       | (prompt)   | Wi-Fi password (visible in shell history; prefer the prompt or `--password-stdin`). |
+| `--password-stdin` | off        | Read the password from the first line of stdin.           |
+| `--skip-blobs`     | off        | Do not install a missing ESP32-C3 image first.            |
+
+### `benchpod show-network`
+
+The pod's IP (the wired lease first) plus the stored Wi-Fi SSID, state and RSSI
+(USB). No flags.
+
+### `benchpod clear-wifi`
+
+Erase the stored Wi-Fi credentials (USB); reboot the pod to fully apply. No flags.
+
+### `benchpod login`
+
+Authenticate with embeddedci.com (device-login flow). A no-op when a usable
+session exists.
+
+| Flag           | Default                      | Purpose                                                  |
+|----------------|------------------------------|----------------------------------------------------------|
+| `--server-url` | `https://www.embeddedci.com` | embeddedci-server base URL.                              |
+| `--token-file` | `~/.config/benchpod-cli/token.json` | Token cache.                                      |
+| `--no-browser` | off                          | Print the approval URL instead of opening a browser.     |
+| `--force`      | off                          | Authenticate again even when a session exists.           |
+
+### `benchpod logout`
+
+Delete the cached tokens. Local only: no pod is deregistered.
+
+| Flag           | Default                      | Purpose      |
+|----------------|------------------------------|--------------|
+| `--token-file` | `~/.config/benchpod-cli/token.json` | Token cache. |
+
+### `benchpod register`
+
+Register the pod reached with `--connection` to your account and provision it to
+connect to embeddedci.com. Needs `benchpod login` first. Exits non-zero, with the
+pod's last connection error, when the pod does not connect within `--wait`.
+
+| Flag                     | Default                      | Purpose                                                    |
+|--------------------------|------------------------------|------------------------------------------------------------|
+| `--device-name`          | (the pod's own name)         | Device name, URL-safe and unique in the organization, e.g. `bench-01`. |
+| `--wait`                 | `30s`                        | How long to wait for the pod to connect; `0` does not wait. |
+| `--pod-host`             | `api.embeddedci.com`         | Host the pod connects to (`api.embeddedci.com` for embeddedci.com, else the `--server-url` host). |
+| `--insecure-skip-verify` | off                          | Provision the pod to skip TLS certificate checks (bring-up only). |
+| `--server-url`           | `https://www.embeddedci.com` | embeddedci-server base URL.                                |
+| `--token-file`           | `~/.config/benchpod-cli/token.json` | Token cache.                                        |
+
+### `benchpod deregister`
+
+Detach the pod from your account (its data is kept) and clear its cloud
+configuration. By default the pod reached with `--connection` is identified by its
+key; `--connection embeddedci:<name>` is the same as `--device-name <name>`.
+
+| Flag                | Default                      | Purpose                                                       |
+|---------------------|------------------------------|---------------------------------------------------------------|
+| `--device-name`     | (none)                       | Deregister the device with this name instead (the pod may be offline). |
+| `--device-id`       | (none)                       | Deregister the device with this id instead.                    |
+| `--keep-pod-config` | off                          | Leave the pod's cloud configuration in place.                  |
+| `--server-url`      | `https://www.embeddedci.com` | embeddedci-server base URL.                                   |
+| `--token-file`      | `~/.config/benchpod-cli/token.json` | Token cache.                                           |
+
+### `benchpod lan-policy`
+
+Show the pod's LAN policy: `open`, `locked` or `off`. See
+[Pod policies](#pod-policies-lan-and-signatures). Over the cloud with
+`--device-name`/`--device-id` or `--connection embeddedci:<name>`, or over USB; the
+LAN can only show it. These flags
+apply to `show` and `set` too.
+
+| Flag            | Default                      | Purpose                                                  |
+|-----------------|------------------------------|----------------------------------------------------------|
+| `--device-name` | (none)                       | Go through embeddedci.com to the registered pod with this name. |
+| `--device-id`   | (none)                       | Go through embeddedci.com to the registered pod with this id. |
+| `--server-url`  | `https://www.embeddedci.com` | embeddedci-server base URL.                              |
+| `--token-file`  | `~/.config/benchpod-cli/token.json` | Token cache.                                      |
+
+### `benchpod lan-policy show`
+
+Same as `benchpod lan-policy`.
+
+### `benchpod lan-policy set <open|locked|off>`
+
+Set the LAN policy (cloud with an owner or admin role, or USB).
+
+### `benchpod sig-policy`
+
+Show the pod's signature policy: `audit`, `permissive` or `required`. Same
+transports as `lan-policy`; the cloud can only make it stricter. These flags apply
+to `show` and `set` too.
+
+| Flag            | Default                      | Purpose                                                  |
+|-----------------|------------------------------|----------------------------------------------------------|
+| `--device-name` | (none)                       | Go through embeddedci.com to the registered pod with this name. |
+| `--device-id`   | (none)                       | Go through embeddedci.com to the registered pod with this id. |
+| `--server-url`  | `https://www.embeddedci.com` | embeddedci-server base URL.                              |
+| `--token-file`  | `~/.config/benchpod-cli/token.json` | Token cache.                                      |
+
+### `benchpod sig-policy show`
+
+Same as `benchpod sig-policy`.
+
+### `benchpod sig-policy set <audit|permissive|required>`
+
+Set the signature policy. Loosening it needs the USB console.
+
+### `benchpod identity`
+
+Show the pod's device identity (USB). See
+[Device identity](#device-identity-show-and-wipe). No flags.
+
+### `benchpod identity show`
+
+Same as `benchpod identity`.
+
+### `benchpod identity wipe`
+
+Erase the pod's device key and make a new one (USB only). The pod then needs to be
+registered again.
+
+| Flag    | Default | Purpose                      |
+|---------|---------|------------------------------|
+| `--yes` | off     | Do not ask for confirmation. |
+
+### `benchpod cloud`
+
+How the pod reaches embeddedci.com: a company CA and an HTTP proxy. See
+[Cloud link](#cloud-link-company-ca-and-http-proxy). Changes need USB (or the
+cloud link); the LAN can show them.
+
+### `benchpod cloud ca`
+
+Show the company CA certificates the pod holds (same as `cloud ca show`).
+
+### `benchpod cloud ca show`
+
+Show the company CA certificates the pod holds. No flags.
+
+### `benchpod cloud ca set <file.pem>`
+
+Check a PEM file (at most 16 KB) and store its CA certificates on the pod. No flags.
+
+### `benchpod cloud ca clear`
+
+Remove the company CA; the pod trusts only its built-in roots again. No flags.
+
+### `benchpod cloud proxy`
+
+Show the pod's HTTP proxy (same as `cloud proxy show`).
+
+### `benchpod cloud proxy show`
+
+Show the pod's HTTP proxy. The password is never reported. No flags.
+
+### `benchpod cloud proxy set <host:port>`
+
+Set the pod's HTTP proxy.
+
+| Flag               | Default  | Purpose                                                         |
+|--------------------|----------|-----------------------------------------------------------------|
+| `--user`           | (none)   | Proxy user name (Basic authentication).                         |
+| `--password`       | (prompt) | Proxy password (visible in shell history; prefer the prompt or `--password-stdin`). |
+| `--password-stdin` | off      | Read the password from the first line of stdin.                 |
+
+### `benchpod cloud proxy clear`
+
+Remove the HTTP proxy; the pod connects to the cloud directly. No flags.
+
+## Development
 
 ### Makefile targets
 

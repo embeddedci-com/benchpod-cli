@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
 )
@@ -146,7 +147,7 @@ func DetectPort(explicit string) (string, error) {
 
 	switch len(cands) {
 	case 0:
-		return "", fmt.Errorf("no bench-pod USB console found (USB VID %s). Is the device plugged in? Pass --connection <device> to override", strings.Join(benchPodVIDs, "/"))
+		return "", noPod(fmt.Errorf("no bench-pod USB console found (USB VID %s). Is the device plugged in? Pass --connection <device> to override", strings.Join(benchPodVIDs, "/")))
 	case 1:
 		return cands[0].name, nil
 	default:
@@ -218,13 +219,23 @@ func Open(explicitDevice string) (*Console, string, error) {
 	serialLogf("connecting to bench-pod USB console at %s (%d 8N1)...", name, baudRate)
 	port, err := serial.Open(name, &serial.Mode{BaudRate: baudRate})
 	if err != nil {
-		return nil, "", fmt.Errorf("open USB port %s: %w", name, err)
+		return nil, "", noPod(fmt.Errorf("open USB port %s: %w", name, err))
 	}
 	serialLogf("connected to %s", name)
 	c := newConsole(port)
 	c.logf = serialLogf
 	return c, name, nil
 }
+
+// noPodError is a failure to find or open the pod's USB console. Its text is err's; it also
+// matches tcpclient.ErrUnreachable, so the CLI exits as for a pod it cannot reach.
+type noPodError struct{ err error }
+
+func noPod(err error) error { return &noPodError{err: err} }
+
+func (e *noPodError) Error() string        { return e.err.Error() }
+func (e *noPodError) Unwrap() error        { return e.err }
+func (e *noPodError) Is(target error) bool { return target == tcpclient.ErrUnreachable }
 
 // newConsole wraps an already-open transport. Used by Open and by tests.
 func newConsole(rw io.ReadWriteCloser) *Console {
@@ -251,7 +262,7 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 	}
 	cands = preferFirst(strings.TrimSpace(preferred), cands)
 	if len(cands) == 0 {
-		return nil, "", errors.New("no USB ports found; plug in the bench pod or pass --connection <device>")
+		return nil, "", noPod(errors.New("no USB ports found; plug in the bench pod or pass --connection <device>"))
 	}
 	var tried []string
 	for _, name := range cands {
@@ -274,8 +285,8 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 		_ = c.Close()
 		tried = append(tried, name)
 	}
-	return nil, "", fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]; pass --connection <device> to force one",
-		len(tried), strings.Join(tried, ", "))
+	return nil, "", noPod(fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]; pass --connection <device> to force one",
+		len(tried), strings.Join(tried, ", ")))
 }
 
 // serialGlobs are the /dev node patterns scanned (in addition to the enumerator)
@@ -498,171 +509,6 @@ func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret st
 		// n==0, err==nil is a per-read timeout (go.bug.st/serial); loop and
 		// let the ctx guard above enforce the overall deadline.
 	}
-}
-
-// WifiSetResult reports what the firmware did with submitted credentials.
-type WifiSetResult struct {
-	Persisted bool   // saw "[cfg] credentials written to flash"
-	Joined    bool   // saw "[wifi] join OK"
-	IP        string // parsed from "[wifi] join OK  ip=<ip>"
-	Raw       string // full captured output (password already masked)
-}
-
-// WifiSet stores credentials and (re)joins the AP. ssid/password are quoted for
-// the firmware shell. A "[wifi] join failed" marker (without a join OK) yields
-// an error alongside a result with Persisted reflecting whether creds were saved.
-func (c *Console) WifiSet(ctx context.Context, ssid, password string) (WifiSetResult, error) {
-	qSSID, err := quoteArg(ssid)
-	if err != nil {
-		return WifiSetResult{}, fmt.Errorf("ssid: %w", err)
-	}
-	qPass, err := quoteArg(password)
-	if err != nil {
-		return WifiSetResult{}, fmt.Errorf("password: %w", err)
-	}
-	// Send the real command but show a masked form in logs/errors; the firmware
-	// echoes typed chars, so `password` is also redacted from any captured output.
-	display := "wifi-set " + qSSID + ` "***"`
-	out, err := c.sendCommandRedacted(ctx, "wifi-set "+qSSID+" "+qPass, display, password)
-	res := WifiSetResult{
-		Persisted: strings.Contains(out, "[cfg] credentials written to flash"),
-		Raw:       maskPassword(out, password),
-	}
-	// wifi-set delegates to the esp32-reconnect ladder, which reports success as
-	// "[wifi] connected  ip=<ip>". Accept the older direct-join "[wifi] join OK"
-	// marker too so a mixed firmware/CLI still works.
-	joinMarker := ""
-	switch {
-	case strings.Contains(out, "[wifi] connected"):
-		joinMarker = "[wifi] connected"
-	case strings.Contains(out, "[wifi] join OK"):
-		joinMarker = "[wifi] join OK"
-	}
-	if joinMarker != "" {
-		res.Joined = true
-		res.IP = parseIPAfter(out, joinMarker)
-	}
-	c.logln("wifi-set result: persisted=%t joined=%t ip=%s", res.Persisted, res.Joined, res.IP)
-	if err != nil {
-		return res, err // already masked by sendCommandRedacted (secret = password)
-	}
-	if !res.Joined && (strings.Contains(out, "[wifi] connect failed") ||
-		strings.Contains(out, "[wifi] join failed") ||
-		strings.Contains(out, "ESP32 still unreachable")) {
-		return res, errors.New("wifi join failed (credentials were saved; check the password/SSID and signal)")
-	}
-	return res, nil
-}
-
-// BringupLines returns the WiFi / TCP / ESP32 bring-up log lines from captured
-// console output (e.g. WifiSetResult.Raw), so callers can show the connection
-// result and assigned IP without the lower-level AT/boot noise.
-func BringupLines(raw string) []string {
-	var out []string
-	for _, ln := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
-		t := strings.TrimSpace(ln)
-		if strings.HasPrefix(t, "[wifi]") || strings.HasPrefix(t, "[tcp]") ||
-			strings.HasPrefix(t, "[esp32]") || strings.HasPrefix(t, "ESP32 ") {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-// WifiStatus is the parsed result of show-network (firmware: wifi-show).
-type WifiStatus struct {
-	SSID  string
-	State string
-	IP    string
-	RSSI  string
-	Raw   string
-}
-
-// WifiShow reports stored SSID, WiFi state, IP, and RSSI. Missing fields are
-// left empty rather than treated as errors, since async log lines may displace
-// them in a given capture window.
-//
-// While Wi-Fi retries, the firmware logs "[wifi] ...", "[esp] ..." and
-// "[cloud] ..." lines every few seconds from other tasks, and those are written
-// in chunks, so the reply's lines can land in the middle of one. The read waits
-// for the last line ("  rssi:") before it trusts a prompt, and the fields are
-// matched anywhere in a line (see wifiField).
-func (c *Console) WifiShow(ctx context.Context) (WifiStatus, error) {
-	out, err := c.sendCommandUntil(ctx, "wifi-show", "wifi-show", "", wifiShowComplete)
-	if err != nil {
-		return WifiStatus{Raw: out}, err
-	}
-	return parseWifiShow(out), nil
-}
-
-// parseWifiShow extracts the wifi-show fields from a captured reply.
-func parseWifiShow(out string) WifiStatus {
-	return WifiStatus{
-		SSID:  wifiField(out, "ssid"),
-		State: wifiField(out, "state"),
-		IP:    wifiField(out, "ip"),
-		RSSI:  wifiField(out, "rssi"),
-		Raw:   out,
-	}
-}
-
-// wifiShowComplete reports whether the prompt has arrived after the reply's
-// last line. The firmware always prints "  rssi:" last, even with no value.
-func wifiShowComplete(acc string) bool {
-	i := strings.LastIndex(strings.ToLower(acc), "rssi:")
-	return i >= 0 && promptSeen(acc[i:], defaultPrompt)
-}
-
-// wifiField returns the value of a wifi-show "<label>:" line. A line that
-// starts with the label wins (the last one, so a stale earlier reply in the
-// same capture loses). Failing that, it looks for "  <label>:" inside a line
-// that starts with "[": a reply line that landed in the middle of an async log
-// line, e.g. "[wifi] association failed  ssid: Net". The two-space indent is
-// the firmware's, so log text such as "[wifi] connected  ip=..." never matches.
-func wifiField(s, label string) string {
-	s = strings.ReplaceAll(s, "\r", "\n")
-	if v, ok := lastFieldValue(s, label); ok {
-		return v
-	}
-	needle := "  " + strings.ToLower(label) + ":"
-	val, found := "", false
-	for _, line := range strings.Split(s, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "[") {
-			continue
-		}
-		if i := strings.LastIndex(strings.ToLower(line), needle); i >= 0 {
-			val, found = strings.TrimSpace(line[i+len(needle):]), true
-		}
-	}
-	if found {
-		return val
-	}
-	return ""
-}
-
-// lastFieldValue is fieldValue that keeps the last matching line and reports
-// whether any line matched, so an empty value ("  ssid: ") still counts.
-func lastFieldValue(s, label string) (string, bool) {
-	label = strings.ToLower(label)
-	val, found := "", false
-	for _, line := range strings.Split(s, "\n") {
-		trimmed := strings.TrimSpace(line)
-		lower := strings.ToLower(trimmed)
-		for _, sep := range []string{":", "="} {
-			if prefix := label + sep; strings.HasPrefix(lower, prefix) {
-				val, found = strings.TrimSpace(trimmed[len(prefix):]), true
-				break
-			}
-		}
-	}
-	return val, found
-}
-
-// WifiClear erases stored credentials. A reboot is needed to fully apply.
-func (c *Console) WifiClear(ctx context.Context) error {
-	_, err := c.sendCommand(ctx, "wifi-clear")
-	return err
 }
 
 // TargetPower enables (on) or disables a target power eFuse over the console
@@ -970,172 +816,6 @@ func tail(b []byte, n int) string {
 		return string(b)
 	}
 	return string(b[len(b)-n:])
-}
-
-// ── discovery over USB ──────────────────────────────────────────────────────
-
-// SerialPod is a bench pod identified on a USB serial port by probing it with
-// the firmware's `status` command. The parsed fields are best-effort: the
-// console interleaves async log lines, so a missing field is left empty rather
-// than treated as an error. Status keeps the raw text for display.
-type SerialPod struct {
-	Device   string // the /dev node or COM port the pod answered on
-	Board    string // "bench-pod" (the board line, minus the firmware version)
-	Firmware string // "v1.4.2", from the same line
-	IP       string // the pod's address, "" or "0.0.0.0" when it has no lease
-	MAC      string // wired MAC
-	Status   string // raw `status` output
-
-	// Registered reports whether the pod already holds a cloud provisioning — i.e. it was
-	// claimed into an account, possibly by somebody else before it was shipped. This comes
-	// from the console rather than the TCP/JSON `cloud_status`, so it is answerable over USB
-	// alone: a pod straight out of its box has no network for the JSON API to answer over.
-	// CloudKnown is false against firmware too old to print the line, which must read as
-	// "unknown", never as "not registered".
-	CloudKnown bool
-	Registered bool
-	CloudState string // "connected", "connecting", "backoff", ... when registered
-	DeviceID   string // the provisioned device id, when registered
-}
-
-// Addressed reports whether the pod holds a usable IP address (it has a DHCP
-// lease on one of its interfaces), as opposed to no network at all.
-func (p SerialPod) Addressed() bool {
-	ip := strings.TrimSpace(p.IP)
-	return ip != "" && ip != "0.0.0.0" && ip != "-"
-}
-
-// ProbeSerial enumerates USB serial ports and probes each for a bench-pod
-// console, returning every pod found (not just the first, unlike OpenBenchpod)
-// together with the ports that answered but were not bench pods.
-//
-// It exists for `discover`, which reports on a whole bench rather than opening
-// one pod: a machine can legitimately have several pods plugged in, and the
-// ports that were ruled out are worth showing when nothing was found at all.
-// Each port is opened, probed and closed before moving on, so no port is left
-// held. probeTimeout bounds each probe individually — a real pod answers in
-// well under a second, so only non-pod ports run it out.
-func ProbeSerial(preferred string, probeTimeout time.Duration) (pods []SerialPod, skipped []string, err error) {
-	cands, err := candidatePorts()
-	if err != nil {
-		return nil, nil, err
-	}
-	// One physical port shows up as two /dev nodes on macOS — the call-out
-	// /dev/cu.X and the dial-in /dev/tty.X — and both answer, so a single pod
-	// would otherwise be reported twice. Both are still probed (either can be
-	// the one that opens), but only the first answer per pod is kept.
-	seen := map[string]bool{}
-	for _, name := range preferFirst(strings.TrimSpace(preferred), cands) {
-		port, oErr := serial.Open(name, &serial.Mode{BaudRate: baudRate})
-		if oErr != nil {
-			skipped = append(skipped, name)
-			continue
-		}
-		c := newConsole(port)
-		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
-		raw, _ := c.Status(ctx)
-		cancel()
-		_ = c.Close()
-		if !strings.Contains(strings.ToLower(raw), benchpodMarker) {
-			skipped = append(skipped, name)
-			continue
-		}
-		pod := parseSerialPod(name, raw)
-		key := podIdentity(pod)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		pods = append(pods, pod)
-	}
-	return pods, skipped, nil
-}
-
-// podIdentity keys a pod for de-duplication across the /dev nodes that lead to
-// it. The MAC is the pod's own identity and is preferred; when the firmware is
-// too old to report one, fall back to the port name with the OS's call-out /
-// dial-in prefix stripped, which is what makes cu.usbmodemX and tty.usbmodemX
-// collapse to one entry.
-func podIdentity(p SerialPod) string {
-	if mac := strings.TrimSpace(p.MAC); mac != "" && mac != "-" {
-		return "mac:" + strings.ToLower(mac)
-	}
-	base := p.Device
-	if i := strings.LastIndexByte(base, '/'); i >= 0 {
-		base = base[i+1:]
-	}
-	base = strings.TrimPrefix(strings.TrimPrefix(base, "cu."), "tty.")
-	return "dev:" + base
-}
-
-// parseSerialPod pulls the identifying fields out of `status` output. The board
-// line carries both the board name and the firmware version — "bench-pod  fw
-// v1.4.2" — so it is split on the "fw" token.
-func parseSerialPod(device, raw string) SerialPod {
-	p := SerialPod{
-		Device: device,
-		IP:     statusField(raw, "ip"),
-		MAC:    statusField(raw, "mac"),
-		Status: raw,
-	}
-	board := statusField(raw, "board")
-	if i := strings.Index(board, "fw "); i >= 0 {
-		p.Board = strings.TrimSpace(board[:i])
-		p.Firmware = firstToken(board[i+len("fw "):])
-	} else {
-		p.Board = strings.TrimSpace(board)
-	}
-	parseCloudField(&p, statusField(raw, "cloud"))
-	return p
-}
-
-// parseCloudField reads the console's cloud line into the pod's registration fields. The
-// firmware prints either
-//
-//	cloud  : not registered
-//	cloud  : registered  state=connected  device_id=<uuid>
-//	cloud  : registered  state=backoff  device_id=<uuid>  last_error=<reason, may hold spaces>
-//
-// An empty value means the firmware predates the line, which is left as "unknown" rather than
-// reported as unregistered — telling somebody their pod is unclaimed when we simply cannot
-// tell would send them to re-register a pod that is already working.
-func parseCloudField(p *SerialPod, value string) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return
-	}
-	p.CloudKnown = true
-	if !strings.HasPrefix(value, "registered") {
-		return
-	}
-	p.Registered = true
-	for _, tok := range strings.Fields(value) {
-		switch {
-		case strings.HasPrefix(tok, "state="):
-			p.CloudState = strings.TrimPrefix(tok, "state=")
-		case strings.HasPrefix(tok, "device_id="):
-			p.DeviceID = strings.TrimPrefix(tok, "device_id=")
-		}
-	}
-}
-
-// statusField reads one "label : value" line out of `status` output.
-//
-// It is deliberately not fieldValue: the console pads its labels into a column
-// ("  ip     : 192.168.1.213"), so a "label:" prefix match never fires on this
-// output. Splitting on the FIRST colon also keeps colon-bearing values intact,
-// which is what makes the mac line parse.
-func statusField(raw, label string) string {
-	for _, line := range strings.Split(raw, "\n") {
-		i := strings.IndexByte(line, ':')
-		if i < 0 {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(line[:i]), label) {
-			return strings.TrimSpace(line[i+1:])
-		}
-	}
-	return ""
 }
 
 // nrstPinMarker is what the firmware's console `status` prints on its board line

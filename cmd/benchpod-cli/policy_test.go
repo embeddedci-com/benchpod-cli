@@ -117,6 +117,25 @@ func TestPolicyCloudShowAndSet(t *testing.T) {
 	}
 }
 
+// --connection embeddedci:<name> goes through embeddedci.com, like --device-name <name>.
+func TestPolicyCloudByConnection(t *testing.T) {
+	srv := &policyServer{t: t, supported: true, policy: map[string]string{"lan-policy": "open", "sig-policy": "audit"}}
+	target := cloudTarget(t, srv.start().URL)
+	target.deviceName = ""
+
+	g := &globalFlags{connection: "embeddedci:benchpod-baea06"}
+	out, _, err := runPolicyCapture(t, g, lanPolicy, target, "locked")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !strings.HasPrefix(out, "LAN policy of benchpod-baea06 is now locked") {
+		t.Fatalf("set = %q", out)
+	}
+	if got := strings.Join(srv.puts, ","); got != "lan-policy=locked" {
+		t.Fatalf("puts = %s", got)
+	}
+}
+
 func TestPolicyCloudForbidden(t *testing.T) {
 	srv := &policyServer{t: t, supported: true, policy: map[string]string{"lan-policy": "open"},
 		put: func(w http.ResponseWriter, _, _ string) bool {

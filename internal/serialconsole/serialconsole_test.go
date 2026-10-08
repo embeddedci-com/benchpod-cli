@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"go.bug.st/serial/enumerator"
 )
 
@@ -141,6 +142,21 @@ func TestDetectPortNoMatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--connection") {
 		t.Fatalf("error should mention the override flag: %v", err)
+	}
+	if !errors.Is(err, tcpclient.ErrUnreachable) {
+		t.Fatalf("no pod on USB should be an unreachable pod: %v", err)
+	}
+}
+
+func TestOpenBenchpodWithNoPortsIsUnreachable(t *testing.T) {
+	withLister(t, func() ([]*enumerator.PortDetails, error) { return nil, nil })
+	withGlobber(t)
+	_, _, err := OpenBenchpod("", "", time.Second)
+	if err == nil || !errors.Is(err, tcpclient.ErrUnreachable) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.HasPrefix(err.Error(), "no USB ports found") {
+		t.Fatalf("text changed: %v", err)
 	}
 }
 
