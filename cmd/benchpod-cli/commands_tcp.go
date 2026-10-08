@@ -346,9 +346,9 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 func newLACmd(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "la",
-		Short: "Logic-analyzer pin control (pull-ups and step pulses)",
+		Short: "Logic-analyzer pin control (bank voltage, pull-ups and step pulses)",
 	}
-	cmd.AddCommand(newLAPullupCmd(g), newLAStatusCmd(g), newLAStepCmd(g))
+	cmd.AddCommand(newLAVoltageCmd(g), newLAPullupCmd(g), newLAStatusCmd(g), newLAStepCmd(g))
 	return cmd
 }
 
