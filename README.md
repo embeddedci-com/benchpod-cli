@@ -106,7 +106,7 @@ The firmware itself is unauthenticated; `benchpod login` is independent of the
 device path and authenticates with `embeddedci-server` (device-login flow) for
 cloud features. Direct firmware commands do not send tokens.
 
-Only `flash` (SWD) is implemented over the USB console today; the other
+Over the USB console, `flash` (SWD), `status` and `la voltage` work; the other
 TCP/JSON commands reject a USB connection with a clear message. The
 `set-wifi` / `show-network` / `clear-wifi` and `bootsel` subcommands always use
 the USB console regardless of `--connection` (a device path still selects
