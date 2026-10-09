@@ -731,7 +731,7 @@ The pod's IP (the wired lease first) plus the stored Wi-Fi SSID, state and RSSI
 
 ### `benchpod clear-wifi`
 
-Erase the stored Wi-Fi credentials (USB); reboot the pod to fully apply. No flags.
+Erase the stored Wi-Fi credentials (USB). Wi-Fi goes down at once, no reboot needed. Firmware after 3.7.0 also erases the copy older firmware left on the ESP32-C3 Wi-Fi chip, which takes a few seconds more. No flags.
 
 ### `benchpod login`
 
