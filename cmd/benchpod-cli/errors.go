@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
@@ -21,6 +22,52 @@ const (
 	heavyBusyHint = "the pod is running another long command; try again when it ends"
 	forbiddenHint = "API keys need the benchpod:admin scope"
 )
+
+// laVoltageUnsetHint answers the firmware's "la voltage not set; set it with la_voltage (mv 1800
+// or 3300) first", which names the raw JSON command rather than what a CLI user runs.
+const laVoltageUnsetHint = "set the DUT's I/O voltage first: `benchpod la voltage 3.3V` (or 1.8V), " +
+	"or on the web app's Wiring tab"
+
+// pinConflictRE matches the firmware's "pin conflict: LA%u is in use by %s; %s" (la_pins.c).
+var pinConflictRE = regexp.MustCompile(`^pin conflict: (LA\d+) is in use by (\S+); (.*)$`)
+
+// pinReleaseHints maps the firmware's release hints (la_pins.c release_hint) to what a CLI user
+// does about them. The benchpod CLI has no command that holds a pin past its own run, so a pin in
+// use is held by another client of the pod; the hint names where to free it. A hint missing from
+// this map (a new owner) is shown as the firmware wrote it.
+var pinReleaseHints = []struct {
+	prefix string // the firmware hint starts with this
+	hint   string // %s = the pin (LA4)
+}{
+	{`release it with {"cmd":"gpio"`, "another session (the web app, a test or an MCP session) holds %s as a GPIO; " +
+		"release it there (gpio_release)"},
+	{"stop the uart proxy first", "a UART session (the web app's Terminal, a test or an MCP session) " +
+		"is open on %s; close it there"},
+	{"end the SWD session first", "an SWD session (a flash or an OpenOCD run) is using %s; wait for it to end"},
+	{"stop the sensor emulation first", "I2C-sensor emulation is running on %s; stop it where it was " +
+		"started (the web app, the SDK, or MCP disable_i2c_sensor)"},
+	{"stop the SPI session first", "an SPI session is open on %s; end it where it was started " +
+		"(the web app, the SDK or an MCP session)"},
+	{"stop the GPS receiver first", "GPS emulation is running on %s; stop it where it was started " +
+		"(the web app, the SDK, or MCP disable_gps)"},
+}
+
+// translateRefusal rewords a refusal whose firmware text names a raw JSON command: it returns the
+// text to show and the hint to add ("" for none). Other refusals come back unchanged with no hint.
+func translateRefusal(msg string) (shown, hint string) {
+	msg = strings.TrimSpace(msg)
+	if strings.HasPrefix(msg, "la voltage not set") {
+		return msg, laVoltageUnsetHint
+	}
+	if m := pinConflictRE.FindStringSubmatch(msg); m != nil {
+		for _, h := range pinReleaseHints {
+			if strings.HasPrefix(m[3], h.prefix) {
+				return "pin conflict: " + m[1] + " is in use by " + m[2], fmt.Sprintf(h.hint, m[1])
+			}
+		}
+	}
+	return msg, ""
+}
 
 // explainRefusal returns the hint for a policy refusal, or "" when the message says it all.
 // overLAN is whether the refusal came over the LAN JSON API: only the LAN refuses with locked:
@@ -42,7 +89,8 @@ func explainRefusal(msg string, overLAN bool) string {
 	case tcpclient.Forbidden:
 		return forbiddenHint
 	}
-	return ""
+	_, hint := translateRefusal(msg)
+	return hint
 }
 
 // refusedError is the one line for a refusal from a command: "<what>: the pod refused: <why>",
@@ -53,7 +101,8 @@ func refusedError(what string, pe *tcpclient.PodError, overLAN bool) error {
 
 // refusedWithHint is refusedError with the hint given ("" for none).
 func refusedWithHint(what string, pe *tcpclient.PodError, hint string) error {
-	msg := what + ": the pod refused: " + pe.Reason
+	shown, _ := translateRefusal(pe.Reason)
+	msg := what + ": the pod refused: " + shown
 	if hint != "" {
 		msg += " (" + hint + ")"
 	}
@@ -82,6 +131,11 @@ func withRefusalHint(err error) error {
 	hint := explainRefusal(pe.Reason, pe.Cmd == "")
 	if hint == "" || strings.Contains(err.Error(), hint) {
 		return err
+	}
+	if shown, _ := translateRefusal(pe.Reason); shown != strings.TrimSpace(pe.Reason) {
+		// Drop the raw JSON the firmware suggests; the hint says it in CLI terms.
+		msg := strings.Replace(err.Error(), strings.TrimSpace(pe.Reason), shown, 1)
+		return &shownRefusal{msg: msg + " (" + hint + ")", pe: pe}
 	}
 	return fmt.Errorf("%w (%s)", err, hint)
 }

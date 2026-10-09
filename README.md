@@ -7,6 +7,12 @@ logic-analyzer pins, Wi-Fi configuration, firmware flashing over SWD, SPI NOR
 flash programming, and the pod's own firmware, policies and cloud link. Every
 command and flag is listed in the [command reference](#command-reference).
 
+New pod? `benchpod setup` walks the
+[getting-started](https://www.embeddedci.com/docs/benchpod-getting-started) steps
+for you: it finds the pod, gets it on the network, sets the board I/O voltage,
+registers it with embeddedci.com and saves the connection, skipping whatever is
+already done.
+
 ## Installation
 
 Pre-built binaries for **macOS, Linux and Windows** (amd64 + arm64) are attached
@@ -98,7 +104,7 @@ reach the pod; the transport is inferred from its value:
 | `/dev/tty...`, `COM3`            | USB console, explicit device path.                     |
 | `usb`                            | USB console, auto-detected by probing the ports.       |
 | `embeddedci:<name>`              | The pod named `<name>` on embeddedci.com (see below).  |
-| *(omitted)*                      | the default saved by `benchpod set-connection`.        |
+| *(omitted)*                      | the default saved by `benchpod discover --save`, `benchpod setup` or `benchpod set-connection`. |
 
 The global flags are also settable via a `BENCHPOD_*` environment variable
 (`BENCHPOD_CONNECTION=usb`, `BENCHPOD_TIMEOUT=2m`, `BENCHPOD_CONFIG_FILE`,
@@ -125,6 +131,10 @@ itself and say so when given a cloud target.
 ## CLI usage
 
 ```sh
+# First time: guided setup (find, network, I/O voltage, register, save):
+benchpod setup
+benchpod setup --la-voltage 3.3V --yes      # non-interactive
+
 # Save a default connection so later commands can omit --connection:
 benchpod set-connection 192.168.1.5
 benchpod set-connection usb
@@ -135,7 +145,8 @@ benchpod discover --save     # save it as the default when exactly one is found
 
 # Reachability / state:
 benchpod ping
-benchpod status
+benchpod status            # readable summary
+benchpod status --json     # the pod's raw status reply
 
 # Hardware (network):
 benchpod la voltage 3.3V                          # the DUT's I/O voltage; LA operations need it (network or USB)
@@ -462,6 +473,59 @@ stderr with a `[benchpod]` prefix.
 
 A refusal is printed word for word as the pod sent it. For a `locked:` (LAN policy),
 `busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
+So it does for `la voltage not set` (run `benchpod la voltage 3.3V` or 1.8V, or set it on
+the web app's Wiring tab) and for a `pin conflict: LA4 is in use by ...`, where the raw
+JSON command the firmware suggests is replaced by where to free the pin (the web app,
+the SDK or the MCP session that holds it).
+
+### `benchpod setup`
+
+Guided first-time setup. It walks the getting-started steps in order and skips each
+one that is already done:
+
+1. **Find the pod** over USB and on the LAN (like `discover`). With `--connection`
+   it sets up the pod at that address or USB device instead. It stops when it finds
+   none or more than one.
+2. **Network**: a pod with no address gets one. Choose Ethernet (setup waits up to
+   two minutes for its DHCP lease) or Wi-Fi (SSID and password, like `set-wifi`).
+3. **Board I/O voltage**: 1.8 V or 3.3 V, the DUT's logic level (like `la voltage`).
+   One already set is kept unless `--la-voltage` is given.
+4. **embeddedci.com**: an unregistered pod is registered to your account, signing in
+   first (`login`) when there is no session. A pod registered to your account is
+   named; one registered to another account is explained (sign in with the address
+   your activation email was sent to, `benchpod login --force`) and left alone.
+5. **Save the connection**: the pod's address becomes the default (like `discover --save`).
+
+It ends with the next steps: SWD wiring (SWCLK on LA11, SWDIO on LA12, GND), a
+`benchpod flash` line, the `pytest` line and the getting-started guide.
+
+```text
+$ benchpod setup --la-voltage 3.3V
+
+1/5  Find the pod
+     Looking over USB and on the LAN (mDNS)...
+     Found a BenchPod: USB /dev/cu.usbmodem1101, network 192.168.1.221:8080, firmware v3.8.0.
+
+2/5  Network
+     Done: the pod is on the network at 192.168.1.221:8080.
+
+3/5  Board I/O voltage
+     Set to 3.3 V.
+
+4/5  embeddedci.com
+     Done: registered to your account (you@example.com) as benchpod-baea06.
+
+5/5  Save the connection
+Default connection set to network/TCP 192.168.1.221:8080 (saved to ~/.config/benchpod-cli/config.json).
+```
+
+| Flag               | Default | Purpose                                                                 |
+|--------------------|---------|-------------------------------------------------------------------------|
+| `--la-voltage`     | (ask)   | Board I/O voltage to set: `1.8V` or `3.3V`. Without it, a voltage already set is kept and an unset one is asked for. |
+| `--ssid`           | (ask)   | Join this Wi-Fi network when the pod has no network address (instead of asking Ethernet or Wi-Fi). |
+| `--password-stdin` | off     | Read the Wi-Fi password from the first line of stdin (with `--ssid`). Without it the password is prompted for. |
+| `--no-register`    | off     | Do not register the pod with embeddedci.com (it works over the LAN without an account). |
+| `--yes`            | off     | Never prompt: register without asking, and fail with a message naming the flag to pass when an answer is needed. |
 
 ### `benchpod set-connection <addr|device|usb>`
 
@@ -490,8 +554,27 @@ Connectivity check over the network. No flags.
 
 ### `benchpod status`
 
-Firmware, gateware, capabilities and network details: JSON over the network, the
-console's `status` text over USB. No flags.
+A short summary of the pod over the network: firmware version (and whether a newer
+release exists, when GitHub answers within a few seconds), gateware, board, the board
+I/O (LA) voltage or "not set", target power (the internal 5 V and external eFuses),
+the network address and link, the cloud registration (and, when this machine is
+signed in, whether the pod is on your account), and a cloud job's lease when one
+holds the pod. Over USB it prints the console's `status` text.
+
+```text
+BenchPod at 192.168.1.220:8080
+  Firmware      3.8.0 (latest)
+  Gateware      48
+  Board         stm32h563 v3
+  I/O voltage   3.3 V
+  Target power  off
+  Network       192.168.1.220 (ready), Wi-Fi connected
+  Cloud         registered, connected, on your account as benchpod-baea06
+```
+
+| Flag     | Default | Purpose                                                       |
+|----------|---------|---------------------------------------------------------------|
+| `--json` | off     | Print the pod's raw `status` JSON instead of the summary (network only). |
 
 ### `benchpod generate`
 
@@ -738,8 +821,10 @@ Erase the stored Wi-Fi credentials (USB). Wi-Fi goes down at once, no reboot nee
 
 ### `benchpod login`
 
-Authenticate with embeddedci.com (device-login flow). A no-op when a usable
-session exists.
+Authenticate with embeddedci.com (device-login flow) and print the account's email
+address: `Logged in as you@example.com`. A no-op when a usable session exists
+(`Already logged in as you@example.com`). Against a server or a token file that
+predates the email, the user id is shown instead.
 
 | Flag           | Default                      | Purpose                                                  |
 |----------------|------------------------------|----------------------------------------------------------|

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -81,5 +82,50 @@ func TestFirmwareRefusalsKeepTheirPrefixes(t *testing.T) {
 		if msg := fwrefusals.Example(id); !strings.HasPrefix(msg, prefix) {
 			t.Errorf("%s: %q does not start with %q", id, msg, prefix)
 		}
+	}
+}
+
+func TestTheLAVoltageRefusalNamesTheCLICommand(t *testing.T) {
+	pe := &tcpclient.PodError{Reason: fwrefusals.Example("la_voltage_unset")}
+	err := withRefusalHint(fmt.Errorf("flash: %w", pe))
+	if !strings.Contains(err.Error(), "benchpod la voltage 3.3V") || !strings.Contains(err.Error(), "Wiring tab") {
+		t.Fatalf("got %v", err)
+	}
+	if exitCode(err) != exitRefused {
+		t.Fatalf("exit code %d", exitCode(err))
+	}
+}
+
+func TestPinConflictHintsAreTranslated(t *testing.T) {
+	for _, tc := range []struct{ owner, hintID, want string }{
+		{"gpio", "pin_hint_gpio", "holds LA4 as a GPIO"},
+		{"uart_rx", "pin_hint_uart", "UART session"},
+		{"swd_clk", "pin_hint_swd", "SWD session"},
+		{"i2c_sda", "pin_hint_sensor", "disable_i2c_sensor"},
+		{"spi_sck", "pin_hint_spi", "SPI session"},
+		{"gps_tx", "pin_hint_gps", "disable_gps"},
+	} {
+		msg := "pin conflict: LA4 is in use by " + tc.owner + "; " + fwrefusals.Example(tc.hintID)
+		err := withRefusalHint(fmt.Errorf("la step: %w", &tcpclient.PodError{Reason: msg}))
+		if !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), `{"cmd"`) {
+			t.Errorf("%s: got %v", tc.hintID, err)
+		}
+		if !strings.Contains(err.Error(), "pin conflict: LA4 is in use by "+tc.owner) || exitCode(err) != exitRefused {
+			t.Errorf("%s: got %v (exit %d)", tc.hintID, err, exitCode(err))
+		}
+	}
+	// The pinned example renders the gpio case.
+	if shown, hint := translateRefusal(fwrefusals.Example("pin_conflict")); shown != "pin conflict: LA4 is in use by gpio" || hint == "" {
+		t.Fatalf("got %q / %q", shown, hint)
+	}
+	// A hint the CLI does not know (the step train's is already plain) stays as the pod wrote it.
+	msg := "pin conflict: LA2 is in use by step; " + fwrefusals.Example("pin_hint_step")
+	if err := withRefusalHint(&tcpclient.PodError{Reason: msg}); err.Error() != (&tcpclient.PodError{Reason: msg}).Error() {
+		t.Fatalf("got %v", err)
+	}
+	// refusedError shows the translated text too.
+	pe := &tcpclient.PodError{Reason: fwrefusals.Example("pin_conflict")}
+	if err := refusedError("flash", pe, true); strings.Contains(err.Error(), `{"cmd"`) || !strings.Contains(err.Error(), "gpio_release") {
+		t.Fatalf("got %v", err)
 	}
 }

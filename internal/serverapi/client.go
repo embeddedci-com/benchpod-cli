@@ -31,6 +31,8 @@ type TokenResponse struct {
 	RefreshExpiresIn int    `json:"refresh_expires_in"`
 	SessionID        string `json:"session_id"`
 	UserID           string `json:"user_id"`
+	// Email is the signed-in account's address. Servers before it was added omit it.
+	Email string `json:"email,omitempty"`
 }
 
 // DeviceResponse is the parsed body returned by POST /api/benchpod/devices (and by the

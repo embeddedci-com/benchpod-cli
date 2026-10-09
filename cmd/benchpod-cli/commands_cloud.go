@@ -31,7 +31,7 @@ func newLoginCmd(g *globalFlags) *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if !force {
 				if who, path := currentSession(serverURL, tokenFile); who != "" {
-					fmt.Fprintf(os.Stderr, "Already logged in as user %s (%s).\n", who, path)
+					fmt.Fprintf(os.Stderr, "Already logged in as %s (%s).\n", who, path)
 					fmt.Fprintln(os.Stderr, "Run `benchpod login --force` to sign in again, or `benchpod logout` to sign out.")
 					return nil
 				}
@@ -46,11 +46,11 @@ func newLoginCmd(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// currentSession reports the signed-in user id and token path when a session is
+// currentSession reports the signed-in account (email, else user id) and token path when a session is
 // usable, or "" when there is none. A session with an expired access token but a
 // live refresh token still counts: ensureTokens would renew it silently, so
 // sending the user through the browser again would be pointless.
-func currentSession(serverURL, tokenFile string) (userID, path string) {
+func currentSession(serverURL, tokenFile string) (who, path string) {
 	tokenPath, err := resolveTokenPath(tokenFile)
 	if err != nil {
 		return "", ""
@@ -63,7 +63,7 @@ func currentSession(serverURL, tokenFile string) (userID, path string) {
 	if tokens.AccessExpired(now) && tokens.RefreshExpired(now) {
 		return "", ""
 	}
-	who := strings.TrimSpace(tokens.UserID)
+	who = strings.TrimSpace(tokens.Who())
 	if who == "" {
 		who = "(unknown)"
 	}
@@ -96,7 +96,7 @@ func newLogoutCmd(g *globalFlags) *cobra.Command {
 				return fmt.Errorf("remove %s: %w", tokenPath, err)
 			}
 			if who != "" {
-				fmt.Fprintf(os.Stderr, "Logged out user %s (removed %s).\n", who, tokenPath)
+				fmt.Fprintf(os.Stderr, "Logged out %s (removed %s).\n", who, tokenPath)
 			} else {
 				fmt.Fprintf(os.Stderr, "Logged out (removed %s).\n", tokenPath)
 			}
@@ -162,11 +162,11 @@ func runLogin(serverURL, tokenFile string, noOpen bool) error {
 		case err != nil:
 			return fmt.Errorf("poll device login: %w", err)
 		case outcome == serverapi.PollSuccess:
-			tokens, sErr := saveTokensFromResponse(tokenPath, resp, "", "")
+			tokens, sErr := saveTokensFromResponse(tokenPath, resp, nil)
 			if sErr != nil {
 				return fmt.Errorf("save tokens: %w", sErr)
 			}
-			fmt.Fprintf(os.Stderr, "Logged in as user %s. Tokens saved to %s.\n", tokens.UserID, tokenPath)
+			fmt.Fprintf(os.Stderr, "Logged in as %s. Tokens saved to %s.\n", tokens.Who(), tokenPath)
 			return nil
 		case outcome == serverapi.PollExpired:
 			return errors.New("login timed out or code already used; run `benchpod login` again")

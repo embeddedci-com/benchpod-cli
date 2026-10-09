@@ -140,3 +140,15 @@ func TestDescribeConnSpeaksUSBNotSerial(t *testing.T) {
 		t.Errorf("describeConn(addr) = %q", got)
 	}
 }
+
+func TestNoConnectionSuggestsDiscoverFirst(t *testing.T) {
+	_, err := parseTarget("")
+	if err == nil {
+		t.Fatal("no error")
+	}
+	msg := err.Error()
+	d, c := strings.Index(msg, "benchpod discover --save"), strings.Index(msg, "--connection")
+	if d < 0 || c < 0 || d > c || !strings.Contains(msg, "set-connection") {
+		t.Fatalf("got %q", msg)
+	}
+}
