@@ -42,8 +42,12 @@ func newSetupCmd(g *globalFlags) *cobra.Command {
 			"     DHCP lease) or Wi-Fi (SSID and password, like `benchpod set-wifi`).\n" +
 			"  3. Board I/O voltage: 1.8 V or 3.3 V, the DUT's logic level (like\n" +
 			"     `benchpod la voltage`). Already set is kept unless --la-voltage is given.\n" +
+			"     The pod forgets it on a restart, so when you are signed in and the pod is\n" +
+			"     on your account, setup also saves it to the pod's wiring profile on\n" +
+			"     embeddedci.com, which the server applies on every connect.\n" +
 			"  4. embeddedci.com: an unregistered pod is registered to your account (signing\n" +
-			"     in first when needed). A pod on another account is explained, not touched.\n" +
+			"     in first when needed), and its wiring profile gets the I/O voltage. A pod\n" +
+			"     on another account is explained, not touched.\n" +
 			"  5. Save the pod's address as the default connection (like `discover --save`).\n\n" +
 			"It then prints the next steps: wiring SWD, flashing and running tests.\n\n" +
 			"Pass --connection to set up a pod at a known address or USB device instead of\n" +
@@ -100,6 +104,7 @@ type setupEnv interface {
 	setWifi(device, ssid, password string) (string, error)
 	readPassword() (string, error)
 	laVoltage(target string, mv int) (int, error)
+	saveLaMV(deviceID string, mv int) (changed bool, err error)
 	cloudStatus(addr string) cloudState
 	signedIn() string
 	login() error
@@ -224,16 +229,17 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 
 	// 3. Board I/O voltage.
 	step(3, "Board I/O voltage")
-	if err := setupLAVoltage(env, ui, o, p.addr); err != nil {
+	if c := env.cloudStatus(p.addr); c.known {
+		p.cloud = c
+	}
+	mv, err := setupLAVoltage(env, ui, o, p.addr, setupProfileDevice(env, p.cloud))
+	if err != nil {
 		return err
 	}
 
 	// 4. embeddedci.com.
 	step(4, "embeddedci.com")
-	if c := env.cloudStatus(p.addr); c.known {
-		p.cloud = c
-	}
-	name, err := setupCloud(env, ui, o, p)
+	name, err := setupCloud(env, ui, o, p, mv)
 	if err != nil {
 		return err
 	}
@@ -327,38 +333,88 @@ func setupNetwork(env setupEnv, ui *setupUI, o setupOpts, device string) (string
 	return addr, nil
 }
 
-// setupLAVoltage keeps a voltage that is already set unless --la-voltage asks for one.
-func setupLAVoltage(env setupEnv, ui *setupUI, o setupOpts, target string) error {
+// setupProfileDevice returns the pod's cloud device id when this machine is signed in and the pod
+// is registered to that account, so its wiring profile on embeddedci.com can be written; "" otherwise.
+func setupProfileDevice(env setupEnv, c cloudState) string {
+	id := strings.TrimSpace(c.DeviceID)
+	if !c.known || !c.Configured || id == "" || env.signedIn() == "" {
+		return ""
+	}
+	if _, ok := env.accountDevices()[id]; !ok {
+		return ""
+	}
+	return id
+}
+
+// setupLAVoltage keeps a voltage that is already set unless --la-voltage asks for one, and returns
+// the pod's voltage. The pod forgets it on a restart, so when profileDevice is set (signed in, pod on
+// the account) it is also saved to the pod's wiring profile on embeddedci.com: the server applies it
+// on every connect, and the web app's setup checklist ticks. A failed save only warns.
+func setupLAVoltage(env setupEnv, ui *setupUI, o setupOpts, target, profileDevice string) (int, error) {
 	out := ui.out
 	mv := o.laVoltageMV
 	if mv == 0 {
 		cur, err := env.laVoltage(target, 0)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if cur != 0 {
-			fmt.Fprintf(out, "     Done: already %s. Change it with `benchpod la voltage 1.8V|3.3V` if your DUT differs.\n", formatMV(cur))
-			return nil
+			var saveErr error
+			done := fmt.Sprintf("     Done: already %s.", formatMV(cur))
+			if profileDevice != "" {
+				var changed bool
+				if changed, saveErr = env.saveLaMV(profileDevice, cur); saveErr == nil && changed {
+					done = fmt.Sprintf("     Done: already %s on the pod. Saved it to its wiring profile on embeddedci.com.", formatMV(cur))
+				}
+			}
+			fmt.Fprintln(out, done)
+			if saveErr != nil {
+				warnProfileSave(out, cur, saveErr)
+			}
+			fmt.Fprintln(out, "     Change it with `benchpod la voltage 1.8V|3.3V` if your DUT differs.")
+			return cur, nil
 		}
 		i, err := ui.choose("     Which I/O voltage does your target board (DUT) use? The pod's LA pins, UART and SWD use it.",
 			"the board I/O voltage is not set: pass --la-voltage 3.3V or --la-voltage 1.8V (the DUT's logic level)",
 			[]string{"3.3 V (most boards, including the NUCLEO examples)", "1.8 V"})
 		if err != nil {
-			return err
+			return 0, err
 		}
 		mv = []int{3300, 1800}[i]
 	}
 	got, err := env.laVoltage(target, mv)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	fmt.Fprintf(out, "     Set to %s.\n", formatMV(got))
-	return nil
+	if profileDevice == "" {
+		fmt.Fprintf(out, "     Set to %s on the pod.\n", formatMV(got))
+		return got, nil
+	}
+	changed, err := env.saveLaMV(profileDevice, got)
+	switch {
+	case err != nil:
+		fmt.Fprintf(out, "     Set to %s on the pod.\n", formatMV(got))
+		warnProfileSave(out, got, err)
+	case changed:
+		fmt.Fprintf(out, "     Set to %s on the pod and saved to its wiring profile on embeddedci.com.\n", formatMV(got))
+	default:
+		fmt.Fprintf(out, "     Set to %s on the pod; its wiring profile on embeddedci.com already has it.\n", formatMV(got))
+	}
+	return got, nil
+}
+
+// warnProfileSave says the voltage is on the pod but not in its stored profile.
+func warnProfileSave(out io.Writer, mv int, err error) {
+	fmt.Fprintf(out, "     Warning: could not save it to the pod's wiring profile on embeddedci.com: %v\n", err)
+	fmt.Fprintf(out, "     The pod keeps %s until it restarts; set it on the web app's Wiring tab to keep it.\n", formatMV(mv))
 }
 
 // setupCloud registers an unregistered pod (unless --no-register) and says whose account a
 // registered one is on. It returns the pod's device name on the signed-in account, "" if unknown.
-func setupCloud(env setupEnv, ui *setupUI, o setupOpts, p setupPod) (string, error) {
+//
+// mv is the pod's I/O voltage from step 3: a pod registered here gets it saved to its new wiring
+// profile on embeddedci.com.
+func setupCloud(env setupEnv, ui *setupUI, o setupOpts, p setupPod, mv int) (string, error) {
 	out := ui.out
 	c := p.cloud
 	if !c.known {
@@ -407,7 +463,15 @@ func setupCloud(env setupEnv, ui *setupUI, o setupOpts, p setupPod) (string, err
 		return "", err
 	}
 	if c := env.cloudStatus(p.addr); c.known && c.DeviceID != "" {
-		if name, ok := env.accountDevices()[strings.TrimSpace(c.DeviceID)]; ok {
+		id := strings.TrimSpace(c.DeviceID)
+		if name, ok := env.accountDevices()[id]; ok {
+			if mv != 0 {
+				if _, err := env.saveLaMV(id, mv); err != nil {
+					warnProfileSave(out, mv, err)
+				} else {
+					fmt.Fprintf(out, "     Saved the I/O voltage (%s) to its wiring profile on embeddedci.com.\n", formatMV(mv))
+				}
+			}
 			return name, nil
 		}
 	}
@@ -431,7 +495,12 @@ func printSetupNextSteps(out io.Writer, addr, name string) {
 
 // ── the real environment ─────────────────────────────────────────────────────
 
-type realSetupEnv struct{ g *globalFlags }
+type realSetupEnv struct {
+	g *globalFlags
+	// account caches accountDevices for one run (login and register clear it).
+	account    map[string]string
+	accountSet bool
+}
 
 // with returns a copy of the global flags aimed at target.
 func (e *realSetupEnv) with(target string) *globalFlags {
@@ -562,12 +631,25 @@ func (e *realSetupEnv) signedIn() string {
 	return who
 }
 
-func (e *realSetupEnv) login() error { return runLogin(defaultServerURL, "", false) }
+func (e *realSetupEnv) login() error {
+	e.account, e.accountSet = nil, false
+	return runLogin(defaultServerURL, "", false)
+}
 
-func (e *realSetupEnv) accountDevices() map[string]string { return accountDevices() }
+func (e *realSetupEnv) accountDevices() map[string]string {
+	if !e.accountSet {
+		e.account, e.accountSet = accountDevices(), true
+	}
+	return e.account
+}
 
 func (e *realSetupEnv) register(addr string) error {
+	e.account, e.accountSet = nil, false
 	return runRegister(e.with(addr), registerOptions{serverURL: defaultServerURL, wait: 30 * time.Second})
+}
+
+func (e *realSetupEnv) saveLaMV(deviceID string, mv int) (bool, error) {
+	return saveLaMVToProfile(deviceID, mv)
 }
 
 func (e *realSetupEnv) save(target string) error { return runSetConnection(e.g, target) }

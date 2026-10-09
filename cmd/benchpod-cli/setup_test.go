@@ -22,6 +22,8 @@ type fakeSetupEnv struct {
 	who       string
 	account   map[string]string
 	afterReg  cloudState // cloud state after register
+	profileMV int        // la_mv in the stored wiring profile, 0 = none
+	saveErr   error      // what saveLaMV fails with
 
 	calls      []string
 	wifiSSID   string
@@ -29,6 +31,7 @@ type fakeSetupEnv struct {
 	setMV      int
 	registered string
 	saved      string
+	profileFor string // device id saveLaMV wrote
 }
 
 func (f *fakeSetupEnv) find() ([]setupPod, error) {
@@ -54,6 +57,17 @@ func (f *fakeSetupEnv) laVoltage(_ string, mv int) (int, error) {
 		f.setMV, f.laMV = mv, mv
 	}
 	return f.laMV, nil
+}
+func (f *fakeSetupEnv) saveLaMV(id string, mv int) (bool, error) {
+	f.calls = append(f.calls, "save-profile")
+	if f.saveErr != nil {
+		return false, f.saveErr
+	}
+	if f.profileMV == mv {
+		return false, nil
+	}
+	f.profileMV, f.profileFor = mv, id
+	return true, nil
 }
 func (f *fakeSetupEnv) cloudStatus(string) cloudState { return f.cloud }
 func (f *fakeSetupEnv) signedIn() string              { return f.who }
@@ -274,5 +288,101 @@ func TestMergeSetupPodsMatchesUSBAndNetwork(t *testing.T) {
 	}
 	if p := pods[2]; p.addr != "10.0.0.6:8080" || p.device != "" {
 		t.Errorf("got %+v", p)
+	}
+}
+
+func TestSetupSavesTheVoltageToTheProfile(t *testing.T) {
+	mine := func() *fakeSetupEnv {
+		return &fakeSetupEnv{
+			pods: []setupPod{{addr: "10.0.0.5:8080", cloud: registeredMine}}, cloud: registeredMine,
+			who: "you@example.com", account: map[string]string{"dev-1": "bench-01"},
+		}
+	}
+	// Set on the pod and saved to the profile.
+	env := mine()
+	out, err := runSetupWith(t, env, "", setupOpts{laVoltageMV: 3300, yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.profileMV != 3300 || env.profileFor != "dev-1" ||
+		!strings.Contains(out, "Set to 3.3 V on the pod and saved to its wiring profile on embeddedci.com.") {
+		t.Fatalf("profile %d for %q\n%s", env.profileMV, env.profileFor, out)
+	}
+	// The profile already has it: nothing written, and the output says so.
+	env = mine()
+	env.profileMV = 3300
+	out, _ = runSetupWith(t, env, "", setupOpts{laVoltageMV: 3300, yes: true})
+	if env.profileFor != "" || !strings.Contains(out, "already has it") {
+		t.Fatalf("wrote %q\n%s", env.profileFor, out)
+	}
+	// Already set on the pod, the profile has none or another voltage: save it.
+	for _, stored := range []int{0, 1800} {
+		env = mine()
+		env.laMV, env.profileMV = 3300, stored
+		out, err = runSetupWith(t, env, "", setupOpts{yes: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if env.did("set-la") || env.profileMV != 3300 || !strings.Contains(out, "Done: already 3.3 V on the pod. Saved it to its wiring profile") {
+			t.Fatalf("stored %d: calls %v profile %d\n%s", stored, env.calls, env.profileMV, out)
+		}
+	}
+	// Already set and the profile agrees: the plain "Done".
+	env = mine()
+	env.laMV, env.profileMV = 1800, 1800
+	out, _ = runSetupWith(t, env, "", setupOpts{yes: true})
+	if env.profileFor != "" || !strings.Contains(out, "Done: already 1.8 V.\n") {
+		t.Fatalf("wrote %q\n%s", env.profileFor, out)
+	}
+}
+
+func TestSetupProfileSaveFailureOnlyWarns(t *testing.T) {
+	env := &fakeSetupEnv{
+		pods: []setupPod{{addr: "10.0.0.5:8080", cloud: registeredMine}}, cloud: registeredMine,
+		who: "you@example.com", account: map[string]string{"dev-1": "bench-01"}, saveErr: errors.New("PUT: 400 invalid wiring"),
+	}
+	out, err := runSetupWith(t, env, "", setupOpts{laVoltageMV: 3300, yes: true})
+	if err != nil {
+		t.Fatalf("setup failed on a profile save error: %v", err)
+	}
+	if env.setMV != 3300 || !env.did("save") || !strings.Contains(out, "Set to 3.3 V on the pod.\n") ||
+		!strings.Contains(out, "Warning: could not save it to the pod's wiring profile on embeddedci.com: PUT: 400 invalid wiring") {
+		t.Fatalf("calls %v\n%s", env.calls, out)
+	}
+}
+
+func TestSetupSkipsTheProfileWhenNotOnTheAccount(t *testing.T) {
+	cases := map[string]*fakeSetupEnv{
+		"not signed in": {pods: []setupPod{{addr: "a:8080", cloud: registeredMine}}, cloud: registeredMine,
+			account: map[string]string{"dev-1": "x"}},
+		"another account": {pods: []setupPod{{addr: "a:8080", cloud: registeredMine}}, cloud: registeredMine,
+			who: "new@x.com", account: map[string]string{"other": "x"}},
+		"unregistered, --no-register": {pods: []setupPod{{addr: "a:8080"}}, cloud: cloudState{known: true}, who: "me@x.com"},
+		"old firmware":                {pods: []setupPod{{addr: "a:8080"}}, who: "me@x.com", account: map[string]string{"dev-1": "x"}},
+	}
+	for name, env := range cases {
+		out, err := runSetupWith(t, env, "", setupOpts{laVoltageMV: 3300, yes: true, noRegister: true})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if env.did("save-profile") || !strings.Contains(out, "Set to 3.3 V on the pod.\n") {
+			t.Errorf("%s: calls %v\n%s", name, env.calls, out)
+		}
+	}
+}
+
+func TestSetupSavesTheVoltageAfterRegistering(t *testing.T) {
+	unreg := cloudState{known: true}
+	env := &fakeSetupEnv{
+		pods: []setupPod{{addr: "10.0.0.5:8080", cloud: unreg}}, cloud: unreg, laMV: 3300, who: "me@x.com",
+		afterReg: registeredMine, account: map[string]string{"dev-1": "bench-01"},
+	}
+	out, err := runSetupWith(t, env, "", setupOpts{yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !env.did("register") || env.profileMV != 3300 || env.profileFor != "dev-1" ||
+		!strings.Contains(out, "Saved the I/O voltage (3.3 V) to its wiring profile on embeddedci.com.") {
+		t.Fatalf("calls %v profile %d\n%s", env.calls, env.profileMV, out)
 	}
 }

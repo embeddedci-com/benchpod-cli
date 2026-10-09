@@ -482,3 +482,69 @@ func (c *Client) doAuthedJSON(ctx context.Context, method, path, accessToken str
 	}
 	return nil
 }
+
+// GetDeviceWiring calls GET /api/benchpod/devices/{id}/wiring and returns the pod's stored wiring
+// profile (an empty map when none is stored). Values stay raw JSON so a read-modify-write puts
+// every field back exactly as it was.
+func (c *Client) GetDeviceWiring(ctx context.Context, accessToken, deviceID string) (map[string]json.RawMessage, error) {
+	path, err := wiringPath(deviceID)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]json.RawMessage
+	if err := c.doAuthedJSON(ctx, http.MethodGet, path, accessToken, nil, &out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = map[string]json.RawMessage{}
+	}
+	return out, nil
+}
+
+// PutDeviceWiring calls PUT /api/benchpod/devices/{id}/wiring. The server REPLACES the stored map
+// with this one (it does not merge), so change one field with a read-modify-write
+// (SetDeviceWiringLaMV). A map the server rejects comes back as an *APIError and leaves the stored
+// one untouched.
+func (c *Client) PutDeviceWiring(ctx context.Context, accessToken, deviceID string, wiring map[string]json.RawMessage) error {
+	path, err := wiringPath(deviceID)
+	if err != nil {
+		return err
+	}
+	if wiring == nil {
+		wiring = map[string]json.RawMessage{}
+	}
+	return c.doAuthedJSON(ctx, http.MethodPut, path, accessToken, wiring, nil)
+}
+
+// SetDeviceWiringLaMV stores the LA I/O voltage (la_mv: 1800 or 3300) in the pod's wiring profile,
+// keeping every other field: it reads the stored map, changes la_mv and writes the map back. The
+// server then applies it on every connect. changed is false (and nothing is written) when the
+// profile already has that voltage.
+func (c *Client) SetDeviceWiringLaMV(ctx context.Context, accessToken, deviceID string, mv int) (changed bool, err error) {
+	if mv != 1800 && mv != 3300 {
+		return false, fmt.Errorf("serverapi: la_mv must be 1800 or 3300, got %d", mv)
+	}
+	wiring, err := c.GetDeviceWiring(ctx, accessToken, deviceID)
+	if err != nil {
+		return false, err
+	}
+	if raw, ok := wiring["la_mv"]; ok {
+		var cur float64
+		if json.Unmarshal(raw, &cur) == nil && cur == float64(mv) {
+			return false, nil
+		}
+	}
+	wiring["la_mv"] = json.RawMessage(fmt.Sprint(mv))
+	if err := c.PutDeviceWiring(ctx, accessToken, deviceID, wiring); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func wiringPath(deviceID string) (string, error) {
+	id := strings.TrimSpace(deviceID)
+	if id == "" {
+		return "", errors.New("serverapi: device id is empty")
+	}
+	return "/api/benchpod/devices/" + url.PathEscape(id) + "/wiring", nil
+}

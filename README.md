@@ -489,11 +489,17 @@ one that is already done:
 2. **Network**: a pod with no address gets one. Choose Ethernet (setup waits up to
    two minutes for its DHCP lease) or Wi-Fi (SSID and password, like `set-wifi`).
 3. **Board I/O voltage**: 1.8 V or 3.3 V, the DUT's logic level (like `la voltage`).
-   One already set is kept unless `--la-voltage` is given.
+   One already set is kept unless `--la-voltage` is given. The pod forgets it on a
+   restart, so when this machine is signed in and the pod is registered to that
+   account, setup also saves it (`la_mv`) to the pod's wiring profile on
+   embeddedci.com, keeping every other field. The server applies it on every connect
+   and the web app's setup checklist ticks "I/O voltage". A voltage already on the pod
+   but missing from the profile is saved too. If the save fails, setup warns and goes on.
 4. **embeddedci.com**: an unregistered pod is registered to your account, signing in
-   first (`login`) when there is no session. A pod registered to your account is
-   named; one registered to another account is explained (sign in with the address
-   your activation email was sent to, `benchpod login --force`) and left alone.
+   first (`login`) when there is no session, and its new wiring profile gets the I/O
+   voltage. A pod registered to your account is named; one registered to another
+   account is explained (sign in with the address your activation email was sent to,
+   `benchpod login --force`) and left alone.
 5. **Save the connection**: the pod's address becomes the default (like `discover --save`).
 
 It ends with the next steps: SWD wiring (SWCLK on LA11, SWDIO on LA12, GND), a
@@ -510,7 +516,7 @@ $ benchpod setup --la-voltage 3.3V
      Done: the pod is on the network at 192.168.1.221:8080.
 
 3/5  Board I/O voltage
-     Set to 3.3 V.
+     Set to 3.3 V on the pod and saved to its wiring profile on embeddedci.com.
 
 4/5  embeddedci.com
      Done: registered to your account (you@example.com) as benchpod-baea06.
@@ -651,6 +657,13 @@ Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.
 LA capture, UART, SWD flash, pull-ups and I2C-sensor emulation until it is set;
 1.8 V needs a v3 pod, and the pod refuses a change while an LA pin is in use. Works
 over the network and over USB. No flags.
+
+The pod forgets the voltage on a restart. When this machine is signed in
+(`benchpod login`) and the pod is registered to that account, setting it over the
+network or an `embeddedci:` connection also saves it to the pod's wiring profile on
+embeddedci.com (only `la_mv` changes), which the server applies on every connect.
+A failed save is a warning; the pod setting still stands. Over USB it is set on the
+pod only.
 
 ### `benchpod la pullup PIN STATE`
 
