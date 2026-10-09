@@ -117,6 +117,12 @@ func runDiscover(g *globalFlags, o discoverOpts) error {
 	if !o.usb && !o.network {
 		return errors.New("--no-usb and --no-network together leave nothing to look for")
 	}
+	if raw := strings.TrimSpace(g.connection); raw != "" {
+		if spec, err := parseTarget(raw); err == nil && spec.IsCloud() {
+			return fmt.Errorf("discover looks for pods on USB and the LAN, not on embeddedci.com (--connection %s%s). "+
+				"Ask that pod with `benchpod status --connection %s%s`, or see your pods in the web app", cloudConnPrefix, spec.Name, cloudConnPrefix, spec.Name)
+		}
+	}
 
 	var (
 		serialPods []serialconsole.SerialPod

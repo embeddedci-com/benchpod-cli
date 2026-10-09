@@ -27,7 +27,7 @@ func newRegisterCmd(g *globalFlags) *cobra.Command {
 	var wait time.Duration
 	cmd := &cobra.Command{
 		Use:   "register",
-		Short: "Register the bench pod and provision it to connect directly to the server",
+		Short: "Register the pod and provision it to connect directly to the server",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runRegister(g, registerOptions{
@@ -38,7 +38,7 @@ func newRegisterCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&serverURL, "server-url", "https://www.embeddedci.com", "embeddedci-server base URL")
 	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to token cache (default: ~/.config/benchpod-cli/token.json)")
-	cmd.Flags().StringVar(&deviceName, "device-name", "", "device name, URL-safe (default: the pod's own name, e.g. benchpod-a1b2c3)")
+	cmd.Flags().StringVar(&deviceName, "device-name", "", "the pod's name on embeddedci.com, URL-safe (default: the pod's own name, e.g. benchpod-a1b2c3)")
 	cmd.Flags().StringVar(&podHost, "pod-host", "",
 		"host the pod connects to (default: api.embeddedci.com for embeddedci.com, else the --server-url host)")
 	cmd.Flags().DurationVar(&wait, "wait", 30*time.Second, "how long to wait for the pod to connect to the server (0 = don't wait)")
@@ -112,11 +112,11 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 	host = podHostFor(host, opts.podHost)
 	// Verify the server cert by default when using TLS; --insecure-skip-verify opts out for bring-up.
 	verify := tls && !opts.insecureSkipVerify
-	spec, err := g.resolveConnection()
+	spec, err := g.resolveTarget()
 	if err != nil {
 		return err
 	}
-	if err := spec.RequireWifi("register"); err != nil {
+	if err := spec.RequireNetwork("register"); err != nil {
 		return err
 	}
 	addr := spec.Addr
@@ -143,7 +143,7 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 	pubKey, err := client.IdentityPublic(idCtx)
 	idCancel()
 	if err != nil {
-		return fmt.Errorf("fetch device public key: %w", err)
+		return fmt.Errorf("fetch the pod's public key: %w", err)
 	}
 
 	name := strings.TrimSpace(deviceName)
@@ -160,9 +160,9 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 	device, err := api.RegisterDevice(regCtx, tokens.AccessToken, name, pubKey, nil)
 	regCancel()
 	if err != nil {
-		return fmt.Errorf("register device: %w", err)
+		return fmt.Errorf("register the pod: %w", err)
 	}
-	log.Printf("device: registered name=%s id=%s", device.Name, device.ID)
+	log.Printf("pod: registered name=%s id=%s", device.Name, device.ID)
 	if device.Name != name {
 		// A re-register of an already-registered pod keeps its (possibly user-edited) name.
 		fmt.Fprintf(os.Stderr, "This pod is already registered as %q. Rename it on the BenchPod page.\n", device.Name)
@@ -182,12 +182,12 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 	})
 	setCancel()
 	if err != nil {
-		return fmt.Errorf("provision bench pod cloud connection: %w", err)
+		return fmt.Errorf("provision pod cloud connection: %w", err)
 	}
-	log.Printf("provisioned: bench pod will connect to %s:%d (tls=%v verify=%v) as device %s", host, port, tls, verify, device.ID)
+	log.Printf("provisioned: pod will connect to %s:%d (tls=%v verify=%v) as device_id %s", host, port, tls, verify, device.ID)
 
 	if opts.wait <= 0 {
-		fmt.Fprintf(os.Stderr, "Registered bench pod %q (device %s).\n", device.Name, device.ID)
+		fmt.Fprintf(os.Stderr, "Registered pod %q (id %s).\n", device.Name, device.ID)
 		return nil
 	}
 
@@ -196,7 +196,7 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 		return readCloudStatus(ctx, client)
 	}, opts.wait, time.Second)
 	if status.State == "connected" {
-		fmt.Fprintf(os.Stderr, "Registered bench pod %q and it is connected.\n", device.Name)
+		fmt.Fprintf(os.Stderr, "Registered pod %q and it is connected.\n", device.Name)
 		fmt.Fprintf(os.Stderr, "Run tests against it: pytest --benchpod-connection=embeddedci:%s\n", device.Name)
 		return nil
 	}
@@ -204,7 +204,7 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 		return ctx.Err()
 	}
 	fmt.Fprint(os.Stderr, describeNotConnected(device.Name, host, opts.wait, status, pollErr))
-	return fmt.Errorf("bench pod did not connect within %s", opts.wait)
+	return fmt.Errorf("pod did not connect within %s", opts.wait)
 }
 
 // cloudStatus is the part of the firmware's `cloud_status` reply that register reads.
@@ -259,7 +259,7 @@ func waitCloudConnected(ctx context.Context, poll func(context.Context) (cloudSt
 // what the pod last reported, and the likely fix.
 func describeNotConnected(name, host string, wait time.Duration, st cloudStatus, pollErr error) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Registered bench pod %q, but it did not connect to %s within %s.\n", name, host, wait)
+	fmt.Fprintf(&b, "Registered pod %q, but it did not connect to %s within %s.\n", name, host, wait)
 	fmt.Fprintln(&b, "The registration stands; the pod keeps retrying on its own.")
 	if st.State != "" {
 		fmt.Fprintf(&b, "  state: %s\n", st.State)
@@ -297,9 +297,9 @@ func cloudErrorHint(st cloudStatus, lastError string) string {
 	case strings.HasPrefix(lastError, "tls"):
 		return "the secure connection failed. Check --server-url and that nothing on the network intercepts HTTPS."
 	case strings.Contains(lastError, "refused the device (HTTP 404)"):
-		return "the server does not know this device. Check that --server-url is the server you registered with."
+		return "the server does not know this pod. Check that --server-url is the server you registered with."
 	case strings.Contains(lastError, "refused the device (HTTP 403)"):
-		return "the device was deregistered. Run `benchpod register` again."
+		return "the pod was deregistered. Run `benchpod register` again."
 	case strings.HasPrefix(lastError, "server refused"), strings.HasPrefix(lastError, "websocket"):
 		return "the server rejected the connection. Run `benchpod register` again, or update the pod firmware."
 	case strings.HasPrefix(lastError, "connection lost"), strings.HasPrefix(lastError, "no reply"):

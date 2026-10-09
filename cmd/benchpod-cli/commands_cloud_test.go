@@ -273,7 +273,7 @@ func TestCloudErrorHint(t *testing.T) {
 		{cloudStatus{State: "backoff", LastError: s("tcp connect refused")}, "outbound HTTPS"},
 		{cloudStatus{State: "backoff", LastError: s("tls certificate not trusted (flags 0x8)")}, "certificate"},
 		{cloudStatus{State: "backoff", LastError: s("tls handshake failed")}, "intercepts HTTPS"},
-		{cloudStatus{State: "backoff", LastError: s("server refused the device (HTTP 404)")}, "does not know this device"},
+		{cloudStatus{State: "backoff", LastError: s("server refused the device (HTTP 404)")}, "does not know this pod"},
 		{cloudStatus{State: "backoff", LastError: s("server refused the device (HTTP 403)")}, "deregistered"},
 		{cloudStatus{State: "backoff", LastError: s("websocket upgrade failed (HTTP 403)")}, "rejected"},
 		{cloudStatus{State: "backoff", LastError: s("connection lost")}, "unreliable"},

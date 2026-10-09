@@ -28,8 +28,8 @@ func TestClassifyConnection(t *testing.T) {
 			t.Errorf("classifyConnection(%q): unexpected error %v", tt.in, err)
 			continue
 		}
-		if spec.IsWifi() != tt.wantWifi {
-			t.Errorf("classifyConnection(%q).IsWifi() = %v, want %v", tt.in, spec.IsWifi(), tt.wantWifi)
+		if spec.IsNetwork() != tt.wantWifi {
+			t.Errorf("classifyConnection(%q).IsNetwork() = %v, want %v", tt.in, spec.IsNetwork(), tt.wantWifi)
 		}
 		if spec.Addr != tt.addr {
 			t.Errorf("classifyConnection(%q).Addr = %q, want %q", tt.in, spec.Addr, tt.addr)
@@ -71,36 +71,47 @@ func TestParseTargetCloudForm(t *testing.T) {
 		if err != nil || !spec.IsCloud() || spec.Name != name {
 			t.Errorf("parseTarget(%q) = %+v, %v", in, spec, err)
 		}
-		if got := describeConn(spec); got != "embeddedci.com device "+name {
+		if got := describeConn(spec); got != name+" on embeddedci.com" {
 			t.Errorf("describeConn = %q", got)
 		}
 	}
-	if _, err := parseTarget("embeddedci:"); err == nil || !strings.Contains(err.Error(), "device name") {
+	if _, err := parseTarget("embeddedci:"); err == nil || !strings.Contains(err.Error(), "pod's name") {
 		t.Errorf("empty name: %v", err)
 	}
-	for in, want := range map[string]connKind{"192.168.1.5": connWifi, "usb": connSerial, "/dev/tty.usbmodem1": connSerial} {
+	for in, want := range map[string]connKind{"192.168.1.5": connNetwork, "usb": connSerial, "/dev/tty.usbmodem1": connSerial} {
 		if spec, err := parseTarget(in); err != nil || spec.Kind != want {
 			t.Errorf("parseTarget(%q) = %+v, %v", in, spec, err)
 		}
 	}
 }
 
-func TestRequireWifi(t *testing.T) {
-	wifi, _ := classifyConnection("192.168.1.5")
-	if err := wifi.RequireWifi("ping"); err != nil {
-		t.Errorf("RequireWifi on wifi transport: unexpected error %v", err)
+func TestRequireNetwork(t *testing.T) {
+	network, _ := classifyConnection("192.168.1.5")
+	if err := network.RequireNetwork("ping"); err != nil {
+		t.Errorf("RequireNetwork on the network transport: unexpected error %v", err)
+	}
+	// Over embeddedci.com it names what works there and the ways out.
+	cloud, _ := parseTarget("embeddedci:bench-1")
+	err := cloud.RequireNetwork("capture")
+	for _, want := range []string{"capture", "embeddedci:bench-1", "web app", "SDK", "benchpod discover", "status, ping, la voltage"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("RequireNetwork(cloud) = %v, want it to mention %q", err, want)
+		}
+	}
+	if err != nil && strings.Contains(err.Error(), "`usb`") {
+		t.Errorf("RequireNetwork(cloud) offers USB to a network-only command: %v", err)
 	}
 	// "serial" is still accepted as an input spelling, so both forms must land
 	// on the same USB transport and the same guidance.
 	for _, conn := range []string{"usb", "serial", "/dev/tty.usbmodem1101"} {
 		spec, _ := classifyConnection(conn)
-		err := spec.RequireWifi("ping")
+		err := spec.RequireNetwork("ping")
 		if err == nil {
-			t.Fatalf("RequireWifi(%q) = nil, want error", conn)
+			t.Fatalf("RequireNetwork(%q) = nil, want error", conn)
 		}
 		for _, want := range []string{"ping", "USB", "benchpod discover"} {
 			if !strings.Contains(err.Error(), want) {
-				t.Errorf("RequireWifi(%q) error = %q, want it to mention %q", conn, err, want)
+				t.Errorf("RequireNetwork(%q) error = %q, want it to mention %q", conn, err, want)
 			}
 		}
 	}

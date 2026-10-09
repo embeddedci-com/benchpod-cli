@@ -14,15 +14,23 @@ import (
 // DefaultPort is the bench pod firmware's TCP port.
 const DefaultPort = "8080"
 
-// Config holds CLI-level settings that persist between invocations.
+// Version is the config file's format version, written to "version" on every save. Readers
+// (the CLI, the Python SDK and the MCP server) treat a missing version as 1 and ignore keys they
+// do not know; a change that old readers would misread bumps it.
+const Version = 1
+
+// Config holds CLI-level settings that persist between invocations. The file is shared: the
+// Python SDK and the MCP server read Connection from it as their default pod (only the CLI
+// writes it).
 //
-// Connection is the default connection target (a TCP address, a serial device
-// path, or the keyword "usb"); the transport is inferred from its shape by
-// the CLI. BenchPodAddr is the legacy field that only ever held a TCP address;
+// Connection is the default connection target (a network address, a serial device
+// path, the keyword "usb", or embeddedci:<name> for a pod on embeddedci.com); the
+// transport is inferred from its shape. BenchPodAddr is the legacy field that only ever held a TCP address;
 // it is kept for backward-compatible reads and migrated into Connection by Load.
 // LastSerial caches the serial device path most recently auto-detected as a bench
 // pod, so the next auto-detect probes it first (it can save several port probes).
 type Config struct {
+	Version      int    `json:"version,omitempty"`
 	Connection   string `json:"connection,omitempty"`
 	BenchPodAddr string `json:"bench_pod_addr,omitempty"`
 	LastSerial   string `json:"last_serial,omitempty"`
@@ -78,7 +86,9 @@ func Save(path string, c *Config) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	saved := *c
+	saved.Version = Version
+	data, err := json.MarshalIndent(&saved, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}

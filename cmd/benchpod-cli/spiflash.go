@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -31,7 +32,11 @@ func newSPIFlashCmd(g *globalFlags) *cobra.Command {
 		Short: "Read, erase and program an SPI NOR flash on four LA pins (network)",
 		Long: "Read, erase and program a 25-series SPI NOR flash (W25Q, MX25, GD25, IS25, ...)\n" +
 			"wired to four LA pins, through the pod's SPI master. Needs gateware with the\n" +
-			"spi_master capability and the LA voltage set. 3-byte addresses: the first 16 MB.\n\n" +
+			"spi_master capability and the LA voltage set. 3-byte addresses: the first 16 MB.\n" +
+			"Network connection only: it does not work over USB or embeddedci.com.\n\n" +
+			"Pins left out come from the pod's wiring profile on embeddedci.com (spi_sclk,\n" +
+			"spi_mosi, spi_miso, spi_cs) when this machine is signed in (`benchpod login` or\n" +
+			"BENCHPOD_API_KEY) and the pod is on that account. Flags always win.\n\n" +
 			"Pass --nreset when the DUT's reset is wired to the pod's reset pin (" + nrstPinLocation + "):\n" +
 			"the DUT is held in reset for the whole run so its own controller stays off the bus,\n" +
 			"and released at the end. The SPI pins are always released at the end, also on\n" +
@@ -42,10 +47,10 @@ func newSPIFlashCmd(g *globalFlags) *cobra.Command {
 			"  benchpod spi-flash erase --chip --sck 3 --mosi 4 --miso 5 --cs 6",
 	}
 	pf := cmd.PersistentFlags()
-	pf.StringVar(&f.sck, "sck", "", "LA pin for SCK, 1-14 (required)")
-	pf.StringVar(&f.mosi, "mosi", "", "LA pin for MOSI, 1-14 (required)")
-	pf.StringVar(&f.miso, "miso", "", "LA pin for MISO, 1-14 (required)")
-	pf.StringVar(&f.cs, "cs", "", "LA pin for CS, 1-14 (required)")
+	pf.StringVar(&f.sck, "sck", "", "LA pin for SCK, 1-14 (default: spi_sclk from the pod's wiring profile)")
+	pf.StringVar(&f.mosi, "mosi", "", "LA pin for MOSI, 1-14 (default: spi_mosi from the pod's wiring profile)")
+	pf.StringVar(&f.miso, "miso", "", "LA pin for MISO, 1-14 (default: spi_miso from the pod's wiring profile)")
+	pf.StringVar(&f.cs, "cs", "", "LA pin for CS, 1-14 (default: spi_cs from the pod's wiring profile)")
 	pf.IntVar(&f.hz, "hz", 1000000, "SCK rate in Hz; the pod uses the nearest rate at or below it (190 kHz to 6 MHz)")
 	pf.IntVar(&f.mode, "mode", 0, "SPI mode, 0 or 3")
 	pf.BoolVar(&f.nreset, "nreset", false, "hold the DUT in reset through the pod's reset pin while flashing")
@@ -59,6 +64,35 @@ func newSPIFlashCmd(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
+// fillFromWiring takes the SPI pins left out of the flags from the pod's wiring profile on
+// embeddedci.com (spi_sclk, spi_mosi, spi_miso, spi_cs), when there is one to read. Flags win.
+func (f *spiFlags) fillFromWiring(g *globalFlags) {
+	if f.sck != "" && f.mosi != "" && f.miso != "" && f.cs != "" {
+		log.Printf("spi-flash: pins from the flags")
+		return
+	}
+	if spec, err := g.resolveTarget(); err != nil || !spec.IsNetwork() {
+		return // the connection error comes from the command itself
+	}
+	w := loadPodWiring(g, os.Stderr)
+	if w == nil {
+		return
+	}
+	var from []string
+	for _, p := range []struct {
+		name string
+		flag *string
+		pin  *int
+	}{{"SCK", &f.sck, w.SpiSclk}, {"MOSI", &f.mosi, w.SpiMosi}, {"MISO", &f.miso, w.SpiMiso}, {"CS", &f.cs, w.SpiCs}} {
+		if pinFromWiring(p.flag, p.pin) {
+			from = append(from, p.name+" LA"+*p.flag)
+		}
+	}
+	if len(from) > 0 {
+		log.Printf("spi-flash: %s from %s", strings.Join(from, ", "), wiringSource)
+	}
+}
+
 // config validates the pin flags into a spi_start request.
 func (f *spiFlags) config() (spiflash.Config, error) {
 	var pins [4]int
@@ -66,7 +100,7 @@ func (f *spiFlags) config() (spiflash.Config, error) {
 	vals := [4]string{f.sck, f.mosi, f.miso, f.cs}
 	for i, v := range vals {
 		if strings.TrimSpace(v) == "" {
-			return spiflash.Config{}, fmt.Errorf("--sck, --mosi, --miso and --cs are required")
+			return spiflash.Config{}, fmt.Errorf("--sck, --mosi, --miso and --cs are required (or set spi_sclk, spi_mosi, spi_miso and spi_cs in the pod's wiring profile on embeddedci.com)")
 		}
 		n, err := parseLAPin(v)
 		if err != nil {
@@ -93,11 +127,12 @@ func (f *spiFlags) config() (spiflash.Config, error) {
 // cleanup (spi_stop, reset release) uses fresh ones so it works after Ctrl-C.
 func runSPI(g *globalFlags, f *spiFlags, name string, def time.Duration,
 	fn func(ctx context.Context, p *spiflash.Pod, s spiflash.Started) error) error {
+	f.fillFromWiring(g)
 	cfg, err := f.config()
 	if err != nil {
 		return err
 	}
-	ctx, cancel, client, err := g.wifiClient("spi-flash", def)
+	ctx, cancel, client, err := g.networkClient("spi-flash", def)
 	if err != nil {
 		return err
 	}

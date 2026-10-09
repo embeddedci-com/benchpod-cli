@@ -12,7 +12,7 @@ import (
 
 // globalFlags holds the persistent (global) flags shared by every subcommand.
 // They are bound through Viper so BENCHPOD_* environment variables also work
-// (e.g. BENCHPOD_CONNECTION=serial), with precedence flag > env > default.
+// (e.g. BENCHPOD_CONNECTION=usb), with precedence flag > env > default.
 type globalFlags struct {
 	connection     string
 	configFile     string
@@ -42,21 +42,26 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "benchpod",
 		Version: version,
-		Short:   "EmbeddedCI bench pod CLI",
-		Long: "EmbeddedCI bench pod CLI.\n\n" +
+		Short:   "EmbeddedCI BenchPod CLI",
+		Long: "EmbeddedCI BenchPod CLI.\n\n" +
 			"New pod? Run `benchpod setup`: it finds the pod, gets it on the network, sets\n" +
 			"the board I/O voltage, registers it with embeddedci.com and saves the connection.\n\n" +
 			"--connection says where and how to reach the pod; the transport follows from\n" +
-			"its value. An address (192.168.1.5[:8080]) uses the network (TCP/JSON) API; a\n" +
-			"device path (/dev/tty..., COM3) or `usb` uses the pod's USB console. Omit it to\n" +
-			"use the default saved by `benchpod discover --save` or `benchpod set-connection`.\n" +
-			"`embeddedci:<name>` names a pod on embeddedci.com: lan-policy, sig-policy and\n" +
-			"deregister take it.\n\n" +
-			"Over the network or USB: status, la voltage, flash (SWD), lan-policy,\n" +
-			"sig-policy, cloud ca and cloud proxy. Always over the USB console: set-wifi,\n" +
-			"show-network, clear-wifi, identity, install-blobs, bootsel and dfu; flash-self\n" +
-			"reflashes the pod over USB DFU. Every other pod command needs the network and\n" +
-			"refuses a USB connection.\n\n" +
+			"its value. An address (192.168.1.5[:8080]) uses the pod's network (TCP/JSON) API;\n" +
+			"a device path (/dev/tty..., COM3) or `usb` uses the pod's USB console;\n" +
+			"embeddedci:<name> goes through embeddedci.com to the pod with that name on your\n" +
+			"account (signed in with `benchpod login`, or BENCHPOD_API_KEY). Omit it to use the\n" +
+			"default saved by `benchpod discover --save` or `benchpod set-connection`.\n\n" +
+			"Over the network: every pod command but the USB-only ones below. Over USB:\n" +
+			"status, la voltage, flash (SWD), lan-policy, sig-policy, cloud ca and cloud proxy.\n" +
+			"Through embeddedci.com: status, ping, la voltage, la pullup, la status, la step,\n" +
+			"generate, lan-policy, sig-policy, cloud ca show/clear, cloud proxy and deregister.\n" +
+			"Always over the USB console: set-wifi, show-network, clear-wifi, identity,\n" +
+			"install-blobs, bootsel and dfu; flash-self reflashes the pod over USB DFU. A\n" +
+			"command that cannot use the connection says so and names what to use instead.\n\n" +
+			"flash and spi-flash over the network take the pins you leave out from the pod's\n" +
+			"wiring profile on embeddedci.com when you are signed in and the pod is on your\n" +
+			"account.\n\n" +
 			exitCodesHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -72,7 +77,7 @@ func newRootCmd() *cobra.Command {
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&g.connection, "connection", "",
-		`how to reach the pod: an address (192.168.1.5[:8080]), a device path (/dev/tty..., COM3), "usb" to auto-detect the pod over USB, or embeddedci:<name> for a pod on embeddedci.com where a command supports it (default: the saved set-connection target)`)
+		`how to reach the pod: its network address (192.168.1.5[:8080]), a device path (/dev/tty..., COM3), "usb" to auto-detect the pod over USB, or embeddedci:<name> to go through embeddedci.com (default: the saved set-connection target)`)
 	pf.StringVar(&g.configFile, "config-file", "", "path to config file")
 	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")

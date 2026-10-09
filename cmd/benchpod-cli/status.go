@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // ── status ───────────────────────────────────────────────────────────────────
@@ -26,11 +24,12 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			"newer firmware release exists), the board I/O (LA) voltage, target power, the\n" +
 			"network address, whether it is registered with embeddedci.com and, when this\n" +
 			"machine is signed in, whether it is on your account, and a cloud job's lease.\n\n" +
-			"--json prints the pod's raw `status` reply instead (network only). Over USB\n" +
-			"(--connection usb) this prints the console's `status` text.",
+			"--json prints the pod's raw `status` reply instead (network and embeddedci.com).\n" +
+			"Over USB (--connection usb) this prints the console's `status` text. With\n" +
+			"--connection embeddedci:<name> it asks the pod through embeddedci.com.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			spec, err := g.resolveConnection()
+			spec, err := g.resolveTarget()
 			if err != nil {
 				return err
 			}
@@ -38,13 +37,13 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				return runStatusSerial(g, spec.Device)
 			}
 
-			ctx, cancel, client, err := g.wifiClient("status", 30*time.Second)
+			ctx, cancel, pod, err := g.podClient("status", 30*time.Second)
 			if err != nil {
 				return err
 			}
 			defer cancel()
 
-			data, err := client.Command(ctx, map[string]any{"cmd": "status"})
+			data, err := pod.client.Command(ctx, map[string]any{"cmd": "status"})
 			if err != nil {
 				return fmt.Errorf("status: %w", err)
 			}
@@ -62,8 +61,8 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				printJSON(out, data) // not the shape we know: show it as it is
 				return nil
 			}
-			sum := statusSummary{addr: spec.Addr, st: st}
-			gatherStatusExtras(ctx, client, &sum)
+			sum := statusSummary{addr: pod.label, st: st, cloudID: pod.deviceID}
+			gatherStatusExtras(ctx, pod.client, &sum)
 			printStatusSummary(out, sum)
 			return nil
 		},
@@ -132,7 +131,8 @@ type targetPower struct {
 
 // statusSummary is everything the summary prints; the extras are optional (nil/"" = unknown).
 type statusSummary struct {
-	addr    string
+	addr    string // the pod's address, or "<name> on embeddedci.com"
+	cloudID string // the pod's id on embeddedci.com when status went through it
 	st      podStatus
 	cloud   *cloudState
 	power   *targetPower
@@ -142,7 +142,7 @@ type statusSummary struct {
 
 // gatherStatusExtras asks the pod for its registration and target power, and (cheaply, never
 // failing the command) whether it is on the signed-in account and the latest firmware release.
-func gatherStatusExtras(ctx context.Context, client *tcpclient.Client, sum *statusSummary) {
+func gatherStatusExtras(ctx context.Context, client podCommander, sum *statusSummary) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	if raw, err := client.Command(cctx, map[string]any{"cmd": "cloud_status"}); err == nil {
 		var c cloudState
@@ -160,7 +160,12 @@ func gatherStatusExtras(ctx context.Context, client *tcpclient.Client, sum *stat
 		}
 	}
 	cancel()
-	if sum.cloud != nil && sum.cloud.Configured && strings.TrimSpace(sum.cloud.DeviceID) != "" {
+	switch {
+	case sum.cloudID != "" && sum.cloud != nil:
+		// Reached through embeddedci.com by name: the pod is on the account that asked.
+		name := strings.TrimSuffix(sum.addr, " on embeddedci.com")
+		sum.account = map[string]string{sum.cloudID: name, strings.TrimSpace(sum.cloud.DeviceID): name}
+	case sum.cloud != nil && sum.cloud.Configured && strings.TrimSpace(sum.cloud.DeviceID) != "":
 		sum.account = accountDevices()
 	}
 	sum.latest = latestFirmwareRelease()
@@ -171,7 +176,11 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 	st := s.st
 	row := func(k, v string) { fmt.Fprintf(out, "  %-13s %s\n", k, v) }
 
-	fmt.Fprintf(out, "BenchPod at %s\n", s.addr)
+	if s.cloudID != "" {
+		fmt.Fprintf(out, "BenchPod %s\n", s.addr)
+	} else {
+		fmt.Fprintf(out, "BenchPod at %s\n", s.addr)
+	}
 	fw := valueOrDash(st.Version)
 	if s.latest != "" && st.Version != "" {
 		if versionLess(st.Version, s.latest) {

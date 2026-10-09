@@ -240,14 +240,14 @@ func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out
 	defer installSignalHandler(ctx, cancel)()
 
 	api := serverapi.New(t.serverURL)
-	tokens, err := ensureTokens(ctx, api, tokenPath)
+	cred, err := credentialFor(ctx, api, t.tokenFile, tokenPath)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
 
 	id, label := t.deviceID, t.deviceID
 	if id == "" {
-		devices, err := api.ListDevices(ctx, tokens.AccessToken)
+		devices, err := api.ListDevices(ctx, cred)
 		if err != nil {
 			return fmt.Errorf("list devices: %w", err)
 		}
@@ -258,7 +258,7 @@ func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out
 		id, label = dev.ID, dev.Name
 	}
 
-	cur, err := api.GetPodPolicy(ctx, tokens.AccessToken, id, p.cmd)
+	cur, err := api.GetPodPolicy(ctx, cred, id, p.cmd)
 	if err != nil {
 		return cloudPolicyError(p, "", err)
 	}
@@ -270,7 +270,7 @@ func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out
 		return nil
 	}
 
-	res, err := api.SetPodPolicy(ctx, tokens.AccessToken, id, p.cmd, set)
+	res, err := api.SetPodPolicy(ctx, cred, id, p.cmd, set)
 	if err != nil {
 		return cloudPolicyError(p, set, err)
 	}

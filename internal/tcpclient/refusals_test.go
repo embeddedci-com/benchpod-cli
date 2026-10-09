@@ -94,7 +94,7 @@ func TestAFailedConnectIsUnreachable(t *testing.T) {
 	addr := ln.Addr().String()
 	ln.Close()
 	_, err = (&Client{Addr: addr, DialTimeout: 300 * time.Millisecond}).Command(context.Background(), map[string]any{"cmd": "ping"})
-	if !errors.Is(err, ErrUnreachable) || !strings.HasPrefix(err.Error(), "connect to bench pod at "+addr+": ") {
+	if !errors.Is(err, ErrUnreachable) || !strings.HasPrefix(err.Error(), "connect to pod at "+addr+": ") {
 		t.Fatalf("err = %v", err)
 	}
 	// Ctrl+C while connecting is not an unreachable pod.

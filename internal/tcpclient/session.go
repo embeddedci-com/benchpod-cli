@@ -32,7 +32,7 @@ type Session struct {
 func (c *Client) Open(ctx context.Context) (*Session, error) {
 	addr := strings.TrimSpace(c.Addr)
 	if addr == "" {
-		return nil, fmt.Errorf("bench pod address is empty; run `benchpod set-connection <addr>` first")
+		return nil, fmt.Errorf("pod address is empty; run `benchpod set-connection <addr>` first")
 	}
 	budget := c.DialTimeout
 	if budget <= 0 {

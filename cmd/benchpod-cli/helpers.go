@@ -50,8 +50,8 @@ func (g *globalFlags) rawConnection() (string, error) {
 }
 
 // resolveConnection classifies the effective connection (flag or stored default)
-// into a ConnSpec. Used by the firmware commands and flash; errors when no
-// connection is set or the value is unusable.
+// into a ConnSpec for a command that only works over the network or USB; errors when
+// no connection is set, the value is unusable, or it names a pod on embeddedci.com.
 func (g *globalFlags) resolveConnection() (ConnSpec, error) {
 	raw, err := g.rawConnection()
 	if err != nil {
@@ -71,11 +71,11 @@ func (g *globalFlags) resolveTarget() (ConnSpec, error) {
 	return parseTarget(raw)
 }
 
-// serialDevice resolves the serial device for the always-serial commands
+// serialDevice resolves the serial device for the always-USB commands
 // (set/show/clear-wifi, bootsel). It honors an explicit device path from the
 // connection (flag or stored default) and otherwise auto-detects (""). It never
-// errors: provisioning must work before any default exists, and a stored wifi
-// address simply falls through to USB auto-detection.
+// errors: provisioning must work before any default exists, and a stored network
+// address or embeddedci: name simply falls through to USB auto-detection.
 func (g *globalFlags) serialDevice() string {
 	raw, err := g.rawConnection()
 	if err != nil || raw == "" {
@@ -87,19 +87,33 @@ func (g *globalFlags) serialDevice() string {
 	return ""
 }
 
-// ── shared firmware-command setup (wifi/TCP path) ───────────────────────────
+// usbDevice is serialDevice for a command that only ever uses the pod's USB console, refusing an
+// explicit (--connection or BENCHPOD_CONNECTION) embeddedci: target with a clear message instead
+// of quietly probing USB. A saved embeddedci: default still falls through to USB auto-detection,
+// like a saved network address does.
+func (g *globalFlags) usbDevice(cmd string) (string, error) {
+	if raw := strings.TrimSpace(g.connection); raw != "" {
+		if spec, err := parseTarget(raw); err == nil && spec.IsCloud() {
+			return "", fmt.Errorf("%s works over the pod's USB console only, not over embeddedci.com (--connection %s%s). "+
+				"Plug the pod in over USB and pass --connection usb (or leave --connection out)", cmd, cloudConnPrefix, spec.Name)
+		}
+	}
+	return g.serialDevice(), nil
+}
 
-// wifiClient resolves the connection, requires the wifi transport (returning the
-// standard "not available over USB" error for the named command otherwise),
-// and returns a ready tcpclient plus a deadline context (overridable by
-// --timeout) with signal handling. It replaces the old RequireWifi + setupClient
-// pair at every TCP command's call site.
-func (g *globalFlags) wifiClient(cmdName string, def time.Duration) (context.Context, context.CancelFunc, *tcpclient.Client, error) {
-	spec, err := g.resolveConnection()
+// ── shared firmware-command setup (network/TCP path) ────────────────────────
+
+// networkClient resolves the connection, requires the network transport (returning the standard
+// "not available over USB" or "not over embeddedci.com" error for the named command otherwise),
+// and returns a ready tcpclient plus a deadline context (overridable by --timeout) with signal
+// handling. It is for the commands that need the pod's own port: chunked replies and raw streams.
+// Single-reply commands use podClient, which also goes through embeddedci.com.
+func (g *globalFlags) networkClient(cmdName string, def time.Duration) (context.Context, context.CancelFunc, *tcpclient.Client, error) {
+	spec, err := g.resolveTarget()
 	if err != nil {
 		return nil, func() {}, nil, err
 	}
-	if err := spec.RequireWifi(cmdName); err != nil {
+	if err := spec.RequireNetwork(cmdName); err != nil {
 		return nil, func() {}, nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(def))

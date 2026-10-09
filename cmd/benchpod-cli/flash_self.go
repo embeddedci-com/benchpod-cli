@@ -103,8 +103,8 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 	f := &flashSelfFlags{}
 	cmd := &cobra.Command{
 		Use:   "flash-self [firmware.bin | URL]",
-		Short: "Flash the bench pod's own firmware over USB DFU (STM32, no SWD probe)",
-		Long: "Flash the bench pod's OWN firmware over USB using its ROM DFU bootloader\n" +
+		Short: "Flash the pod's own firmware over USB DFU (STM32, no SWD probe)",
+		Long: "Flash the pod's OWN firmware over USB using its ROM DFU bootloader\n" +
 			"(via dfu-util) — the STM32 counterpart of the RP2350 drag-and-drop UF2 flow.\n" +
 			"This is NOT the same as `flash`, which programs a target wired to the pod.\n\n" +
 			"With no argument the latest prebuilt firmware is fetched automatically from\n" +
@@ -118,6 +118,9 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			"it in automatically).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if _, err := g.usbDevice("flash-self"); err != nil {
+				return err
+			}
 			bin := strings.TrimSpace(f.dfuUtil)
 			if bin == "" {
 				bin = "dfu-util"
@@ -349,7 +352,7 @@ func ensureDfuReady(ctx context.Context, g *globalFlags, f *flashSelfFlags, dfuP
 // printDfuInstructions tells a first-time user how to get the pod into DFU mode.
 func printDfuInstructions() {
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "The bench pod isn't in DFU mode yet. To enter it:")
+	fmt.Fprintln(os.Stderr, "The pod isn't in DFU mode yet. To enter it:")
 	fmt.Fprintln(os.Stderr, "  • blank board / first flash: hold the BOOT0 button while you press RESET")
 	fmt.Fprintln(os.Stderr, "    (or power-cycle the board), then release BOOT0.")
 	fmt.Fprintln(os.Stderr, "  • a pod already running firmware: run `benchpod dfu` in another terminal,")

@@ -187,7 +187,7 @@ func (c *Client) RegisterDevice(ctx context.Context, accessToken, name, publicKe
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Authorization", Authorization(accessToken))
 
 	httpc := c.HTTP
 	if httpc == nil {
@@ -359,6 +359,7 @@ type APIError struct {
 	Path    string
 	Status  int
 	Message string
+	Code    string // the server's machine-readable `code` (lease_held, device_offline, ...), when sent
 	Body    string
 }
 
@@ -450,7 +451,7 @@ func (c *Client) doAuthedJSON(ctx context.Context, method, path, accessToken str
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Authorization", Authorization(accessToken))
 
 	httpc := c.HTTP
 	if httpc == nil {
@@ -469,10 +470,12 @@ func (c *Client) doAuthedJSON(ctx context.Context, method, path, accessToken str
 		var errBody struct {
 			Error  string `json:"error"`
 			Detail string `json:"detail"`
+			Code   string `json:"code"`
 		}
 		_ = json.Unmarshal(data, &errBody)
 		return &APIError{Method: method, Path: path, Status: resp.StatusCode,
-			Message: strings.TrimSpace(errBody.Error), Body: strings.TrimSpace(string(data))}
+			Message: strings.TrimSpace(errBody.Error), Code: strings.TrimSpace(errBody.Code),
+			Body: strings.TrimSpace(string(data))}
 	}
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
@@ -541,10 +544,76 @@ func (c *Client) SetDeviceWiringLaMV(ctx context.Context, accessToken, deviceID 
 	return true, nil
 }
 
+// GetDeviceWiringProfile calls GET /api/benchpod/devices/{id}/wiring/profile and returns the
+// pod's effective wiring profile: the server's defaults overlaid with the stored map, so every
+// field is present (a pin that is not wired is null). A server without the profile route
+// answers 404 (*APIError); the caller can fall back to GetDeviceWiring.
+func (c *Client) GetDeviceWiringProfile(ctx context.Context, accessToken, deviceID string) (map[string]json.RawMessage, error) {
+	path, err := wiringPath(deviceID)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Profile map[string]json.RawMessage `json:"profile"`
+	}
+	if err := c.doAuthedJSON(ctx, http.MethodGet, path+"/profile", accessToken, nil, &out); err != nil {
+		return nil, err
+	}
+	if out.Profile == nil {
+		out.Profile = map[string]json.RawMessage{}
+	}
+	return out.Profile, nil
+}
+
 func wiringPath(deviceID string) (string, error) {
 	id := strings.TrimSpace(deviceID)
 	if id == "" {
 		return "", errors.New("serverapi: device id is empty")
 	}
 	return "/api/benchpod/devices/" + url.PathEscape(id) + "/wiring", nil
+}
+
+// Authorization is the Authorization header value for a credential: an API key passed as
+// "ApiKey eci_..." is sent as it is, anything else is a bearer token (a `benchpod login` access
+// token). Every authenticated call goes through it, so the endpoints take either.
+func Authorization(credential string) string {
+	credential = strings.TrimSpace(credential)
+	if strings.HasPrefix(credential, "ApiKey ") {
+		return credential
+	}
+	return "Bearer " + credential
+}
+
+// CommandResponse is the answer of POST /api/benchpod/devices/{id}/command. Status is "ok" (Data
+// holds the pod's reply data) or "error" (Error holds the pod's message): a refusal by the pod is
+// a valid answer (HTTP 200), unlike a transport failure, which comes back as an *APIError.
+type CommandResponse struct {
+	RequestID string          `json:"request_id"`
+	DeviceID  string          `json:"device_id"`
+	Status    string          `json:"status"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	Error     string          `json:"error,omitempty"`
+}
+
+// DeviceCommand calls POST /api/benchpod/devices/{id}/command, which sends one single-reply JSON
+// command ({"cmd":"status", ...}, exactly what the pod takes on its LAN port) to the pod over its
+// cloud link and returns the pod's reply. timeout is how long the server waits for the pod (0 =
+// the server's default, 30 s; the server caps it at 120 s). Failures before the pod answered come
+// back as *APIError with the server's code in Code: lease_held, device_offline, device_timeout,
+// not_capable, forbidden_tier, ...
+func (c *Client) DeviceCommand(ctx context.Context, accessToken, deviceID string, command map[string]any, timeout time.Duration) (*CommandResponse, error) {
+	id := strings.TrimSpace(deviceID)
+	if id == "" {
+		return nil, errors.New("serverapi: device id is empty")
+	}
+	body := struct {
+		Command   map[string]any `json:"command"`
+		TimeoutMs int            `json:"timeout_ms,omitempty"`
+	}{Command: command, TimeoutMs: int(timeout / time.Millisecond)}
+	var out CommandResponse
+	if err := c.doAuthedJSON(ctx, http.MethodPost, "/api/benchpod/devices/"+url.PathEscape(id)+"/command",
+		accessToken, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }

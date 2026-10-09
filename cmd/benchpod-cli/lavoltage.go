@@ -33,7 +33,8 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 			"I2C-sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
 			"VOLTAGE is 1.8V or 3.3V (also 1800mV, 3.3, or 3300). Omit it to show the\n" +
-			"current setting. Works over the network and over USB (--connection usb).\n\n" +
+			"current setting. Works over the network, over USB (--connection usb) and through\n" +
+			"embeddedci.com (--connection embeddedci:<name>).\n\n" +
 			"The pod forgets the voltage on a restart. When this machine is signed in\n" +
 			"(`benchpod login`) and the pod is registered to that account, setting it over\n" +
 			"the network or embeddedci.com also saves it to the pod's wiring profile on\n" +
@@ -116,28 +117,19 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 // account, so its wiring profile can be written; "" otherwise (also over USB, and whenever it
 // cannot tell). It never prompts or fails. A variable so tests can replace it.
 var accountDeviceForConnection = func(g *globalFlags) string {
-	if who, _ := currentSession("", ""); who == "" {
-		return ""
-	}
-	spec, err := g.resolveConnection()
+	spec, err := g.resolveTarget()
 	if err != nil || spec.IsSerial() {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	raw, err := (&tcpclient.Client{Addr: spec.Addr}).Command(ctx, map[string]any{"cmd": "cloud_status"})
+	api := serverapi.New(cloudServerURL())
+	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		return ""
 	}
-	var c cloudState
-	if json.Unmarshal(raw, &c) != nil || !c.Configured {
-		return ""
-	}
-	id := strings.TrimSpace(c.DeviceID)
-	if id == "" {
-		return ""
-	}
-	if _, ok := accountDevices()[id]; !ok {
+	id, err := cloudDeviceID(ctx, api, cred, spec)
+	if err != nil {
 		return ""
 	}
 	return id
@@ -147,25 +139,22 @@ var accountDeviceForConnection = func(g *globalFlags) string {
 // on embeddedci.com (read-modify-write: every other field is kept). changed is false when the
 // profile already had it. A variable so tests can replace it.
 var saveLaMVToProfile = func(deviceID string, mv int) (changed bool, err error) {
-	tokenPath, err := resolveTokenPath("")
-	if err != nil {
-		return false, err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	api := serverapi.New(defaultServerURL)
-	tokens, err := ensureTokens(ctx, api, tokenPath)
+	api := serverapi.New(cloudServerURL())
+	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		return false, fmt.Errorf("sign in: %w", err)
 	}
-	return api.SetDeviceWiringLaMV(ctx, tokens.AccessToken, deviceID, mv)
+	return api.SetDeviceWiringLaMV(ctx, cred, deviceID, mv)
 }
 
-// laVoltageDo shows (mv 0) or sets the LA voltage over the effective connection, network or
-// USB, and returns a label for the pod plus its reply. Shared by la voltage, status and setup.
+// laVoltageDo shows (mv 0) or sets the LA voltage over the effective connection (network, USB
+// or embeddedci.com) and returns a label for the pod plus its reply. Shared by la voltage, status
+// and setup.
 func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
 	what := "la voltage"
-	spec, err := g.resolveConnection()
+	spec, err := g.resolveTarget()
 	if err != nil {
 		return "", laVoltageReply{}, err
 	}
@@ -183,18 +172,20 @@ func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
 		}
 		return "the pod on " + path, rep, nil
 	}
-	ctx, cancel, client, err := g.wifiClient(what, 15*time.Second)
+	ctx, cancel, pod, err := g.podClient(what, 15*time.Second)
 	if err != nil {
 		return "", rep, err
 	}
 	defer cancel()
-	if rep, err = laVoltageLAN(ctx, client, mv); err != nil {
+	if rep, err = laVoltageLAN(ctx, pod.client, mv); err != nil {
 		return "", rep, laVoltageError(what, err)
 	}
-	return spec.Addr, rep, nil
+	return pod.label, rep, nil
 }
 
-func laVoltageLAN(ctx context.Context, client *tcpclient.Client, mv int) (laVoltageReply, error) {
+// laVoltageLAN runs la_voltage as a JSON command, on the pod's network port or through
+// embeddedci.com.
+func laVoltageLAN(ctx context.Context, client podCommander, mv int) (laVoltageReply, error) {
 	req := map[string]any{"cmd": "la_voltage"}
 	if mv != 0 {
 		req["mv"] = mv

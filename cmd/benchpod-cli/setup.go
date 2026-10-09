@@ -515,7 +515,7 @@ func (e *realSetupEnv) find() ([]setupPod, error) {
 		if err != nil {
 			return nil, err
 		}
-		if spec.IsWifi() {
+		if spec.IsNetwork() {
 			dp := discoveredPod{addr: spec.Addr}
 			checkPod(&dp)
 			if !dp.reachable {
