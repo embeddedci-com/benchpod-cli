@@ -134,7 +134,7 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	log.Printf("auth: signed in as user %s", tokens.UserID)
+	log.Printf("auth: signed in as %s", tokens.Who())
 
 	client := &tcpclient.Client{Addr: addr}
 

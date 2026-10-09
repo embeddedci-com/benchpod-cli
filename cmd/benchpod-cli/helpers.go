@@ -322,26 +322,33 @@ func ensureTokens(ctx context.Context, api *serverapi.Client, tokenPath string) 
 	if err != nil {
 		return nil, fmt.Errorf("refresh token failed (%v); run `benchpod login` again", err)
 	}
-	saved, err := saveTokensFromResponse(tokenPath, resp, existing.SessionID, existing.UserID)
+	saved, err := saveTokensFromResponse(tokenPath, resp, existing)
 	if err != nil {
 		return nil, err
 	}
 	return saved, nil
 }
 
-func saveTokensFromResponse(path string, resp *serverapi.TokenResponse, fallbackSessionID, fallbackUserID string) (*authstore.Tokens, error) {
+// saveTokensFromResponse stores a token response. Identity fields the response
+// omits (an older server sends no email) are kept from prev, the tokens being
+// refreshed, when there are any.
+func saveTokensFromResponse(path string, resp *serverapi.TokenResponse, prev *authstore.Tokens) (*authstore.Tokens, error) {
 	if resp == nil {
 		return nil, errors.New("nil response")
 	}
+	if prev == nil {
+		prev = &authstore.Tokens{}
+	}
 	now := time.Now()
-	sessionID := strings.TrimSpace(resp.SessionID)
-	if sessionID == "" {
-		sessionID = fallbackSessionID
+	pick := func(v, fallback string) string {
+		if v = strings.TrimSpace(v); v != "" {
+			return v
+		}
+		return fallback
 	}
-	userID := strings.TrimSpace(resp.UserID)
-	if userID == "" {
-		userID = fallbackUserID
-	}
+	sessionID := pick(resp.SessionID, prev.SessionID)
+	userID := pick(resp.UserID, prev.UserID)
+	email := pick(resp.Email, prev.Email)
 	t := &authstore.Tokens{
 		AccessToken:      resp.AccessToken,
 		RefreshToken:     resp.RefreshToken,
@@ -349,6 +356,7 @@ func saveTokensFromResponse(path string, resp *serverapi.TokenResponse, fallback
 		RefreshExpiresAt: now.Add(time.Duration(resp.RefreshExpiresIn) * time.Second),
 		SessionID:        sessionID,
 		UserID:           userID,
+		Email:            email,
 	}
 	if err := authstore.Save(path, t); err != nil {
 		return nil, fmt.Errorf("save tokens to %s: %w", path, err)

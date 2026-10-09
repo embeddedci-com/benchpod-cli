@@ -99,7 +99,7 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	log.Printf("auth: signed in as user %s", tokens.UserID)
+	log.Printf("auth: signed in as %s", tokens.Who())
 
 	target := deviceID
 	label := deviceID

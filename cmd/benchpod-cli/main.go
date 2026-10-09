@@ -5,18 +5,17 @@
 //
 //	--connection 192.168.1.5[:8080]   TCP/JSON API (an address ⇒ wifi).
 //	--connection /dev/tty... | COM3   USB serial console, explicit device.
-//	--connection serial               USB serial console, auto-detected (USB VID 2E8A).
+//	--connection usb                  USB serial console, auto-detected.
 //	(omitted)                         the default saved by `benchpod set-connection`.
 //
-// The firmware itself is unauthenticated; the `login` subcommand is independent
-// of the device path and authenticates with embeddedci-server (device-login
-// flow) for the future cloud features. Direct firmware commands do not send
-// tokens.
+// The firmware itself is unauthenticated; `login` authenticates with
+// embeddedci-server (device-login flow) for register, deregister and the cloud
+// policy commands. Direct firmware commands do not send tokens.
 //
-// Only `flash` (SWD) is implemented over the serial console today; the other
-// TCP/JSON commands reject a serial connection with a clear message. The
-// set/show/clear-wifi and bootsel subcommands always use the serial console
-// regardless of --connection (a device path still selects the port).
+// Over USB, status, la voltage, flash (SWD) and the policy/cloud-link settings
+// work; set-wifi, show-network, clear-wifi, identity, install-blobs, bootsel and
+// dfu always use the USB console. The other commands need the network. The root
+// command's help is the user-facing version of this.
 package main
 
 import "os"

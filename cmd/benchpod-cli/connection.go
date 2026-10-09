@@ -74,7 +74,9 @@ func classifyConnection(raw string) (ConnSpec, error) {
 func parseTarget(raw string) (ConnSpec, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return ConnSpec{}, fmt.Errorf("no connection set; pass --connection <addr|device|usb> or run `benchpod set-connection <addr|device|usb>`")
+		return ConnSpec{}, errors.New("no connection set. Run `benchpod discover --save` to find the pod and save it as the default " +
+			"(or `benchpod setup` for the guided first-time setup), or pass --connection <addr|device|usb>, " +
+			"or save one with `benchpod set-connection <addr|device|usb>`")
 	}
 	switch strings.ToLower(raw) {
 	// "usb" is the name this keyword goes by everywhere the CLI speaks to a

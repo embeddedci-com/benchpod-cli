@@ -44,19 +44,19 @@ func newRootCmd() *cobra.Command {
 		Version: version,
 		Short:   "EmbeddedCI bench pod CLI",
 		Long: "EmbeddedCI bench pod CLI.\n\n" +
-			"--connection says where and how to reach the bench pod, and the transport\n" +
-			"is inferred from its value: an address (192.168.1.5[:8080]) uses the TCP/JSON\n" +
-			"API; a device path (/dev/tty..., COM3) or the keyword `usb` uses the pod's\n" +
-			"USB console. Omit it to use the default saved by `benchpod set-connection`.\n" +
+			"New pod? Run `benchpod setup`: it finds the pod, gets it on the network, sets\n" +
+			"the board I/O voltage, registers it with embeddedci.com and saves the connection.\n\n" +
+			"--connection says where and how to reach the pod; the transport follows from\n" +
+			"its value. An address (192.168.1.5[:8080]) uses the network (TCP/JSON) API; a\n" +
+			"device path (/dev/tty..., COM3) or `usb` uses the pod's USB console. Omit it to\n" +
+			"use the default saved by `benchpod discover --save` or `benchpod set-connection`.\n" +
 			"`embeddedci:<name>` names a pod on embeddedci.com: lan-policy, sig-policy and\n" +
-			"deregister take it; the other commands need the network or USB.\n" +
-			"Over USB, `flash` (SWD), `status`, `la voltage`, `lan-policy`, `sig-policy`,\n" +
-			"`cloud ca` and `cloud proxy` work; the other network commands refuse a USB\n" +
-			"connection. `identity`, `install-blobs`, `set-wifi`, `show-network`,\n" +
-			"`clear-wifi`, `bootsel` and `dfu` always use the USB console. `flash-self`\n" +
-			"reflashes the pod's own firmware over USB DFU (STM32) via dfu-util, independent\n" +
-			"of --connection. `lan-policy` and `sig-policy` also work over embeddedci.com\n" +
-			"with --device-name.\n\n" +
+			"deregister take it.\n\n" +
+			"Over the network or USB: status, la voltage, flash (SWD), lan-policy,\n" +
+			"sig-policy, cloud ca and cloud proxy. Always over the USB console: set-wifi,\n" +
+			"show-network, clear-wifi, identity, install-blobs, bootsel and dfu; flash-self\n" +
+			"reflashes the pod over USB DFU. Every other pod command needs the network and\n" +
+			"refuses a USB connection.\n\n" +
 			exitCodesHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -84,35 +84,35 @@ func newRootCmd() *cobra.Command {
 		_ = viper.BindPFlag(name, pf.Lookup(name))
 	}
 
-	root.AddCommand(
-		newLoginCmd(g),
-		newLogoutCmd(g),
-		newRegisterCmd(g),
-		newDeregisterCmd(g),
-		newSetConnectionCmd(g),
-		newDiscoverCmd(g),
-		newPingCmd(g),
-		newStatusCmd(g),
-		newGenerateCmd(g),
-		newCaptureCmd(g),
-		newStreamCmd(g),
-		newMeasureCmd(g),
-		newTestCmd(g),
-		newLACmd(g),
-		newFlashCmd(g),
-		newFlashSelfCmd(g),
-		newInstallBlobsCmd(g),
-		newSPIFlashCmd(g),
-		newSetWifiCmd(g),
-		newShowNetworkCmd(g),
-		newClearWifiCmd(g),
-		newBootselCmd(g),
-		newDfuCmd(g),
-		newLanPolicyCmd(g),
-		newSigPolicyCmd(g),
-		newIdentityCmd(g),
-		newCloudCmd(g),
-	)
+	// Commands are grouped in the help by what they act on.
+	groups := []struct {
+		id, title string
+		cmds      []*cobra.Command
+	}{
+		{"setup", "Setup:", []*cobra.Command{
+			newSetupCmd(g), newDiscoverCmd(g), newSetConnectionCmd(g),
+			newSetWifiCmd(g), newShowNetworkCmd(g), newClearWifiCmd(g),
+		}},
+		{"pod", "The pod:", []*cobra.Command{
+			newStatusCmd(g), newPingCmd(g), newLACmd(g), newIdentityCmd(g),
+			newFlashSelfCmd(g), newInstallBlobsCmd(g), newBootselCmd(g), newDfuCmd(g),
+			newLanPolicyCmd(g), newSigPolicyCmd(g),
+		}},
+		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{
+			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),
+			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g),
+		}},
+		{"cloud", "embeddedci.com:", []*cobra.Command{
+			newLoginCmd(g), newLogoutCmd(g), newRegisterCmd(g), newDeregisterCmd(g), newCloudCmd(g),
+		}},
+	}
+	for _, grp := range groups {
+		root.AddGroup(&cobra.Group{ID: grp.id, Title: grp.title})
+		for _, c := range grp.cmds {
+			c.GroupID = grp.id
+			root.AddCommand(c)
+		}
+	}
 	return root
 }
 

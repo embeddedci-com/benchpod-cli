@@ -36,55 +36,8 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("set-wifi: %w", err)
 			}
-			// wifi-set runs the full reconnect ladder on the device: probe the
-			// internal modem (with an EN-reset retry), then the external GPIO40/41
-			// modem, then AT+CWJAP (up to ~15s) and TCP bring-up. That can take
-			// ~40s, so wait generously — the command returns as soon as the prompt
-			// reappears, this is only the upper bound. Override with --timeout.
-			console, path, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(90*time.Second))
-			if err != nil {
-				return err
-			}
-			defer cancel()
-			defer console.Close()
-
-			// Wi-Fi runs on the ESP32-C3, whose image the pod keeps in its W25Q: a pod without
-			// it (fresh board, no network) can only get it over this cable.
-			if !skipBlobs {
-				if err := ensureEspBlob(console); err != nil {
-					return fmt.Errorf("set-wifi: %w", err)
-				}
-			}
-
-			res, err := console.WifiSet(ctx, ssid, pw)
-			// Echo the firmware's WiFi/TCP/ESP32 bring-up lines (incl. the
-			// "[wifi] connected  ip=<ip>" result) so the IP is visible — even
-			// when the join didn't confirm.
-			for _, line := range serialconsole.BringupLines(res.Raw) {
-				fmt.Fprintf(os.Stderr, "  %s\n", line)
-			}
-			if err != nil {
-				return fmt.Errorf("set-wifi: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Wrote WiFi credentials for SSID %q via %s.\n", ssid, path)
-
-			// Read the authoritative state back with wifi-show: the reconnect's
-			// "[wifi] connected ip=" line can be lost in the device's non-blocking
-			// USB console output, so don't rely on it alone to report the result.
-			st, _ := console.WifiShow(ctx)
-			ip := st.IP
-			if ip == "" {
-				ip = res.IP
-			}
-			state := strings.ToLower(st.State)
-			joined := res.Joined || ip != "" && ip != "(none)" ||
-				strings.Contains(state, "ready") || strings.Contains(state, "connected")
-			if joined {
-				fmt.Fprintf(os.Stderr, "Joined %q, ip=%s\n", ssid, valueOrDash(ip))
-			} else {
-				fmt.Fprintln(os.Stderr, "Credentials saved; join not confirmed (run `benchpod show-network`).")
-			}
-			return nil
+			_, err = runSetWifi(g, ssid, pw, skipBlobs)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&ssid, "ssid", "", "WiFi SSID (required)")
@@ -92,6 +45,63 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the WiFi password from the first line of stdin")
 	cmd.Flags().BoolVar(&skipBlobs, "skip-blobs", false, "do not install a missing ESP32-C3 image first")
 	return cmd
+}
+
+// runSetWifi saves Wi-Fi credentials over the USB console and joins, returning the pod's
+// address when the join is confirmed ("" when it is not). Shared by set-wifi and setup.
+func runSetWifi(g *globalFlags, ssid, pw string, skipBlobs bool) (string, error) {
+	// wifi-set runs the full reconnect ladder on the device: probe the
+	// internal modem (with an EN-reset retry), then the external GPIO40/41
+	// modem, then AT+CWJAP (up to ~15s) and TCP bring-up. That can take
+	// ~40s, so wait generously — the command returns as soon as the prompt
+	// reappears, this is only the upper bound. Override with --timeout.
+	console, path, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(90*time.Second))
+	if err != nil {
+		return "", err
+	}
+	defer cancel()
+	defer console.Close()
+
+	// Wi-Fi runs on the ESP32-C3, whose image the pod keeps in its W25Q: a pod without
+	// it (fresh board, no network) can only get it over this cable.
+	if !skipBlobs {
+		if err := ensureEspBlob(console); err != nil {
+			return "", fmt.Errorf("set-wifi: %w", err)
+		}
+	}
+
+	res, err := console.WifiSet(ctx, ssid, pw)
+	// Echo the firmware's WiFi/TCP/ESP32 bring-up lines (incl. the
+	// "[wifi] connected  ip=<ip>" result) so the IP is visible — even
+	// when the join didn't confirm.
+	for _, line := range serialconsole.BringupLines(res.Raw) {
+		fmt.Fprintf(os.Stderr, "  %s\n", line)
+	}
+	if err != nil {
+		return "", fmt.Errorf("set-wifi: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Wrote WiFi credentials for SSID %q via %s.\n", ssid, path)
+
+	// Read the authoritative state back with wifi-show: the reconnect's
+	// "[wifi] connected ip=" line can be lost in the device's non-blocking
+	// USB console output, so don't rely on it alone to report the result.
+	st, _ := console.WifiShow(ctx)
+	ip := st.IP
+	if ip == "" {
+		ip = res.IP
+	}
+	state := strings.ToLower(st.State)
+	joined := res.Joined || ip != "" && ip != "(none)" ||
+		strings.Contains(state, "ready") || strings.Contains(state, "connected")
+	if !joined {
+		fmt.Fprintln(os.Stderr, "Credentials saved; join not confirmed (run `benchpod show-network`).")
+		return "", nil
+	}
+	fmt.Fprintf(os.Stderr, "Joined %q, ip=%s\n", ssid, valueOrDash(ip))
+	if ip == "(none)" || ip == "0.0.0.0" {
+		ip = ""
+	}
+	return ip, nil
 }
 
 // ensureEspBlob installs the blobs from the pod's firmware release when its ESP32-C3 slot is

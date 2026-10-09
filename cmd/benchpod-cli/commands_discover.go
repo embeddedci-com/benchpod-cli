@@ -186,16 +186,19 @@ func checkPod(p *discoveredPod) {
 }
 
 // correlate marks each network pod that is the same physical device as one of
-// the pods found over USB, matched on the address the pod reports for itself.
-// Without this a single pod plugged in and on the LAN reads as two.
+// the pods found over USB, matched on the address the pod reports for itself or,
+// for a registered pod, on its cloud device id. The id catches a pod on Ethernet
+// and Wi-Fi at once, whose USB console reports one address while mDNS answers on
+// the other. Without this a single pod plugged in and on the LAN reads as two.
 func correlate(netPods []discoveredPod, serialPods []serialconsole.SerialPod) {
 	for i := range netPods {
 		host, _, err := net.SplitHostPort(netPods[i].addr)
 		if err != nil {
 			host = netPods[i].addr
 		}
+		id := strings.TrimSpace(netPods[i].cloud.DeviceID)
 		for _, sp := range serialPods {
-			if sp.Addressed() && sp.IP == host {
+			if (sp.Addressed() && sp.IP == host) || (id != "" && strings.TrimSpace(sp.DeviceID) == id) {
 				netPods[i].sameAs = sp.Device
 				break
 			}
@@ -532,6 +535,13 @@ func signedInAccountDevices(serialPods []serialconsole.SerialPod, netPods []disc
 	if !registered {
 		return nil
 	}
+	return accountDevices()
+}
+
+// accountDevices lists the devices on the account this machine is signed in to, by id, or nil
+// when there is no usable session or the server could not be asked. It never prompts. A variable
+// so tests can replace it.
+var accountDevices = func() map[string]string {
 	tokenPath, err := resolveTokenPath("")
 	if err != nil {
 		return nil

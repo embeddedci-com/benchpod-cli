@@ -30,6 +30,15 @@ func TestCorrelateMatchesSamePodOnBothTransports(t *testing.T) {
 	}
 }
 
+func TestCorrelateMatchesADualHomedPodByDeviceID(t *testing.T) {
+	// On Ethernet and Wi-Fi at once: USB reports one address, mDNS answers on the other.
+	netPods := []discoveredPod{{addr: "192.168.1.221:8080", cloud: cloudState{known: true, Configured: true, DeviceID: "dev-1"}}}
+	correlate(netPods, []serialconsole.SerialPod{{Device: "/dev/ttyACM0", IP: "192.168.1.220", DeviceID: "dev-1"}})
+	if netPods[0].sameAs != "/dev/ttyACM0" {
+		t.Fatalf("got %q", netPods[0].sameAs)
+	}
+}
+
 func TestCorrelateIgnoresUnaddressedSerialPod(t *testing.T) {
 	// A pod with no lease reports 0.0.0.0; it must never match a network entry,
 	// which would otherwise collapse two distinct pods into one.

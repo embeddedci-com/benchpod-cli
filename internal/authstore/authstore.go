@@ -25,6 +25,21 @@ type Tokens struct {
 	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
 	SessionID        string    `json:"session_id"`
 	UserID           string    `json:"user_id"`
+	// Email is the account's address, when the server reported it (older servers and
+	// token files written before it was added have none).
+	Email string `json:"email,omitempty"`
+}
+
+// Who names the signed-in account for messages: the email address when known, else
+// the user id, else "".
+func (t *Tokens) Who() string {
+	if t == nil {
+		return ""
+	}
+	if t.Email != "" {
+		return t.Email
+	}
+	return t.UserID
 }
 
 // DefaultPath returns the canonical token file path, honouring $XDG_CONFIG_HOME first and

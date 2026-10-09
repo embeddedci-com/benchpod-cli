@@ -50,66 +50,6 @@ func newPingCmd(g *globalFlags) *cobra.Command {
 	}
 }
 
-// ── status ───────────────────────────────────────────────────────────────────
-
-func newStatusCmd(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
-		Use:   "status",
-		Short: "Firmware / network info (network: JSON over TCP; USB: `status` console text)",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			spec, err := g.resolveConnection()
-			if err != nil {
-				return err
-			}
-			if spec.IsSerial() {
-				return runStatusSerial(g, spec.Device)
-			}
-
-			ctx, cancel, client, err := g.wifiClient("status", 30*time.Second)
-			if err != nil {
-				return err
-			}
-			defer cancel()
-
-			data, err := client.Command(ctx, map[string]any{"cmd": "status"})
-			if err != nil {
-				return fmt.Errorf("status: %w", err)
-			}
-			out, closeOut, err := resolveOutput(g.outputFilename)
-			if err != nil {
-				return fmt.Errorf("status: open output: %w", err)
-			}
-			defer closeOut()
-			printJSON(out, data)
-			return nil
-		},
-	}
-}
-
-// runStatusSerial runs the firmware's `status` command over the USB serial
-// console and prints its (plain-text) output.
-func runStatusSerial(g *globalFlags, device string) error {
-	console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(15*time.Second))
-	if err != nil {
-		return err
-	}
-	defer cancel()
-	defer console.Close()
-
-	text, err := console.Status(ctx)
-	if err != nil {
-		return fmt.Errorf("status: %w", err)
-	}
-	out, closeOut, err := resolveOutput(g.outputFilename)
-	if err != nil {
-		return fmt.Errorf("status: open output: %w", err)
-	}
-	defer closeOut()
-	fmt.Fprintln(out, text)
-	return nil
-}
-
 // ── generate ─────────────────────────────────────────────────────────────────
 
 func newGenerateCmd(g *globalFlags) *cobra.Command {

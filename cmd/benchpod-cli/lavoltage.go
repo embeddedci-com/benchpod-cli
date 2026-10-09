@@ -75,37 +75,10 @@ type laVoltageReply struct {
 }
 
 func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
-	what := "la voltage"
-	spec, err := g.resolveConnection()
+	label, rep, err := laVoltageDo(g, mv)
 	if err != nil {
 		return err
 	}
-	var label string
-	var rep laVoltageReply
-	if spec.IsSerial() {
-		console, path, ctx, cancel, err := openLAVoltageConsole(g, spec.Device, g.effectiveTimeout(15*time.Second))
-		if err != nil {
-			return err
-		}
-		defer cancel()
-		defer console.Close()
-		label = "the pod on " + path
-		rep.MV, err = console.LAVoltage(ctx, mv)
-		if err != nil {
-			return laVoltageError(what, err)
-		}
-	} else {
-		ctx, cancel, client, err := g.wifiClient(what, 15*time.Second)
-		if err != nil {
-			return err
-		}
-		defer cancel()
-		label = spec.Addr
-		if rep, err = laVoltageLAN(ctx, client, mv); err != nil {
-			return laVoltageError(what, err)
-		}
-	}
-
 	verb := ":"
 	if mv != 0 {
 		verb = " is now"
@@ -119,6 +92,39 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 		fmt.Fprintf(warn, "Warning: the bank's power mux reports %s, not %s\n", formatMV(rep.ReadbackMV), formatMV(rep.MV))
 	}
 	return nil
+}
+
+// laVoltageDo shows (mv 0) or sets the LA voltage over the effective connection, network or
+// USB, and returns a label for the pod plus its reply. Shared by la voltage, status and setup.
+func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
+	what := "la voltage"
+	spec, err := g.resolveConnection()
+	if err != nil {
+		return "", laVoltageReply{}, err
+	}
+	var rep laVoltageReply
+	if spec.IsSerial() {
+		console, path, ctx, cancel, err := openLAVoltageConsole(g, spec.Device, g.effectiveTimeout(15*time.Second))
+		if err != nil {
+			return "", rep, err
+		}
+		defer cancel()
+		defer console.Close()
+		rep.MV, err = console.LAVoltage(ctx, mv)
+		if err != nil {
+			return "", rep, laVoltageError(what, err)
+		}
+		return "the pod on " + path, rep, nil
+	}
+	ctx, cancel, client, err := g.wifiClient(what, 15*time.Second)
+	if err != nil {
+		return "", rep, err
+	}
+	defer cancel()
+	if rep, err = laVoltageLAN(ctx, client, mv); err != nil {
+		return "", rep, laVoltageError(what, err)
+	}
+	return spec.Addr, rep, nil
 }
 
 func laVoltageLAN(ctx context.Context, client *tcpclient.Client, mv int) (laVoltageReply, error) {
