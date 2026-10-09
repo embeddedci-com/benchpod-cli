@@ -471,7 +471,10 @@ file, so later commands can leave out `--connection`. No flags.
 ### `benchpod discover`
 
 Find every pod on USB and on the LAN (mDNS), check each one answers its API, and
-report whether it is registered.
+report whether it is registered. When this machine is signed in (`benchpod login`),
+a registered pod is also checked against that account: discover names it when it is
+yours, and says so when it is registered to a different account (usually a second
+account; a pod set up for you is on the account your activation email was sent to).
 
 | Flag              | Default | Purpose                                                         |
 |-------------------|---------|-----------------------------------------------------------------|

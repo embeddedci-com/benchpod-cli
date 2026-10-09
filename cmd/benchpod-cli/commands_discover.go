@@ -17,6 +17,7 @@ import (
 
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
@@ -27,6 +28,10 @@ import (
 const (
 	mdnsService = "_benchpod._tcp"
 	mdnsDomain  = "local."
+
+	// defaultServerURL is where discover looks up the signed-in account's devices; the same
+	// default as the --server-url of login and register.
+	defaultServerURL = "https://www.embeddedci.com"
 )
 
 // discoveredPod is one pod heard on the LAN, flattened from a zeroconf entry.
@@ -64,13 +69,15 @@ func newDiscoverCmd(g *globalFlags) *cobra.Command {
 		Short: "Find every BenchPod on this machine and this LAN, and report whether each one works",
 		Long: "Answer two questions in one command: can a BenchPod be found, and is it working?\n\n" +
 			"discover looks in both places a pod can be:\n" +
-			"  • USB   — every USB port is probed for a bench-pod console, which is how\n" +
-			"            a pod is found before it has any network at all.\n" +
-			"  • LAN   — mDNS/DNS-SD browsing for pods advertising " + mdnsService + ".\n\n" +
+			"  • USB: every USB port is probed for a bench-pod console, which is how\n" +
+			"    a pod is found before it has any network at all.\n" +
+			"  • LAN: mDNS/DNS-SD browsing for pods advertising " + mdnsService + ".\n\n" +
 			"Each pod found on the network is then checked over its TCP/JSON API, so the\n" +
 			"report says whether the pod answers commands and whether it is registered\n" +
-			"with the cloud — not merely that something replied to a broadcast. When a pod\n" +
-			"is reachable both ways the two entries are matched up as one physical pod.\n\n" +
+			"with the cloud, not merely that something replied to a broadcast. When a pod\n" +
+			"is reachable both ways the two entries are matched up as one physical pod.\n" +
+			"When this machine is signed in (`benchpod login`), a registered pod is also\n" +
+			"checked against that account, so a pod on another account is called out.\n\n" +
 			"With --save and exactly one pod present, its address is stored as the default\n" +
 			"connection (like set-connection), preferring the network address.\n\n" +
 			"mDNS is link-local: it works on a flat bench/office subnet but does not cross\n" +
@@ -133,6 +140,7 @@ func runDiscover(g *globalFlags, o discoverOpts) error {
 	}
 
 	printReport(reportInput{
+		account:    signedInAccountDevices(serialPods, netPods),
 		opts:       o,
 		serialPods: serialPods,
 		skipped:    skipped,
@@ -317,6 +325,10 @@ type reportInput struct {
 	serialErr  error
 	netPods    []discoveredPod
 	netErr     error
+	// account lists the devices on the account this machine is signed in to (`benchpod login`),
+	// by id. nil when there is no usable session or the server could not be asked, in which case
+	// the verdict says nothing about whose account a registered pod is on.
+	account map[string]string
 }
 
 // printReport writes the whole picture to stdout: what was found over USB, what
@@ -382,7 +394,7 @@ func printVerdict(out *os.File, in reportInput) {
 			fmt.Fprintln(out, "    latest release over USB DFU with `benchpod flash-self`.")
 		}
 		if in.opts.network {
-			fmt.Fprintln(out, "  • mDNS does not cross routers/VLANs and is usually blocked on CI runners —")
+			fmt.Fprintln(out, "  • mDNS does not cross routers/VLANs and is usually blocked on CI runners;")
 			fmt.Fprintln(out, "    reach a pod you know the address of with `--connection <ip>`.")
 		}
 		if !in.opts.usb {
@@ -428,6 +440,7 @@ func printVerdict(out *os.File, in reportInput) {
 // answered neither transport), because silence is honest and a guess is not.
 func printRegistrationVerdict(out *os.File, in reportInput) {
 	registered, unregistered := 0, 0
+	var deviceIDs []string
 	for _, p := range in.serialPods {
 		// Skip a pod that also appeared on the network: the network entry is counted below and
 		// carries the live cloud state, so counting both would double one physical pod.
@@ -436,6 +449,7 @@ func printRegistrationVerdict(out *os.File, in reportInput) {
 		}
 		if p.Registered {
 			registered++
+			deviceIDs = append(deviceIDs, strings.TrimSpace(p.DeviceID))
 		} else {
 			unregistered++
 		}
@@ -446,25 +460,101 @@ func printRegistrationVerdict(out *os.File, in reportInput) {
 		}
 		if p.cloud.Configured {
 			registered++
+			deviceIDs = append(deviceIDs, strings.TrimSpace(p.cloud.DeviceID))
 		} else {
 			unregistered++
 		}
 	}
 
+	// Whose account is a registered pod on? Only answerable with a session and a device id. A pod
+	// on another account is the classic "I signed up again with another address" mistake, and it
+	// looks exactly like a missing pod on the BenchPod page, so it gets its own advice.
+	var mine []string
+	foreign := 0
+	if in.account != nil {
+		for _, id := range deviceIDs {
+			if id == "" {
+				continue
+			}
+			if name, ok := in.account[id]; ok {
+				mine = append(mine, name)
+			} else {
+				foreign++
+			}
+		}
+	}
+
 	switch {
+	case foreign > 0:
+		fmt.Fprintln(out, "\nRegistered to a different embeddedci.com account than the one this machine is")
+		fmt.Fprintln(out, "signed in to. If the pod was set up for you, sign in with the address your")
+		fmt.Fprintln(out, "activation email was sent to:")
+		fmt.Fprintln(out, "  benchpod login --force")
+		fmt.Fprintln(out, "A new account does not get the pod: it stays on the account it is registered to.")
+	case registered > 0 && unregistered == 0 && len(mine) == registered:
+		name := "<name>"
+		if len(mine) == 1 {
+			name = mine[0]
+			fmt.Fprintf(out, "\nRegistered to your account as %s: nothing to set up on the pod itself.\n", name)
+		} else {
+			fmt.Fprintf(out, "\nRegistered to your account (%s): nothing to set up on the pods themselves.\n", strings.Join(mine, ", "))
+		}
+		fmt.Fprintf(out, "Tests address it by name: `pytest --benchpod-connection=embeddedci:%s`.\n", name)
 	case registered > 0 && unregistered == 0:
-		fmt.Fprintf(out, "\nAlready registered — nothing to set up on the pod itself.\n"+
-			"Sign in at https://www.embeddedci.com and it will be on your BenchPod page.\n"+
+		fmt.Fprintf(out, "\nAlready registered: nothing to set up on the pod itself.\n"+
+			"It is on the embeddedci.com account it was registered to. If it was set up for you,\n"+
+			"sign in at https://www.embeddedci.com with the address your activation email was\n"+
+			"sent to, and it is on your BenchPod page. Don't sign up again with another address.\n"+
 			"Tests address it by name: `pytest --benchpod-connection=embeddedci:<name>`.\n")
 	case unregistered > 0 && registered == 0:
 		fmt.Fprintln(out, "\nNot registered yet. To drive this pod through embeddedci.com (and from CI):")
 		fmt.Fprintln(out, "  benchpod login       # authenticate this machine")
 		fmt.Fprintln(out, "  benchpod register    # claim the pod into your account")
-		fmt.Fprintln(out, "Or skip both and address the pod directly by IP — no account needed.")
+		fmt.Fprintln(out, "Or skip both and address the pod directly by IP. No account needed.")
 	case registered > 0 && unregistered > 0:
 		fmt.Fprintf(out, "\n%d registered, %d not. `benchpod register --connection <ip>` claims the\n"+
 			"unregistered one; the registered one needs nothing.\n", registered, unregistered)
 	}
+}
+
+// signedInAccountDevices returns the devices on the account this machine is signed in to, by id,
+// when a registered pod was found and a `benchpod login` session exists. It never prompts and
+// never fails discover: no session, an expired one or an unreachable server all return nil, and
+// the verdict then simply does not say whose account the pod is on.
+func signedInAccountDevices(serialPods []serialconsole.SerialPod, netPods []discoveredPod) map[string]string {
+	registered := false
+	for _, p := range serialPods {
+		registered = registered || (p.Registered && strings.TrimSpace(p.DeviceID) != "")
+	}
+	for _, p := range netPods {
+		registered = registered || (p.cloud.Configured && strings.TrimSpace(p.cloud.DeviceID) != "")
+	}
+	if !registered {
+		return nil
+	}
+	tokenPath, err := resolveTokenPath("")
+	if err != nil {
+		return nil
+	}
+	if _, err := os.Stat(tokenPath); err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	api := serverapi.New(defaultServerURL)
+	tokens, err := ensureTokens(ctx, api, tokenPath)
+	if err != nil {
+		return nil
+	}
+	devices, err := api.ListDevices(ctx, tokens.AccessToken)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(devices))
+	for _, d := range devices {
+		out[d.ID] = d.Name
+	}
+	return out
 }
 
 // serialPodAlsoOnNetwork reports whether this USB pod is the same physical pod as one of the

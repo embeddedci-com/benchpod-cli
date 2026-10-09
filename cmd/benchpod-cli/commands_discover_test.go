@@ -215,6 +215,61 @@ func TestRegistrationVerdict_SamePodOnBothTransportsCountsOnce(t *testing.T) {
 	}
 }
 
+// Signed in to the account the pod is on: say so, with the pod's name in the pytest line.
+func TestRegistrationVerdict_OnSignedInAccountNamesThePod(t *testing.T) {
+	got := captureRegistrationVerdict(t, reportInput{
+		netPods: []discoveredPod{{
+			instance:  "BenchPod a1b2c3",
+			reachable: true,
+			cloud:     cloudState{known: true, Configured: true, State: "connected", DeviceID: "dev-1"},
+		}},
+		account: map[string]string{"dev-1": "bench-01"},
+	})
+	for _, want := range []string{"Registered to your account as bench-01", "embeddedci:bench-01"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("verdict is missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// Signed in to another account than the pod's: the "I signed up twice" case. The pod looks
+// missing on the BenchPod page, so discover must say why and how to switch.
+func TestRegistrationVerdict_OnAnotherAccountSaysSo(t *testing.T) {
+	got := captureRegistrationVerdict(t, reportInput{
+		serialPods: []serialconsole.SerialPod{{
+			Device:     "/dev/cu.usbmodem1103",
+			CloudKnown: true,
+			Registered: true,
+			DeviceID:   "dev-1",
+		}},
+		account: map[string]string{"dev-2": "someone-elses"},
+	})
+	for _, want := range []string{"different embeddedci.com account", "benchpod login --force"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("verdict is missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Registered to your account") {
+		t.Fatalf("a pod on another account was reported as ours:\n%s", got)
+	}
+}
+
+// A pod that does not report its device id can't be checked against the account: fall back to
+// the plain verdict rather than calling it foreign.
+func TestRegistrationVerdict_NoDeviceIDIsNotForeign(t *testing.T) {
+	got := captureRegistrationVerdict(t, reportInput{
+		netPods: []discoveredPod{{
+			instance:  "BenchPod a1b2c3",
+			reachable: true,
+			cloud:     cloudState{known: true, Configured: true, State: "connected"},
+		}},
+		account: map[string]string{"dev-2": "other"},
+	})
+	if !strings.Contains(got, "Already registered") || strings.Contains(got, "different") {
+		t.Fatalf("expected the plain registered verdict:\n%s", got)
+	}
+}
+
 // Firmware too old to report registration must produce no verdict at all — a guess here would
 // send somebody to re-register a working pod.
 func TestRegistrationVerdict_UnknownStaysSilent(t *testing.T) {
