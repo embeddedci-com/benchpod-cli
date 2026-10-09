@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,55 @@ import (
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 )
 
+// stubLAVoltageProfile replaces the embeddedci.com side of `la voltage` for one test: id is the
+// device the connection resolves to on the signed-in account ("" = not on it), and the returned
+// slice records each save.
+func stubLAVoltageProfile(t *testing.T, id string, changed bool, err error) *[]int {
+	t.Helper()
+	savedAcct, savedSave := accountDeviceForConnection, saveLaMVToProfile
+	t.Cleanup(func() { accountDeviceForConnection, saveLaMVToProfile = savedAcct, savedSave })
+	var saves []int
+	accountDeviceForConnection = func(*globalFlags) string { return id }
+	saveLaMVToProfile = func(dev string, mv int) (bool, error) {
+		if dev != id {
+			t.Errorf("saved to %q, want %q", dev, id)
+		}
+		saves = append(saves, mv)
+		return changed, err
+	}
+	return &saves
+}
+
+func TestLAVoltageSavesToTheProfile(t *testing.T) {
+	addr, _ := fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
+	saves := stubLAVoltageProfile(t, "dev-1", true, nil)
+	var out, warn bytes.Buffer
+	if err := runLAVoltage(&globalFlags{connection: addr}, 3300, &out, &warn); err != nil {
+		t.Fatal(err)
+	}
+	if len(*saves) != 1 || (*saves)[0] != 3300 || !strings.Contains(out.String(), "Saved to the pod's wiring profile on embeddedci.com") {
+		t.Fatalf("saves %v out %q", *saves, out.String())
+	}
+	// A failed save warns; the command still succeeds.
+	addr, _ = fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
+	stubLAVoltageProfile(t, "dev-1", false, errors.New("403 forbidden"))
+	out.Reset()
+	if err := runLAVoltage(&globalFlags{connection: addr}, 3300, &out, &warn); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(warn.String(), "could not save it to the pod's wiring profile on embeddedci.com: 403 forbidden") {
+		t.Fatalf("warn %q", warn.String())
+	}
+	// Showing the voltage never writes the profile.
+	addr, _ = fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
+	saves = stubLAVoltageProfile(t, "dev-1", true, nil)
+	if err := runLAVoltage(&globalFlags{connection: addr}, 0, &bytes.Buffer{}, &bytes.Buffer{}); err != nil || len(*saves) != 0 {
+		t.Fatalf("err %v saves %v", err, *saves)
+	}
+}
+
 func TestLAVoltageLAN(t *testing.T) {
+	stubLAVoltageProfile(t, "", false, nil)
 	addr, got := fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
 	g := &globalFlags{connection: addr}
 	var out, warn bytes.Buffer
@@ -83,6 +132,7 @@ func (f *fakeLAVoltageConsole) LAVoltage(_ context.Context, mv int) (int, error)
 func (f *fakeLAVoltageConsole) Close() error { return nil }
 
 func TestLAVoltageUSB(t *testing.T) {
+	stubLAVoltageProfile(t, "", false, nil)
 	fc := &fakeLAVoltageConsole{}
 	saved := openLAVoltageConsole
 	t.Cleanup(func() { openLAVoltageConsole = saved })

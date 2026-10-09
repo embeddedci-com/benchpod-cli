@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -32,7 +33,12 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 			"I2C-sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
 			"VOLTAGE is 1.8V or 3.3V (also 1800mV, 3.3, or 3300). Omit it to show the\n" +
-			"current setting. Works over the network and over USB (--connection usb).",
+			"current setting. Works over the network and over USB (--connection usb).\n\n" +
+			"The pod forgets the voltage on a restart. When this machine is signed in\n" +
+			"(`benchpod login`) and the pod is registered to that account, setting it over\n" +
+			"the network or embeddedci.com also saves it to the pod's wiring profile on\n" +
+			"embeddedci.com, which the server applies on every connect. Over USB it is set\n" +
+			"on the pod only.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			mv := 0
@@ -91,7 +97,68 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 	if rep.ReadbackMV != 0 && rep.ReadbackMV != rep.MV {
 		fmt.Fprintf(warn, "Warning: the bank's power mux reports %s, not %s\n", formatMV(rep.ReadbackMV), formatMV(rep.MV))
 	}
+	if mv != 0 {
+		if id := accountDeviceForConnection(g); id != "" {
+			changed, err := saveLaMVToProfile(id, rep.MV)
+			switch {
+			case err != nil:
+				fmt.Fprintf(warn, "Warning: could not save it to the pod's wiring profile on embeddedci.com: %v\n", err)
+			case changed:
+				fmt.Fprintln(out, "Saved to the pod's wiring profile on embeddedci.com (applied on every connect).")
+			}
+		}
+	}
 	return nil
+}
+
+// accountDeviceForConnection returns the cloud device id of the pod behind g's network or
+// embeddedci.com connection when this machine is signed in and the pod is registered to that
+// account, so its wiring profile can be written; "" otherwise (also over USB, and whenever it
+// cannot tell). It never prompts or fails. A variable so tests can replace it.
+var accountDeviceForConnection = func(g *globalFlags) string {
+	if who, _ := currentSession("", ""); who == "" {
+		return ""
+	}
+	spec, err := g.resolveConnection()
+	if err != nil || spec.IsSerial() {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	raw, err := (&tcpclient.Client{Addr: spec.Addr}).Command(ctx, map[string]any{"cmd": "cloud_status"})
+	if err != nil {
+		return ""
+	}
+	var c cloudState
+	if json.Unmarshal(raw, &c) != nil || !c.Configured {
+		return ""
+	}
+	id := strings.TrimSpace(c.DeviceID)
+	if id == "" {
+		return ""
+	}
+	if _, ok := accountDevices()[id]; !ok {
+		return ""
+	}
+	return id
+}
+
+// saveLaMVToProfile stores mv as la_mv in the wiring profile of the pod with this cloud device id
+// on embeddedci.com (read-modify-write: every other field is kept). changed is false when the
+// profile already had it. A variable so tests can replace it.
+var saveLaMVToProfile = func(deviceID string, mv int) (changed bool, err error) {
+	tokenPath, err := resolveTokenPath("")
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	api := serverapi.New(defaultServerURL)
+	tokens, err := ensureTokens(ctx, api, tokenPath)
+	if err != nil {
+		return false, fmt.Errorf("sign in: %w", err)
+	}
+	return api.SetDeviceWiringLaMV(ctx, tokens.AccessToken, deviceID, mv)
 }
 
 // laVoltageDo shows (mv 0) or sets the LA voltage over the effective connection, network or
