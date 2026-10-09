@@ -60,8 +60,8 @@ func newIdentityCmd(g *globalFlags) *cobra.Command {
 	}
 	root := &cobra.Command{
 		Use:   "identity [show]",
-		Short: "Show the pod's device identity, or wipe it (USB console only)",
-		Long: "Show the pod's device identity (its Ed25519 key, the source of its name\n" +
+		Short: "Show the pod's identity, or wipe it (USB console only)",
+		Long: "Show the pod's identity (its Ed25519 key, the source of its name\n" +
 			"benchpod-a1b2c3) over the USB console.\n\n" +
 			"A pod whose identity record the firmware does not recognize stays offline rather\n" +
 			"than replace a key it may be registered with; `benchpod identity show` then says\n" +
@@ -71,7 +71,7 @@ func newIdentityCmd(g *globalFlags) *cobra.Command {
 	}
 	root.AddCommand(&cobra.Command{
 		Use:   "show",
-		Short: "Show the pod's device identity",
+		Short: "Show the pod's identity",
 		Args:  cobra.NoArgs,
 		RunE:  show,
 	})
@@ -79,8 +79,8 @@ func newIdentityCmd(g *globalFlags) *cobra.Command {
 	var yes bool
 	wipe := &cobra.Command{
 		Use:   "wipe",
-		Short: "Erase the pod's device key and make a new one (USB console only)",
-		Long: "Erase the pod's device identity and generate a fresh key, over the pod's USB\n" +
+		Short: "Erase the pod's identity key and make a new one (USB console only)",
+		Long: "Erase the pod's identity and generate a fresh key, over the pod's USB\n" +
 			"console (--connection usb or a serial device path). The pod refuses this over the\n" +
 			"LAN and the cloud: it needs someone at the pod.\n\n" +
 			"Use it to recover a pod that reports an unknown identity record, or to retire a\n" +
@@ -113,7 +113,7 @@ func identityDevice(g *globalFlags, what string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("%s: needs the pod's USB console; pass --connection usb (or a serial device path)", what)
 	}
-	spec, err := classifyConnection(raw)
+	spec, err := parseTarget(raw)
 	if err != nil {
 		return "", err
 	}
@@ -185,7 +185,7 @@ func runIdentityWipe(g *globalFlags, yes bool, in io.Reader, out io.Writer) erro
 	}
 	fmt.Fprintf(out, "Identity of the pod on %s: %s\n", path, describeIdentity(st))
 	if !yes {
-		fmt.Fprintln(out, "This erases the pod's device key for good and makes a new one. To embeddedci.com")
+		fmt.Fprintln(out, "This erases the pod's identity key for good and makes a new one. To embeddedci.com")
 		fmt.Fprintln(out, "the pod is then a new pod that has to be registered again.")
 		fmt.Fprint(out, "Wipe the identity? [y/N] ")
 		line, _ := bufio.NewReader(in).ReadString('\n')

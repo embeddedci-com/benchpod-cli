@@ -162,7 +162,7 @@ func decodeB64Samples(s string) ([]int, error) {
 func (c *Client) dialAndSend(ctx context.Context, req map[string]any) (net.Conn, *bufio.Reader, error) {
 	addr := strings.TrimSpace(c.Addr)
 	if addr == "" {
-		return nil, nil, fmt.Errorf("bench pod address is empty; run `benchpod set-connection <addr>` first")
+		return nil, nil, fmt.Errorf("pod address is empty; run `benchpod set-connection <addr>` first")
 	}
 
 	budget := c.DialTimeout
@@ -267,7 +267,7 @@ func readReply(reader *bufio.Reader) (*reply, error) {
 		// EOF (with or without a partial, newline-less line buffered) means the pod
 		// closed before sending a complete response line.
 		if errors.Is(err, io.EOF) {
-			return nil, errors.New("bench pod closed connection without a complete response")
+			return nil, errors.New("pod closed connection without a complete response")
 		}
 		return nil, fmt.Errorf("read response: %w", err)
 	}

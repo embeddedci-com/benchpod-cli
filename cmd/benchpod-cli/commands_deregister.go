@@ -21,14 +21,14 @@ func newDeregisterCmd(g *globalFlags) *cobra.Command {
 	var keepPodConfig bool
 	cmd := &cobra.Command{
 		Use:   "deregister",
-		Short: "Deregister the bench pod from the server (keeps its data) and stop it connecting",
-		Long: "Deregister the bench pod from the logged-in user's account.\n\n" +
+		Short: "Deregister the pod from the server (keeps its data) and stop it connecting",
+		Long: "Deregister the pod from the logged-in user's account.\n\n" +
 			"The server keeps everything recorded for the pod — captures, waveforms, wiring —\n" +
-			"and only marks the device disabled, so it disappears from the web UI and its\n" +
+			"and only marks the pod disabled, so it disappears from the web UI and its\n" +
 			"identity is freed for another account. Registering the SAME pod again for the\n" +
-			"same account revives the device with its data; registering it for a different\n" +
-			"account gives that account a fresh device and leaves this one's history alone.\n\n" +
-			"By default the pod is identified by asking the attached bench pod for its public\n" +
+			"same account revives the pod with its data; registering it for a different\n" +
+			"account gives that account a fresh pod record and leaves this one's history alone.\n\n" +
+			"By default the pod is identified by asking the pod for its public\n" +
 			"key (so --connection must point at it) and is then told to stop connecting to the\n" +
 			"cloud. Use --device-name/--device-id (or --connection embeddedci:<name>) to\n" +
 			"deregister a pod you cannot reach.",
@@ -39,8 +39,8 @@ func newDeregisterCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&serverURL, "server-url", "https://www.embeddedci.com", "embeddedci-server base URL")
 	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to token cache (default: ~/.config/benchpod-cli/token.json)")
-	cmd.Flags().StringVar(&deviceName, "device-name", "", "deregister the device with this name instead of the attached bench pod")
-	cmd.Flags().StringVar(&deviceID, "device-id", "", "deregister the device with this id instead of the attached bench pod")
+	cmd.Flags().StringVar(&deviceName, "device-name", "", "deregister the pod with this name instead of the one --connection reaches")
+	cmd.Flags().StringVar(&deviceID, "device-id", "", "deregister the pod with this id instead of the one --connection reaches")
 	cmd.Flags().BoolVar(&keepPodConfig, "keep-pod-config", false,
 		"leave the pod's cloud configuration in place (it will keep trying to connect and be refused)")
 	return cmd
@@ -78,7 +78,7 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 			// --connection embeddedci:<name> is --device-name <name>.
 			deviceName, usePod = spec.Name, false
 		} else {
-			if err := spec.RequireWifi("deregister"); err != nil {
+			if err := spec.RequireNetwork("deregister"); err != nil {
 				return err
 			}
 			client = &tcpclient.Client{Addr: spec.Addr}
@@ -95,11 +95,10 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 	defer installSignalHandler(ctx, cancel)()
 
 	api := serverapi.New(serverURL)
-	tokens, err := ensureTokens(ctx, api, tokenPath)
+	cred, err := credentialFor(ctx, api, tokenFile, tokenPath)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	log.Printf("auth: signed in as %s", tokens.Who())
 
 	target := deviceID
 	label := deviceID
@@ -110,11 +109,11 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 			pubKey, err = client.IdentityPublic(idCtx)
 			idCancel()
 			if err != nil {
-				return fmt.Errorf("fetch device public key: %w", err)
+				return fmt.Errorf("fetch the pod's public key: %w", err)
 			}
 		}
 		listCtx, listCancel := context.WithTimeout(ctx, 30*time.Second)
-		devices, lErr := api.ListDevices(listCtx, tokens.AccessToken)
+		devices, lErr := api.ListDevices(listCtx, cred)
 		listCancel()
 		if lErr != nil {
 			return fmt.Errorf("list devices: %w", lErr)
@@ -127,15 +126,15 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 	}
 
 	degCtx, degCancel := context.WithTimeout(ctx, 30*time.Second)
-	device, err := api.DeregisterDevice(degCtx, tokens.AccessToken, target)
+	device, err := api.DeregisterDevice(degCtx, cred, target)
 	degCancel()
 	if err != nil {
-		return fmt.Errorf("deregister device: %w", err)
+		return fmt.Errorf("deregister the pod: %w", err)
 	}
 	if strings.TrimSpace(device.Name) != "" {
 		label = device.Name
 	}
-	log.Printf("device: deregistered name=%s id=%s (data retained)", label, device.ID)
+	log.Printf("pod: deregistered name=%s id=%s (data retained)", label, device.ID)
 
 	// Wipe the pod-side cloud provisioning so the firmware stops reconnecting. `cloud_clear`
 	// (not `cloud_set`) is the right tool: it drops the stored endpoint AND the now-dead
@@ -147,14 +146,14 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 		_, err = client.Command(setCtx, map[string]any{"cmd": "cloud_clear"})
 		setCancel()
 		if err != nil {
-			log.Printf("warning: could not clear the bench pod's cloud configuration: %v", err)
+			log.Printf("warning: could not clear the pod's cloud configuration: %v", err)
 			log.Printf("the pod will keep trying to connect and be refused; re-run with the pod reachable, or clear it by hand")
 		} else {
-			log.Printf("provisioned: bench pod cloud configuration cleared")
+			log.Printf("provisioned: pod cloud configuration cleared")
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Deregistered bench pod %q (device %s). Its data is kept; register it again to restore it.\n",
+	fmt.Fprintf(os.Stderr, "Deregistered pod %q (id %s). Its data is kept; register it again to restore it.\n",
 		label, device.ID)
 	return nil
 }
@@ -171,12 +170,12 @@ func findDeviceToDeregister(devices []serverapi.DeviceResponse, publicKey, name 
 			}
 		}
 		return serverapi.DeviceResponse{}, errors.New(
-			"the attached bench pod is not registered to this account (no device matches its public key)")
+			"the pod is not registered to this account (no pod on it has its public key)")
 	}
 	for _, d := range devices {
 		if d.Name == name {
 			return d, nil
 		}
 	}
-	return serverapi.DeviceResponse{}, fmt.Errorf("no device named %q is registered to this account", name)
+	return serverapi.DeviceResponse{}, fmt.Errorf("no pod named %q is registered to this account", name)
 }

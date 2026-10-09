@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/cloudpod"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -124,6 +125,11 @@ func (e *shownRefusal) Unwrap() error { return e.pe }
 // the client's error (%w) still gets the hint. A JSON reply (no console command) came over the
 // LAN.
 func withRefusalHint(err error) error {
+	// embeddedci.com's own failures (a held lease, a missing role) say what to do already.
+	var ce *cloudpod.Error
+	if errors.As(err, &ce) {
+		return err
+	}
 	pe, ok := tcpclient.AsPodError(err)
 	if !ok {
 		return err
@@ -150,7 +156,7 @@ const (
 	exitUsage       = 2 // a bad flag, argument or subcommand
 	exitRefused     = 3 // the pod refused the command (locked LAN, missing role, bad request)
 	exitBusy        = 4 // the pod or one of its engines is in use (a cloud lease, another session)
-	exitUnreachable = 5 // the pod did not answer on its address, or no pod on USB
+	exitUnreachable = 5 // the pod did not answer on its address, no pod on USB, or offline on embeddedci.com
 )
 
 // exitCodesHelp is the exit-code table for the root command's help.
@@ -160,7 +166,8 @@ const exitCodesHelp = "Exit codes:\n" +
 	"  2  usage: a bad flag, argument or subcommand\n" +
 	"  3  refused: the pod refused the command (a locked LAN, a missing role, a bad request)\n" +
 	"  4  busy: the pod or one of its engines is in use (a cloud job's lease, another session)\n" +
-	"  5  unreachable: nothing answered on the pod's address, or no pod found on USB"
+	"  5  unreachable: nothing answered on the pod's address, no pod found on USB, or the\n" +
+	"     pod is offline on embeddedci.com"
 
 // usageError marks a command-line mistake (exit code 2).
 type usageError struct{ err error }

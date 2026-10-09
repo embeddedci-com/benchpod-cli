@@ -63,7 +63,9 @@ func newCloudCmd(g *globalFlags) *cobra.Command {
 		Long: "Configure the pod's link to embeddedci.com on networks that need it.\n\n" +
 			"  ca     a company root certificate, for networks whose proxy inspects TLS\n" +
 			"  proxy  an HTTP proxy the pod tunnels its cloud connection through\n\n" +
-			"Both work over the pod's USB console (--connection usb). The LAN\n" +
+			"Both work over the pod's USB console (--connection usb) and through\n" +
+			"embeddedci.com (--connection embeddedci:<name>; a change there needs an\n" +
+			"organization owner or admin, and `cloud ca set` needs USB). The LAN\n" +
 			"(--connection <address>) can show them; current firmware refuses changes from\n" +
 			"the LAN, so change them over USB. The pod reconnects to the cloud after a change.",
 		Args: cobra.NoArgs,
@@ -198,22 +200,44 @@ const plainLANPasswordWarning = "Warning: the pod's LAN API is plain TCP, so the
 // warnPlainLANPassword warns when the proxy password would go to the pod over the LAN. It stays
 // quiet when the target is USB or cannot be resolved (the command then fails with the reason).
 func warnPlainLANPassword(g *globalFlags, warn io.Writer) {
-	if spec, err := cloudCfgTarget(g, "cloud proxy set"); err == nil && spec.IsWifi() {
+	if spec, err := cloudCfgTarget(g, "cloud proxy set"); err == nil && spec.IsNetwork() {
 		fmt.Fprintln(warn, plainLANPasswordWarning)
 	}
 }
 
 // cloudCfgTarget resolves --connection for the cloud ca/proxy commands: a serial device ("" =
-// auto-detect) or a LAN address.
+// auto-detect), a LAN address or a pod on embeddedci.com.
 func cloudCfgTarget(g *globalFlags, what string) (spec ConnSpec, err error) {
 	raw, err := g.rawConnection()
 	if err != nil {
 		return ConnSpec{}, err
 	}
 	if raw == "" {
-		return ConnSpec{}, fmt.Errorf("%s: no pod selected; pass --connection usb or --connection <address>", what)
+		return ConnSpec{}, fmt.Errorf("%s: no pod selected; pass --connection usb, --connection <address> or --connection embeddedci:<name>", what)
 	}
-	return classifyConnection(raw)
+	return parseTarget(raw)
+}
+
+// cloudCfgPod runs one cloud_ca / cloud_proxy JSON command through embeddedci.com and decodes the
+// reply into out (nil to skip).
+func cloudCfgPod(g *globalFlags, spec ConnSpec, def time.Duration, req map[string]any, out any) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(def))
+	defer cancel()
+	defer installSignalHandler(ctx, cancel)()
+	pod, err := openPodTarget(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	data, err := pod.client.Command(ctx, req)
+	if err != nil {
+		return pod.label, err
+	}
+	if out != nil {
+		if err := json.Unmarshal(data, out); err != nil {
+			return pod.label, fmt.Errorf("unexpected reply to %v: %s", req["cmd"], strings.TrimSpace(string(data)))
+		}
+	}
+	return pod.label, nil
 }
 
 // ── CA certificate checks ───────────────────────────────────────────────────
@@ -296,6 +320,12 @@ func printCACerts(out io.Writer, label string, certs []serialconsole.CACert, cha
 
 func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error {
 	what := "cloud ca " + action
+	if action == "set" {
+		// Say so before reading the file when the connection cannot carry the upload.
+		if spec, err := cloudCfgTarget(g, what); err == nil && spec.IsCloud() {
+			return cloudCASetRefusal(what)
+		}
+	}
 	var local []caCert
 	var upload []byte
 	if action == "set" {
@@ -322,9 +352,14 @@ func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error 
 	}
 	var label string
 	var certs []serialconsole.CACert
-	if spec.IsSerial() {
+	switch {
+	case spec.IsCloud() && action == "set":
+		return cloudCASetRefusal(what)
+	case spec.IsCloud():
+		label, certs, err = cloudCACloud(g, spec, action)
+	case spec.IsSerial():
 		label, certs, err = cloudCAUSB(g, spec.Device, action, upload, warn)
-	} else {
+	default:
 		label = spec.Addr
 		certs, err = cloudCALAN(g, spec.Addr, action, upload, warn)
 	}
@@ -426,6 +461,45 @@ func cloudCAUSB(g *globalFlags, device, action string, upload []byte, warn io.Wr
 	}
 	certs, err := console.CloudCA(ctx)
 	return label, certs, err
+}
+
+// ── embeddedci.com ──────────────────────────────────────────────────────────
+
+// cloudCASetRefusal: installing a CA is an upload, which the command channel does not carry.
+func cloudCASetRefusal(what string) error {
+	return fmt.Errorf("%s does not work over embeddedci.com from the CLI: the certificate upload needs the pod's USB console. "+
+		"Run it with --connection usb", what)
+}
+
+// cloudCACloud shows or clears the company CA through embeddedci.com. The pod reconnects after a
+// clear, so the reply to the clear is what it reports; a read-back could race the reconnect.
+func cloudCACloud(g *globalFlags, spec ConnSpec, action string) (string, []serialconsole.CACert, error) {
+	req := map[string]any{"cmd": "cloud_ca"}
+	if action == "clear" {
+		req["clear"] = true
+	}
+	var rep caReply
+	label, err := cloudCfgPod(g, spec, 30*time.Second, req, &rep)
+	return label, rep.Certs, err
+}
+
+// cloudProxyCloud shows, sets or clears the HTTP proxy through embeddedci.com (HTTPS, so a proxy
+// password does not cross the network in the clear). Like the CA, a change makes the pod
+// reconnect, so the change's own reply is what it reports.
+func cloudProxyCloud(g *globalFlags, spec ConnSpec, action, set, user, password string) (string, serialconsole.ProxyConfig, error) {
+	req := map[string]any{"cmd": "cloud_proxy"}
+	switch action {
+	case "set":
+		req["set"] = set
+		if user != "" {
+			req["user"], req["password"] = user, password
+		}
+	case "clear":
+		req["clear"] = true
+	}
+	var rep proxyReply
+	label, err := cloudCfgPod(g, spec, 30*time.Second, req, &rep)
+	return label, rep.config(), err
 }
 
 // ── LAN ─────────────────────────────────────────────────────────────────────
@@ -591,9 +665,12 @@ func runCloudProxy(g *globalFlags, action, addr, user, password string, out, war
 	}
 	var label string
 	var p serialconsole.ProxyConfig
-	if spec.IsSerial() {
+	switch {
+	case spec.IsCloud():
+		label, p, err = cloudProxyCloud(g, spec, action, addr, user, password)
+	case spec.IsSerial():
 		label, p, err = cloudProxyUSB(g, spec.Device, action, addr, user, password)
-	} else {
+	default:
 		label = spec.Addr
 		p, err = cloudProxyLAN(g, spec.Addr, action, addr, user, password)
 	}

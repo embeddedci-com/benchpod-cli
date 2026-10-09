@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -14,8 +15,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// flashTimeout bounds a whole flash session; flashing over the WiFi/AT bridge
-// (or the USB serial console) is slow, so this is generous compared to the 30s
+// flashTimeout bounds a whole flash session; flashing over the network
+// (or the USB console) is slow, so this is generous compared to the 30s
 // default command deadline. Overridable with --timeout.
 const flashTimeout = 5 * time.Minute
 
@@ -65,6 +66,9 @@ type flashFlags struct {
 	extraConfigs        []string
 	extraArgs           []string
 
+	// nresetSet says --nreset was given (either way), so the wiring profile does not override it.
+	nresetSet bool
+
 	// hasNRST is filled in from the pod during runFlash (not a flag): whether
 	// this pod has the dedicated target-reset pin. Used by the failure hint.
 	hasNRST bool
@@ -77,8 +81,8 @@ type flashFlags struct {
 //
 // The pod runs a CMSIS-DAP processor locally and OpenOCD's cmsis-dap TCP backend
 // ships whole DAP transfers (DAP_Transfer / DAP_TransferBlock), collapsing
-// thousands of per-bit round-trips into one per DAP command. --connection wifi
-// uses the TCP dap_start handshake (tcpclient.DAPStart); --connection serial / a
+// thousands of per-bit round-trips into one per DAP command. A network address
+// uses the TCP dap_start handshake (tcpclient.DAPStart); --connection usb / a
 // device path uses the console dap-start handshake (serialconsole.DAPStart). Both
 // need a recent OpenOCD with the cmsis_dap_tcp backend.
 func newFlashCmd(g *globalFlags) *cobra.Command {
@@ -86,16 +90,25 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "flash",
 		Short: "Flash an SWD target via OpenOCD's CMSIS-DAP backend (network or USB)",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Long: "Flash an SWD target wired to the pod's LA pins: the pod becomes a CMSIS-DAP\n" +
+			"probe and a local OpenOCD programs the target through it. Works over the network\n" +
+			"and over USB; not over embeddedci.com (use the web app or the Python SDK there).\n\n" +
+			"--swclk, --swdio, --nreset and --target default to swd_swclk, swd_swdio,\n" +
+			"swd_nreset and swd_target in the pod's wiring profile on embeddedci.com when this\n" +
+			"machine is signed in (`benchpod login` or BENCHPOD_API_KEY), the pod is on that\n" +
+			"account and the connection is a network address. Flags always win; the log says\n" +
+			"where each value came from. Without a profile, --swclk and --swdio are required.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			f.nresetSet = cmd.Flags().Changed("nreset")
 			return runFlash(g, f)
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.swclk, "swclk", "", "LA pin for SWCLK, 1-14, e.g. 1 or la1 (required)")
-	fl.StringVar(&f.swdio, "swdio", "", "LA pin for SWDIO, 1-14, e.g. 2 or la2 (required)")
-	fl.BoolVar(&f.nreset, "nreset", false, "the target's NRST is wired to the pod's reset pin ("+nrstPinLocation+"); enables connect-under-reset")
-	fl.StringVar(&f.target, "target", "", "OpenOCD target config (passed as -f), e.g. target/stm32f1x.cfg")
+	fl.StringVar(&f.swclk, "swclk", "", "LA pin for SWCLK, 1-14, e.g. 1 or la1 (default: swd_swclk from the pod's wiring profile)")
+	fl.StringVar(&f.swdio, "swdio", "", "LA pin for SWDIO, 1-14, e.g. 2 or la2 (default: swd_swdio from the pod's wiring profile)")
+	fl.BoolVar(&f.nreset, "nreset", false, "the target's NRST is wired to the pod's reset pin ("+nrstPinLocation+"); enables connect-under-reset (default: swd_nreset from the pod's wiring profile)")
+	fl.StringVar(&f.target, "target", "", "OpenOCD target config (passed as -f), e.g. target/stm32f1x.cfg (default: swd_target from the pod's wiring profile)")
 	fl.StringVar(&f.file, "file", "", "firmware image to flash (used with --target)")
 	fl.StringVar(&f.loadAddr, "load-address", "", "load address for a raw .bin image (appended to the program command)")
 	fl.BoolVar(&f.noVerify, "no-verify", false, "do not verify after programming")
@@ -110,8 +123,18 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 }
 
 func runFlash(g *globalFlags, f *flashFlags) error {
+	spec, err := g.resolveTarget()
+	if err != nil {
+		return err
+	}
+	if spec.IsCloud() {
+		return cloudRefusal("flash", spec, true)
+	}
+	if spec.IsNetwork() {
+		f.fillFromWiring(g)
+	}
 	if strings.TrimSpace(f.swclk) == "" || strings.TrimSpace(f.swdio) == "" {
-		return fmt.Errorf("--swclk and --swdio are required")
+		return fmt.Errorf("--swclk and --swdio are required (or set swd_swclk and swd_swdio in the pod's wiring profile on embeddedci.com)")
 	}
 	swclk, err := parseLAPin(f.swclk)
 	if err != nil {
@@ -210,6 +233,40 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	return nil
 }
 
+// fillFromWiring takes the SWD settings left out of the flags from the pod's wiring profile on
+// embeddedci.com, and logs where each one came from.
+func (f *flashFlags) fillFromWiring(g *globalFlags) {
+	needed := f.swclk == "" || f.swdio == "" || !f.nresetSet || f.target == ""
+	var w *podWiring
+	if needed {
+		w = loadPodWiring(g, os.Stderr)
+	}
+	if w == nil {
+		log.Printf("flash: SWD settings from the flags")
+		return
+	}
+	var from []string
+	if pinFromWiring(&f.swclk, w.SwdSwclk) {
+		from = append(from, "SWCLK LA"+f.swclk)
+	}
+	if pinFromWiring(&f.swdio, w.SwdSwdio) {
+		from = append(from, "SWDIO LA"+f.swdio)
+	}
+	if !f.nresetSet && w.SwdNreset != nil {
+		f.nreset = *w.SwdNreset
+		from = append(from, fmt.Sprintf("nreset %v", f.nreset))
+	}
+	if f.target == "" && strings.TrimSpace(w.SwdTarget) != "" {
+		f.target = strings.TrimSpace(w.SwdTarget)
+		from = append(from, "target "+f.target)
+	}
+	if len(from) > 0 {
+		log.Printf("flash: %s from %s; the other settings from the flags", strings.Join(from, ", "), wiringSource)
+	} else {
+		log.Printf("flash: SWD settings from the flags")
+	}
+}
+
 // printTargetUnreachableHint explains a failed DAP connect: the pod's probe is
 // working but no target answered on SWD. The advice is ordered by likelihood and
 // references the exact pins/flags the user passed.
@@ -234,15 +291,15 @@ func printTargetUnreachableHint(f *flashFlags) {
 }
 
 // openDAP optionally powers the target, then arms the pod's CMSIS-DAP probe over
-// the selected transport (dap_start over wifi/TCP, the dap-start console command
-// over serial) and returns the length-framed DAP stream to bridge to OpenOCD.
+// the selected transport (dap_start over the network, the dap-start console command
+// over USB) and returns the length-framed DAP stream to bridge to OpenOCD.
 // powerEfuse 0 leaves target power untouched; 1/2 enables that eFuse first.
 func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse int) (io.ReadWriteCloser, bool, error) {
 	spec, err := g.resolveConnection()
 	if err != nil {
 		return nil, false, err
 	}
-	if spec.IsWifi() {
+	if spec.IsNetwork() {
 		client := &tcpclient.Client{Addr: spec.Addr}
 		// Ask the pod whether it has the dedicated reset pin BEFORE arming the
 		// probe — once the connection is in DAP mode it no longer speaks JSON.
@@ -276,7 +333,7 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 	if err != nil {
 		return nil, false, err
 	}
-	// Same probe as the wifi path, on the console this time — and for the same
+	// Same probe as the network path, on the console this time — and for the same
 	// reason it has to happen before dap-start: the console stops taking text
 	// commands once the probe is armed. The port is already open, so this costs
 	// one `status` round-trip and no extra connection.

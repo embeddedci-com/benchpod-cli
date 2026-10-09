@@ -55,7 +55,11 @@ func runSetWifi(g *globalFlags, ssid, pw string, skipBlobs bool) (string, error)
 	// modem, then AT+CWJAP (up to ~15s) and TCP bring-up. That can take
 	// ~40s, so wait generously — the command returns as soon as the prompt
 	// reappears, this is only the upper bound. Override with --timeout.
-	console, path, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(90*time.Second))
+	device, err := g.usbDevice("set-wifi")
+	if err != nil {
+		return "", err
+	}
+	console, path, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(90*time.Second))
 	if err != nil {
 		return "", err
 	}
@@ -153,7 +157,11 @@ func newShowNetworkCmd(g *globalFlags) *cobra.Command {
 			"SSID at all. The SSID/state/RSSI fields describe the optional Wi-Fi interface.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(15*time.Second))
+			device, err := g.usbDevice("show-network")
+			if err != nil {
+				return err
+			}
+			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(15*time.Second))
 			if err != nil {
 				return err
 			}
@@ -188,7 +196,11 @@ func newClearWifiCmd(g *globalFlags) *cobra.Command {
 		Short: "Erase the stored Wi-Fi credentials (Wi-Fi goes down at once)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(10*time.Second))
+			device, err := g.usbDevice("clear-wifi")
+			if err != nil {
+				return err
+			}
+			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(10*time.Second))
 			if err != nil {
 				return err
 			}
@@ -214,13 +226,17 @@ func newBootselCmd(g *globalFlags) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if !yes {
-				fmt.Fprint(os.Stderr, "This reboots the device into the UF2 bootloader; the USB console will disconnect. Type 'yes' to continue: ")
+				fmt.Fprint(os.Stderr, "This reboots the pod into the UF2 bootloader; the USB console will disconnect. Type 'yes' to continue: ")
 				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.TrimSpace(line) != "yes" {
 					return errors.New("aborted")
 				}
 			}
-			console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(10*time.Second))
+			device, err := g.usbDevice("bootsel")
+			if err != nil {
+				return err
+			}
+			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(10*time.Second))
 			if err != nil {
 				return err
 			}
@@ -230,7 +246,7 @@ func newBootselCmd(g *globalFlags) *cobra.Command {
 			if err := console.Bootsel(ctx); err != nil {
 				return fmt.Errorf("bootsel: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "Device entering BOOTSEL (UF2 drive). USB console disconnected — this is expected.")
+			fmt.Fprintln(os.Stderr, "Pod entering BOOTSEL (UF2 drive). USB console disconnected; this is expected.")
 			fmt.Fprintln(os.Stderr, "Drop firmware.uf2 onto the RP2350 drive (or use picotool) to flash.")
 			return nil
 		},
@@ -259,7 +275,11 @@ func newDfuCmd(g *globalFlags) *cobra.Command {
 					return errors.New("aborted")
 				}
 			}
-			console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(10*time.Second))
+			device, err := g.usbDevice("dfu")
+			if err != nil {
+				return err
+			}
+			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(10*time.Second))
 			if err != nil {
 				return err
 			}
@@ -269,7 +289,7 @@ func newDfuCmd(g *globalFlags) *cobra.Command {
 			if err := console.Dfu(ctx); err != nil {
 				return fmt.Errorf("dfu: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "Device entering DFU (USB bootloader). USB console disconnected — this is expected.")
+			fmt.Fprintln(os.Stderr, "Device entering DFU (USB bootloader). USB console disconnected; this is expected.")
 			fmt.Fprintln(os.Stderr, "Write firmware with `benchpod flash-self <firmware.bin>` (or dfu-util) to flash.")
 			return nil
 		},

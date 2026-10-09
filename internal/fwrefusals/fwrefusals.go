@@ -29,7 +29,7 @@ type Refusal struct {
 }
 
 type doc struct {
-	Refusals []Refusal        `json:"refusals"`
+	Refusals []Refusal         `json:"refusals"`
 	Tiers    map[string]string `json:"tiers"`
 }
 

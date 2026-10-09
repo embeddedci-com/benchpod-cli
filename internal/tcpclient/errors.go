@@ -71,7 +71,7 @@ func AsPodError(err error) (*PodError, bool) {
 
 // ErrUnreachable matches (errors.Is) a failure to reach the pod at all: nothing answered on
 // its address within the connect budget, or (serialconsole) no pod on USB.
-var ErrUnreachable = errors.New("bench pod unreachable")
+var ErrUnreachable = errors.New("pod unreachable")
 
 // dialError is a failed connect. Its text is the one the CLI always printed; it also matches
 // ErrUnreachable and unwraps to the underlying dial error.
@@ -80,7 +80,7 @@ type dialError struct {
 	err  error
 }
 
-func (e *dialError) Error() string { return "connect to bench pod at " + e.addr + ": " + e.err.Error() }
+func (e *dialError) Error() string { return "connect to pod at " + e.addr + ": " + e.err.Error() }
 func (e *dialError) Unwrap() error { return e.err }
 func (e *dialError) Is(target error) bool {
 	// An interrupted connect (Ctrl+C) is not an unreachable pod.
@@ -90,7 +90,7 @@ func (e *dialError) Is(target error) bool {
 func firmwareMessage(msg string) string {
 	msg = strings.TrimSpace(msg)
 	if msg == "" {
-		return "bench pod returned an error"
+		return "pod returned an error"
 	}
 	return msg
 }

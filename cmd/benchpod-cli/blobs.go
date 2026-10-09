@@ -217,7 +217,11 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			"firmware that checks it too; for now a missing or failing one never stops an install.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			console, path, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(blobsInstallTimeout))
+			device, err := g.usbDevice("install-blobs")
+			if err != nil {
+				return err
+			}
+			console, path, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(blobsInstallTimeout))
 			if err != nil {
 				return err
 			}

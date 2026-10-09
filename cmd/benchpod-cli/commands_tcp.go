@@ -11,7 +11,7 @@ import (
 )
 
 // The commands in this file speak the firmware's TCP/JSON API. Most are
-// wifi-only and use g.wifiClient(...), which resolves the connection and bails
+// wifi-only and use g.networkClient(...), which resolves the connection and bails
 // with a clear message on a serial transport. `status` is the exception: the
 // firmware exposes a `status` console command too, so it runs over either
 // transport.
@@ -24,13 +24,13 @@ func newPingCmd(g *globalFlags) *cobra.Command {
 		Short: "Connectivity check",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			ctx, cancel, client, err := g.wifiClient("ping", 30*time.Second)
+			ctx, cancel, pod, err := g.podClient("ping", 30*time.Second)
 			if err != nil {
 				return err
 			}
 			defer cancel()
 
-			data, err := client.Command(ctx, map[string]any{"cmd": "ping"})
+			data, err := pod.client.Command(ctx, map[string]any{"cmd": "ping"})
 			if err != nil {
 				return fmt.Errorf("ping: %w", err)
 			}
@@ -73,7 +73,7 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel, client, err := g.wifiClient("generate", 30*time.Second)
+			ctx, cancel, pod, err := g.podClient("generate", 30*time.Second)
 			if err != nil {
 				return err
 			}
@@ -90,7 +90,7 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 			if sampleRate > 0 {
 				req["sample_rate_mhz"] = sampleRate
 			}
-			data, err := client.Command(ctx, req)
+			data, err := pod.client.Command(ctx, req)
 			if err != nil {
 				return fmt.Errorf("generate: %w", err)
 			}
@@ -146,7 +146,7 @@ func newSampleCmd(g *globalFlags, name, short string) *cobra.Command {
 			if !validOutput(output) {
 				return fmt.Errorf("--output must be json, csv, or ndjson")
 			}
-			ctx, cancel, client, err := g.wifiClient(name, 30*time.Second)
+			ctx, cancel, client, err := g.networkClient(name, 30*time.Second)
 			if err != nil {
 				return err
 			}
@@ -194,7 +194,7 @@ func newMeasureCmd(g *globalFlags) *cobra.Command {
 			if !validOutput(output) {
 				return fmt.Errorf("--output must be json, csv, or ndjson")
 			}
-			ctx, cancel, client, err := g.wifiClient("measure", 30*time.Second)
+			ctx, cancel, client, err := g.networkClient("measure", 30*time.Second)
 			if err != nil {
 				return err
 			}
@@ -261,7 +261,7 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 				req["value"] = value
 			}
 
-			ctx, cancel, client, err := g.wifiClient("test", 30*time.Second)
+			ctx, cancel, client, err := g.networkClient("test", 30*time.Second)
 			if err != nil {
 				return err
 			}
@@ -311,13 +311,13 @@ func newLAPullupCmd(g *globalFlags) *cobra.Command {
 			default:
 				return fmt.Errorf("invalid state %q (use on or off)", args[1])
 			}
-			ctx, cancel, client, err := g.wifiClient("la pullup", 30*time.Second)
+			ctx, cancel, pod, err := g.podClient("la pullup", 30*time.Second)
 			if err != nil {
 				return err
 			}
 			defer cancel()
 
-			data, err := client.Command(ctx, map[string]any{"cmd": "la", "la": pin, "pullup": state})
+			data, err := pod.client.Command(ctx, map[string]any{"cmd": "la", "la": pin, "pullup": state})
 			if err != nil {
 				return fmt.Errorf("la pullup: %w", err)
 			}
@@ -346,13 +346,13 @@ func newLAStatusCmd(g *globalFlags) *cobra.Command {
 				}
 				req["la"] = pin
 			}
-			ctx, cancel, client, err := g.wifiClient("la status", 30*time.Second)
+			ctx, cancel, pod, err := g.podClient("la status", 30*time.Second)
 			if err != nil {
 				return err
 			}
 			defer cancel()
 
-			data, err := client.Command(ctx, req)
+			data, err := pod.client.Command(ctx, req)
 			if err != nil {
 				return fmt.Errorf("la status: %w", err)
 			}
@@ -422,13 +422,13 @@ func newLAStepCmd(g *globalFlags) *cobra.Command {
 				def = 30 * time.Second
 			}
 
-			ctx, cancel, client, err := g.wifiClient("la step", def)
+			ctx, cancel, pod, err := g.podClient("la step", def)
 			if err != nil {
 				return err
 			}
 			defer cancel()
 
-			data, err := client.Command(ctx, req)
+			data, err := pod.client.Command(ctx, req)
 			if err != nil {
 				return fmt.Errorf("la step: %w", err)
 			}

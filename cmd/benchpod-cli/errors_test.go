@@ -58,7 +58,7 @@ func TestWithRefusalHintAddsTheHintOnce(t *testing.T) {
 	if got := withRefusalHint(usb); got != error(usb) {
 		t.Fatalf("got %v", got)
 	}
-	plain := errors.New("connect to bench pod at 10.0.0.1:8080: i/o timeout")
+	plain := errors.New("connect to pod at 10.0.0.1:8080: i/o timeout")
 	if got := withRefusalHint(plain); got != plain {
 		t.Fatalf("got %v", got)
 	}

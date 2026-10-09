@@ -262,7 +262,7 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 	}
 	cands = preferFirst(strings.TrimSpace(preferred), cands)
 	if len(cands) == 0 {
-		return nil, "", noPod(errors.New("no USB ports found; plug in the bench pod or pass --connection <device>"))
+		return nil, "", noPod(errors.New("no USB ports found; plug in the pod or pass --connection <device>"))
 	}
 	var tried []string
 	for _, name := range cands {
@@ -278,10 +278,10 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 		ok := c.IsBenchpod(ctx)
 		cancel()
 		if ok {
-			serialLogf("  %s: identified as a bench pod", name)
+			serialLogf("  %s: identified as a pod", name)
 			return c, name, nil
 		}
-		serialLogf("  %s: not a bench pod (no %q in status)", name, benchpodMarker)
+		serialLogf("  %s: not a pod (no %q in status)", name, benchpodMarker)
 		_ = c.Close()
 		tried = append(tried, name)
 	}
