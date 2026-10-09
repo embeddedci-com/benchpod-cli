@@ -111,6 +111,8 @@ type setupEnv interface {
 	accountDevices() map[string]string
 	register(addr string) error
 	save(target string) error
+	// latestFirmware is the latest firmware release tag, "" when it could not be read.
+	latestFirmware() string
 }
 
 // errNeedsAnswer is returned under --yes when a step needs an answer that no flag gave.
@@ -210,6 +212,14 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 	}
 	p := pods[0]
 	fmt.Fprintf(out, "     Found %s.\n", describeSetupPod(p))
+	if latest := env.latestFirmware(); latest != "" && p.firmware != "" && versionLess(p.firmware, latest) {
+		// A nudge, not a step: flashing over USB DFU needs the pod replugged afterwards, so the
+		// user runs it when it suits them.
+		fmt.Fprintf(out, "     Firmware %s is out of date: %s is the latest. Update it with the pod on USB:\n"+
+			"       benchpod flash-self --enter-dfu\n"+
+			"     (unplug and replug USB-C when it finishes), or later from the web app's BenchPod page.\n",
+			strings.TrimPrefix(p.firmware, "v"), strings.TrimPrefix(latest, "v"))
+	}
 
 	// 2. Network.
 	step(2, "Network")
@@ -653,3 +663,5 @@ func (e *realSetupEnv) saveLaMV(deviceID string, mv int) (bool, error) {
 }
 
 func (e *realSetupEnv) save(target string) error { return runSetConnection(e.g, target) }
+
+func (e *realSetupEnv) latestFirmware() string { return latestFirmwareRelease() }

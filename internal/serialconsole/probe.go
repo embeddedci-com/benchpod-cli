@@ -32,6 +32,12 @@ type SerialPod struct {
 	Registered bool
 	CloudState string // "connected", "connecting", "backoff", ... when registered
 	DeviceID   string // the provisioned device id, when registered
+
+	// PublicKey is the pod's Ed25519 identity (base64url), the same key the pod advertises as
+	// the mDNS TXT "id". It matches a USB pod to its network entry when the two report
+	// different addresses (USB shows the wired IP, mDNS may answer on Wi-Fi) and the pod is not
+	// registered yet, so there is no device id to match on. "" on firmware without `identity`.
+	PublicKey string
 }
 
 // Addressed reports whether the pod holds a usable IP address (it has a DHCP
@@ -71,12 +77,19 @@ func ProbeSerial(preferred string, probeTimeout time.Duration) (pods []SerialPod
 		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 		raw, _ := c.Status(ctx)
 		cancel()
-		_ = c.Close()
 		if !strings.Contains(strings.ToLower(raw), benchpodMarker) {
+			_ = c.Close()
 			skipped = append(skipped, name)
 			continue
 		}
 		pod := parseSerialPod(name, raw)
+		// Read-only: `identity` prints the pod's public key and changes nothing.
+		ctx, cancel = context.WithTimeout(context.Background(), probeTimeout)
+		if id, idErr := c.Identity(ctx); idErr == nil {
+			pod.PublicKey = id.PublicKey
+		}
+		cancel()
+		_ = c.Close()
 		key := podIdentity(pod)
 		if seen[key] {
 			continue
