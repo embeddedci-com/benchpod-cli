@@ -175,7 +175,7 @@ func newShowNetworkCmd(g *globalFlags) *cobra.Command {
 func newClearWifiCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "clear-wifi",
-		Short: "Erase stored WiFi credentials (reboot to fully apply)",
+		Short: "Erase the stored Wi-Fi credentials (Wi-Fi goes down at once)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(10*time.Second))
@@ -188,7 +188,7 @@ func newClearWifiCmd(g *globalFlags) *cobra.Command {
 			if err := console.WifiClear(ctx); err != nil {
 				return fmt.Errorf("clear-wifi: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "Erased stored WiFi credentials. Reboot the device to fully apply (`benchpod bootsel` or power-cycle).")
+			fmt.Fprintln(os.Stderr, "Erased the stored Wi-Fi credentials. Wi-Fi is off; no reboot needed.")
 			return nil
 		},
 	}

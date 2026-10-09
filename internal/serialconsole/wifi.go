@@ -166,7 +166,8 @@ func lastFieldValue(s, label string) (string, bool) {
 	return val, found
 }
 
-// WifiClear erases stored credentials. A reboot is needed to fully apply.
+// WifiClear erases the stored credentials and takes Wi-Fi down. Firmware after 3.7.0 also erases
+// the ESP32-C3's own copy, which takes a few seconds.
 func (c *Console) WifiClear(ctx context.Context) error {
 	_, err := c.sendCommand(ctx, "wifi-clear")
 	return err
