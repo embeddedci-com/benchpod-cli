@@ -192,10 +192,12 @@ func checkPod(p *discoveredPod) {
 }
 
 // correlate marks each network pod that is the same physical device as one of
-// the pods found over USB, matched on the address the pod reports for itself or,
-// for a registered pod, on its cloud device id. The id catches a pod on Ethernet
-// and Wi-Fi at once, whose USB console reports one address while mDNS answers on
-// the other. Without this a single pod plugged in and on the LAN reads as two.
+// the pods found over USB, matched on the address the pod reports for itself, on its
+// public key (USB `identity` vs the mDNS TXT id) or, for a registered pod, on its
+// cloud device id. The key and the id catch a pod on Ethernet and Wi-Fi at once,
+// whose USB console reports one address while mDNS answers on the other; the key
+// also works before the pod is registered. Without this a single pod plugged in and
+// on the LAN reads as two.
 func correlate(netPods []discoveredPod, serialPods []serialconsole.SerialPod) {
 	for i := range netPods {
 		host, _, err := net.SplitHostPort(netPods[i].addr)
@@ -203,8 +205,10 @@ func correlate(netPods []discoveredPod, serialPods []serialconsole.SerialPod) {
 			host = netPods[i].addr
 		}
 		id := strings.TrimSpace(netPods[i].cloud.DeviceID)
+		key := strings.TrimSpace(netPods[i].id)
 		for _, sp := range serialPods {
-			if (sp.Addressed() && sp.IP == host) || (id != "" && strings.TrimSpace(sp.DeviceID) == id) {
+			if (sp.Addressed() && sp.IP == host) || (id != "" && strings.TrimSpace(sp.DeviceID) == id) ||
+				(key != "" && strings.TrimSpace(sp.PublicKey) == key) {
 				netPods[i].sameAs = sp.Device
 				break
 			}

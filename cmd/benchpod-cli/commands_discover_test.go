@@ -39,6 +39,21 @@ func TestCorrelateMatchesADualHomedPodByDeviceID(t *testing.T) {
 	}
 }
 
+// A pod straight out of the box on Ethernet and Wi-Fi has no device id yet; its public key
+// (USB `identity`, mDNS TXT id) is what makes it one pod rather than two.
+func TestCorrelateMatchesAnUnregisteredDualHomedPodByPublicKey(t *testing.T) {
+	netPods := []discoveredPod{{addr: "192.168.1.221:8080", id: "uuoGf1v6n9yeBZZVkey", cloud: cloudState{known: true}}}
+	correlate(netPods, []serialconsole.SerialPod{{Device: "/dev/ttyACM0", IP: "192.168.1.220", PublicKey: "uuoGf1v6n9yeBZZVkey"}})
+	if netPods[0].sameAs != "/dev/ttyACM0" {
+		t.Fatalf("got %q", netPods[0].sameAs)
+	}
+	other := []discoveredPod{{addr: "192.168.1.221:8080", id: "someone-else", cloud: cloudState{known: true}}}
+	correlate(other, []serialconsole.SerialPod{{Device: "/dev/ttyACM0", IP: "192.168.1.220", PublicKey: "uuoGf1v6n9yeBZZVkey"}})
+	if other[0].sameAs != "" {
+		t.Fatalf("different keys were matched: %q", other[0].sameAs)
+	}
+}
+
 func TestCorrelateIgnoresUnaddressedSerialPod(t *testing.T) {
 	// A pod with no lease reports 0.0.0.0; it must never match a network entry,
 	// which would otherwise collapse two distinct pods into one.

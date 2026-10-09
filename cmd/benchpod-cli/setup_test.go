@@ -24,6 +24,7 @@ type fakeSetupEnv struct {
 	afterReg  cloudState // cloud state after register
 	profileMV int        // la_mv in the stored wiring profile, 0 = none
 	saveErr   error      // what saveLaMV fails with
+	latest    string     // latest firmware release, "" = unknown
 
 	calls      []string
 	wifiSSID   string
@@ -88,6 +89,8 @@ func (f *fakeSetupEnv) save(target string) error {
 	f.saved = target
 	return nil
 }
+
+func (f *fakeSetupEnv) latestFirmware() string { return f.latest }
 
 func (f *fakeSetupEnv) did(call string) bool {
 	for _, c := range f.calls {
@@ -384,5 +387,36 @@ func TestSetupSavesTheVoltageAfterRegistering(t *testing.T) {
 	if !env.did("register") || env.profileMV != 3300 || env.profileFor != "dev-1" ||
 		!strings.Contains(out, "Saved the I/O voltage (3.3 V) to its wiring profile on embeddedci.com.") {
 		t.Fatalf("calls %v profile %d\n%s", env.calls, env.profileMV, out)
+	}
+}
+
+func TestSetupNudgesAnOutdatedFirmware(t *testing.T) {
+	newEnv := func(fw, latest string) *fakeSetupEnv {
+		return &fakeSetupEnv{
+			pods:    []setupPod{{device: "/dev/cu.usbmodem1", addr: "192.168.1.221:8080", firmware: fw, cloud: registeredMine}},
+			laMV:    3300,
+			cloud:   registeredMine,
+			who:     "you@example.com",
+			account: map[string]string{"dev-1": "benchpod-baea06"},
+			latest:  latest,
+		}
+	}
+	out, err := runSetupWith(t, newEnv("v3.6.0", "v3.8.0"), "", setupOpts{laVoltageMV: 3300, yes: true})
+	if err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	for _, want := range []string{"Firmware 3.6.0 is out of date: 3.8.0 is the latest", "benchpod flash-self --enter-dfu"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q\n%s", want, out)
+		}
+	}
+	for _, env := range []*fakeSetupEnv{newEnv("v3.8.0", "v3.8.0"), newEnv("v3.6.0", "")} {
+		out, err := runSetupWith(t, env, "", setupOpts{laVoltageMV: 3300, yes: true})
+		if err != nil {
+			t.Fatalf("setup: %v\n%s", err, out)
+		}
+		if strings.Contains(out, "out of date") {
+			t.Errorf("nudged without cause\n%s", out)
+		}
 	}
 }

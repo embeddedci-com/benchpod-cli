@@ -606,6 +606,10 @@ $ benchpod setup --la-voltage 3.3V
 Default connection set to network/TCP 192.168.1.221:8080 (saved to ~/.config/benchpod-cli/config.json).
 ```
 
+When the pod runs firmware older than the latest release, step 1 also prints the update
+command (`benchpod flash-self --enter-dfu`, then replug USB-C); setup does not flash on its own.
+
+
 | Flag               | Default | Purpose                                                                 |
 |--------------------|---------|-------------------------------------------------------------------------|
 | `--la-voltage`     | (ask)   | Board I/O voltage to set: `1.8V` or `3.3V`. Without it, a voltage already set is kept and an unset one is asked for. |
