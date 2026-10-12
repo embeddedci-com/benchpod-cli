@@ -147,11 +147,12 @@ API takes, so the output is the same. It needs:
 `https://www.embeddedci.com`), as it does for the SDK.
 
 Commands that stream data or need a direct link to the pod do not go through
-embeddedci.com: `capture`, `stream`, `measure`, `test`, `flash`, `spi-flash`,
+embeddedci.com: `capture`, `stream`, `measure`, `test`, `flash --file`, `spi-flash`,
 `cloud ca set`, `register`, the USB-only commands and `discover`. Over a cloud
 connection they refuse with a message pointing to the web app, the Python SDK or
 pytest plugin (which take `embeddedci:<name>` for those too), or a network/USB
-connection. The CLI has no UART command; use the web app's Terminal or the SDK.
+connection. `flash --build` (a build uploaded to embeddedci.com) does work over a
+cloud connection: embeddedci.com runs OpenOCD. The CLI has no UART command; use the web app's Terminal or the SDK.
 
 ### One wiring profile
 
@@ -167,7 +168,8 @@ MCP read the same one) says which LA channel carries which signal. `flash` and
 | `flash`     | `--target`   | `swd_target`  |
 | `spi-flash` | `--sck`, `--mosi`, `--miso`, `--cs` | `spi_sclk`, `spi_mosi`, `spi_miso`, `spi_cs` |
 
-That happens when the connection is the pod's network address, this machine is
+That happens when the connection is the pod's network address (or, for `flash --build`,
+`embeddedci:<pod>`), this machine is
 signed in (`benchpod login` or `BENCHPOD_API_KEY`) and the pod is on that account
 (its `cloud_status` device id is in the account's pod list, as `status` and
 `discover` check). Flags always win. The log says which values came from the
@@ -240,7 +242,7 @@ benchpod show-network     # the pod's IP (wired lease included), SSID, state, RS
 benchpod clear-wifi
 
 # Firmware:
-benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP)
+benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP; --build: an uploaded build)
 benchpod spi-flash ...    # read/erase/program an SPI NOR flash on four LA pins (network)
 benchpod bootsel          # reboot a (retired) RP2350 pod into its UF2 bootloader (USB console only)
 benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (USB console only)
@@ -778,10 +780,26 @@ Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
 ### `benchpod flash`
 
 Flash an SWD target wired to the pod, through host-side OpenOCD and the pod's
-CMSIS-DAP backend (network or USB; not through embeddedci.com). See
-[Flashing: CMSIS-DAP](#flashing-cmsis-dap). Over the network, `--swclk`, `--swdio`,
-`--nreset` and `--target` default to the pod's wiring profile (see
+CMSIS-DAP backend (network or USB). See
+[Flashing: CMSIS-DAP](#flashing-cmsis-dap). Over the network and embeddedci.com,
+`--swclk`, `--swdio`, `--nreset` and `--target` default to the pod's wiring profile (see
 [One wiring profile](#one-wiring-profile)).
+
+`--build`, `--repo` and `--ref` flash a build uploaded to embeddedci.com (the
+`upload-artifact` GitHub action or the pytest `build_report` fixture) instead of a
+`--file`. Over embeddedci.com (`--connection embeddedci:<pod>`) embeddedci.com runs
+OpenOCD, so nothing needs installing here; on the network or USB the file is downloaded
+and flashed by the local OpenOCD. Both need `benchpod login` or `BENCHPOD_API_KEY`.
+
+```bash
+benchpod flash --connection embeddedci:bench-1 --repo acme/firmware --ref main
+benchpod flash --build 3f9c2a1e-... --target-power 1
+```
+
+Without `--artifact` the build's `.elf` is flashed, else its `.hex`, else its `.bin`.
+An omitted `--target` falls back to the target the build recorded. A flash run by
+embeddedci.com always verifies and resets: `--no-verify`, `--no-reset`,
+`--keep-reset-init`, `--openocd`, `-c` and `--openocd-arg` only apply to a local run.
 
 | Flag                       | Default | Purpose                                                                 |
 |----------------------------|---------|-------------------------------------------------------------------------|
@@ -789,6 +807,11 @@ CMSIS-DAP backend (network or USB; not through embeddedci.com). See
 | `--swdio`                  | (profile `swd_swdio`, else required) | LA pin for SWDIO, 1-14.                    |
 | `--target`                 | (profile `swd_target`, else none) | OpenOCD target config, passed as `-f`, e.g. `target/stm32f1x.cfg`. |
 | `--file`                   | (none)  | Firmware image to flash, used with `--target`.                          |
+| `--build`                  | (none)  | Flash a build uploaded to embeddedci.com instead of `--file`: its build id (the upload's `build_id`), or `latest` for the newest one matching `--repo`/`--ref`. |
+| `--repo`                   | (none)  | With `--build`: the GitHub repository of the uploaded build, `owner/name`. |
+| `--ref`                    | (none)  | With `--build`: its branch or tag, e.g. `main`.                         |
+| `--artifact`               | (`.elf`, `.hex`, then `.bin`) | With `--build`: the file to flash when the build holds several. |
+| `--server-side`            | (on over embeddedci.com) | With `--build`: embeddedci.com runs OpenOCD. `--server-side=false` downloads the file and flashes it here (the default on the network and USB). |
 | `--load-address`           | (none)  | Load address for a raw `.bin` image.                                    |
 | `--nreset`                 | (profile `swd_nreset`, else off) | The target's NRST is wired to the pod's reset pin (DUT header J1 pin 22); turns on connect-under-reset. `--nreset=false` overrides the profile. |
 | `--no-connect-under-reset` | off     | Do not hold the target in reset while connecting.                       |
@@ -800,7 +823,7 @@ CMSIS-DAP backend (network or USB; not through embeddedci.com). See
 | `--command`, `-c`          | (none)  | Extra OpenOCD command, repeatable, appended last.                       |
 | `--openocd-arg`            | (none)  | Extra raw OpenOCD argument, repeatable, appended last.                  |
 
-Pass `--target` (with `--file`) or at least one `-c`/`--openocd-arg`.
+Pass `--target` (with `--file` or `--build`) or at least one `-c`/`--openocd-arg`.
 
 ### `benchpod spi-flash`
 
