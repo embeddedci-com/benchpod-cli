@@ -617,3 +617,146 @@ func (c *Client) DeviceCommand(ctx context.Context, accessToken, deviceID string
 	}
 	return &out, nil
 }
+
+// ── uploaded builds (benchpod flash --build) ────────────────────────────────
+
+// BuildSelector names an uploaded build to flash: Build is the build id the upload printed
+// ("" or "latest": the newest build that matches the rest), Repo "owner/name" or "name", Ref a
+// branch or tag, Artifact a file name in the build (default: its .elf, then .hex, then .bin).
+type BuildSelector struct {
+	Build    string `json:"build,omitempty"`
+	Repo     string `json:"repo,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	Artifact string `json:"artifact,omitempty"`
+}
+
+// BuildArtifact is one flashable file of an uploaded build.
+type BuildArtifact struct {
+	JobID          string          `json:"job_id"`
+	PackID         string          `json:"pack_id"`
+	Name           string          `json:"name"`
+	Repo           string          `json:"repo,omitempty"`
+	Ref            string          `json:"ref,omitempty"`
+	Sha            string          `json:"sha,omitempty"`
+	SizeBytes      int64           `json:"size_bytes,omitempty"`
+	WiringDefaults json.RawMessage `json:"wiring_defaults,omitempty"`
+}
+
+// Target is the OpenOCD target config the build recorded, or "".
+func (a *BuildArtifact) Target() string {
+	var w struct {
+		Target string `json:"target"`
+	}
+	_ = json.Unmarshal(a.WiringDefaults, &w)
+	return strings.TrimSpace(w.Target)
+}
+
+// Describe is "name (build id, repo ref sha)" for log lines.
+func (a *BuildArtifact) Describe() string {
+	var parts []string
+	for _, p := range []string{a.Repo, a.Ref, a.Sha} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	s := a.Name + " from build " + a.JobID
+	if len(parts) > 0 {
+		s += " (" + strings.Join(parts, " ") + ")"
+	}
+	return s
+}
+
+// ResolveBuildArtifact calls GET /api/benchpod/builds/artifact: the one file a flash of sel uses.
+func (c *Client) ResolveBuildArtifact(ctx context.Context, accessToken string, sel BuildSelector) (*BuildArtifact, error) {
+	q := url.Values{}
+	for k, v := range map[string]string{"build": sel.Build, "repo": sel.Repo, "ref": sel.Ref, "artifact": sel.Artifact} {
+		if strings.TrimSpace(v) != "" {
+			q.Set(k, strings.TrimSpace(v))
+		}
+	}
+	path := "/api/benchpod/builds/artifact"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out struct {
+		Artifact *BuildArtifact `json:"artifact"`
+	}
+	if err := c.doAuthedJSON(ctx, http.MethodGet, path, accessToken, nil, &out); err != nil {
+		return nil, err
+	}
+	if out.Artifact == nil {
+		return nil, errors.New("the server returned no artifact for this build")
+	}
+	return out.Artifact, nil
+}
+
+// DownloadBuildArtifact streams a file ResolveBuildArtifact returned into w.
+func (c *Client) DownloadBuildArtifact(ctx context.Context, accessToken string, a *BuildArtifact, w io.Writer) error {
+	segs := strings.Split(a.Name, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	path := "/api/benchpod/builds/" + url.PathEscape(a.JobID) + "/packs/" + url.PathEscape(a.PackID) +
+		"/artifacts/" + strings.Join(segs, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", Authorization(accessToken))
+	httpc := c.HTTP
+	if httpc == nil {
+		httpc = http.DefaultClient
+	}
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(data, &errBody)
+		return &APIError{Method: http.MethodGet, Path: path, Status: resp.StatusCode,
+			Message: strings.TrimSpace(errBody.Error), Body: strings.TrimSpace(string(data))}
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
+}
+
+// FlashRequest is the body of POST /api/benchpod/devices/{id}/flash: the artifact (JobID, PackID,
+// ArtifactName) and the SWD settings. Efuse 0 leaves target power alone.
+type FlashRequest struct {
+	JobID             string `json:"job_id"`
+	PackID            string `json:"pack_id"`
+	ArtifactName      string `json:"artifact_name"`
+	Target            string `json:"target"`
+	LoadAddr          string `json:"load_addr,omitempty"`
+	SWCLK             int    `json:"swclk"`
+	SWDIO             int    `json:"swdio"`
+	NReset            bool   `json:"nreset"`
+	Efuse             int    `json:"efuse"`
+	ConnectUnderReset *bool  `json:"connect_under_reset,omitempty"`
+}
+
+// FlashResponse is the server's verdict: OpenOCD's output and, on failure, the error.
+type FlashResponse struct {
+	OK                bool   `json:"ok"`
+	Output            string `json:"output"`
+	Error             string `json:"error"`
+	TargetUnreachable bool   `json:"target_unreachable"`
+}
+
+// FlashDevice calls POST /api/benchpod/devices/{id}/flash: embeddedci.com flashes an uploaded build
+// with its own OpenOCD through the pod. A flash that ran and failed is a response with OK false.
+func (c *Client) FlashDevice(ctx context.Context, accessToken, deviceID string, body FlashRequest) (*FlashResponse, error) {
+	if strings.TrimSpace(deviceID) == "" || strings.Contains(deviceID, "/") {
+		return nil, fmt.Errorf("invalid device id %q", deviceID)
+	}
+	var out FlashResponse
+	if err := c.doAuthedJSON(ctx, http.MethodPost, "/api/benchpod/devices/"+url.PathEscape(deviceID)+"/flash", accessToken, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

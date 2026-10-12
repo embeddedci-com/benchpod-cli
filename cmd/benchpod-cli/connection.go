@@ -152,7 +152,7 @@ func cloudRefusal(cmd string, c ConnSpec, usb bool) error {
 
 // cloudCommandList names the commands that work over embeddedci.com, for messages and help.
 const cloudCommandList = "status, ping, la voltage, la pullup, la status, la step, generate, " +
-	"lan-policy, sig-policy, cloud ca show/clear, cloud proxy, deregister"
+	"lan-policy, sig-policy, cloud ca show/clear, cloud proxy, deregister, flash --build"
 
 // ── set-connection ───────────────────────────────────────────────────────────
 

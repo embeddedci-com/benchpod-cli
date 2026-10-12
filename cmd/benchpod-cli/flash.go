@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/openocd"
+	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -66,6 +67,11 @@ type flashFlags struct {
 	extraConfigs        []string
 	extraArgs           []string
 
+	// An uploaded build instead of --file (see flashFromBuild).
+	build, repo, ref, artifact string
+	// serverSide: --server-side was given (serverSideSet) and its value.
+	serverSide, serverSideSet bool
+
 	// nresetSet says --nreset was given (either way), so the wiring profile does not override it.
 	nresetSet bool
 
@@ -89,10 +95,15 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	f := &flashFlags{}
 	cmd := &cobra.Command{
 		Use:   "flash",
-		Short: "Flash an SWD target via OpenOCD's CMSIS-DAP backend (network or USB)",
+		Short: "Flash an SWD target via OpenOCD's CMSIS-DAP backend (network, USB, or an uploaded build)",
 		Long: "Flash an SWD target wired to the pod's LA pins: the pod becomes a CMSIS-DAP\n" +
 			"probe and a local OpenOCD programs the target through it. Works over the network\n" +
-			"and over USB; not over embeddedci.com (use the web app or the Python SDK there).\n\n" +
+			"and over USB.\n\n" +
+			"--build, --repo, --ref and --artifact flash a build uploaded to embeddedci.com\n" +
+			"(the upload-artifact action or the pytest build_report fixture) instead of --file.\n" +
+			"Over embeddedci.com (--connection embeddedci:<pod>) embeddedci.com runs OpenOCD, so\n" +
+			"none is needed here; on the network or USB the file is downloaded and flashed by the\n" +
+			"local OpenOCD. Both need `benchpod login` or BENCHPOD_API_KEY.\n\n" +
 			"--swclk, --swdio, --nreset and --target default to swd_swclk, swd_swdio,\n" +
 			"swd_nreset and swd_target in the pod's wiring profile on embeddedci.com when this\n" +
 			"machine is signed in (`benchpod login` or BENCHPOD_API_KEY), the pod is on that\n" +
@@ -101,6 +112,7 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			f.nresetSet = cmd.Flags().Changed("nreset")
+			f.serverSideSet = cmd.Flags().Changed("server-side")
 			return runFlash(g, f)
 		},
 	}
@@ -110,6 +122,11 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	fl.BoolVar(&f.nreset, "nreset", false, "the target's NRST is wired to the pod's reset pin ("+nrstPinLocation+"); enables connect-under-reset (default: swd_nreset from the pod's wiring profile)")
 	fl.StringVar(&f.target, "target", "", "OpenOCD target config (passed as -f), e.g. target/stm32f1x.cfg (default: swd_target from the pod's wiring profile)")
 	fl.StringVar(&f.file, "file", "", "firmware image to flash (used with --target)")
+	fl.StringVar(&f.build, "build", "", "flash a build uploaded to embeddedci.com instead of --file: its build id, or latest (the newest one matching --repo/--ref)")
+	fl.StringVar(&f.repo, "repo", "", "with --build: the GitHub repository of the uploaded build, owner/name (newest build of that repo)")
+	fl.StringVar(&f.ref, "ref", "", "with --build: the branch or tag of the uploaded build, e.g. main")
+	fl.StringVar(&f.artifact, "artifact", "", "with --build: the file to flash when the build holds several (default: its .elf, then .hex, then .bin)")
+	fl.BoolVar(&f.serverSide, "server-side", false, "with --build: have embeddedci.com run OpenOCD (default over embeddedci.com); --server-side=false downloads the file and flashes it here (default on the network and USB)")
 	fl.StringVar(&f.loadAddr, "load-address", "", "load address for a raw .bin image (appended to the program command)")
 	fl.BoolVar(&f.noVerify, "no-verify", false, "do not verify after programming")
 	fl.BoolVar(&f.noReset, "no-reset", false, "do not reset the target after programming")
@@ -127,11 +144,41 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if err != nil {
 		return err
 	}
-	if spec.IsCloud() {
-		return cloudRefusal("flash", spec, true)
+	fromBuild := f.fromBuild()
+	if fromBuild && strings.TrimSpace(f.file) != "" {
+		return fmt.Errorf("pass either --file or an uploaded build (--build, --repo, --ref, --artifact), not both")
 	}
-	if spec.IsNetwork() {
+	if !fromBuild && f.serverSideSet {
+		return fmt.Errorf("--server-side only applies to an uploaded build (--build, --repo, --ref)")
+	}
+	serverSide := spec.IsCloud()
+	if f.serverSideSet {
+		serverSide = f.serverSide
+	}
+	if spec.IsCloud() && !fromBuild {
+		return fmt.Errorf("flash over embeddedci.com (--connection %s%s) flashes a build uploaded there: pass --build, --repo or --ref. "+
+			"A local --file needs a direct link to the pod: pass its network address (`benchpod discover` finds it) or `usb`",
+			cloudConnPrefix, spec.Name)
+	}
+	if spec.IsCloud() && !serverSide {
+		return fmt.Errorf("--server-side=false needs a direct link to the pod: pass its network address or `usb` as --connection")
+	}
+	if spec.IsNetwork() || spec.IsCloud() {
 		f.fillFromWiring(g)
+	}
+	var art *serverapi.BuildArtifact
+	if fromBuild {
+		var cleanup func()
+		var err error
+		art, cleanup, err = f.resolveBuild(g, !serverSide)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		if strings.TrimSpace(f.target) == "" && art.Target() != "" {
+			f.target = art.Target()
+			log.Printf("flash: target %s from the build", f.target)
+		}
 	}
 	if strings.TrimSpace(f.swclk) == "" || strings.TrimSpace(f.swdio) == "" {
 		return fmt.Errorf("--swclk and --swdio are required (or set swd_swclk and swd_swdio in the pod's wiring profile on embeddedci.com)")
@@ -148,10 +195,16 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 		return fmt.Errorf("--swclk and --swdio must be different pins")
 	}
 	if strings.TrimSpace(f.file) != "" && strings.TrimSpace(f.target) == "" {
+		if fromBuild {
+			return fmt.Errorf("--target is required: the build recorded none and the wiring profile has no swd_target")
+		}
 		return fmt.Errorf("--file requires --target")
 	}
 	if f.targetPower != 0 && f.targetPower != 1 && f.targetPower != 2 {
 		return fmt.Errorf("--target-power must be 1 (internal 5V) or 2 (external)")
+	}
+	if fromBuild && serverSide {
+		return f.flashOnServer(g, spec, art, swclk, swdio)
 	}
 	// 1. Identify OpenOCD. 2. Validate it actually runs.
 	bin := strings.TrimSpace(f.openocdBin)
