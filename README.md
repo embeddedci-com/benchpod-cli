@@ -120,7 +120,7 @@ reach the pod; the transport is inferred from its value:
 | `192.168.1.5[:8080]`             | The pod's network TCP/JSON API (Ethernet or Wi-Fi).    |
 | `/dev/tty...`, `COM3`            | USB, explicit console device path.                     |
 | `usb`                            | USB, the console auto-detected by probing the ports.   |
-| `usb:<name>`                     | USB, the pod with that name (`usb:benchpod-a1b2c3`) when several are plugged in; plain `usb` then lists them. |
+| `usb:<name>`                     | USB, the pod with that name (`usb:benchpod-a1b2c3`) when several are plugged in; plain `usb` then lists them (not yet tested with two physical pods). |
 | `embeddedci:<name>`              | Through embeddedci.com to the pod with that name on your account (see below). |
 | *(omitted)*                      | the default saved by `benchpod discover --save`, `benchpod setup` or `benchpod set-connection`. |
 
