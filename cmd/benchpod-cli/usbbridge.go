@@ -33,7 +33,7 @@ const (
 
 func newUSBBridgeCmd(g *globalFlags) *cobra.Command {
 	var port int
-	var keep bool
+	var keep, watch bool
 	cmd := &cobra.Command{
 		Use:   "usb-bridge",
 		Short: "Carry the pod's cloud link over USB through this computer (runs until Ctrl-C)",
@@ -41,92 +41,179 @@ func newUSBBridgeCmd(g *globalFlags) *cobra.Command {
 			"this computer's end of the USB link and set it as the pod's cloud proxy, so the pod\n" +
 			"reaches embeddedci.com through this computer's internet connection. It runs until\n" +
 			"Ctrl-C, then clears the pod's proxy again (--keep-proxy leaves it set).\n\n" +
+			"--watch keeps going when no pod is plugged in or the USB link goes away, and picks the\n" +
+			"pod up again when it comes back: that is how `usb-bridge install` runs it in the\n" +
+			"background.\n\n" +
 			"Needs firmware 3.9.0 or later and no Wi-Fi configured on the pod. The proxy accepts\n" +
 			"only the pod, and only tunnels to port 443. It refuses to replace a proxy the pod\n" +
 			"already has (`benchpod cloud proxy clear` removes it).",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runUSBBridge(g, port, keep)
+			return runUSBBridge(g, port, keep, watch)
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", usbBridgeDefaultPort, "TCP port of the proxy on this computer's USB address")
 	cmd.Flags().BoolVar(&keep, "keep-proxy", false, "leave the pod's cloud proxy set when the bridge stops")
+	cmd.Flags().BoolVar(&watch, "watch", false, "wait for the pod and survive unplugging it (for running in the background)")
+	cmd.AddCommand(newUSBBridgeInstallCmd(g), newUSBBridgeUninstallCmd(g), newUSBBridgeStatusCmd(g))
 	return cmd
 }
 
-func runUSBBridge(g *globalFlags, port int, keep bool) error {
-	if port <= 0 || port > 65535 {
-		return fmt.Errorf("usb-bridge: --port %d is out of range", port)
-	}
+// usbBridgeRetry is how often --watch looks for the pod again.
+const usbBridgeRetry = 10 * time.Second
+
+// bridgeSession is one bridge run: the pod's USB link, the proxy's listener on this computer's
+// end of it, and the console device it was set up through.
+type bridgeSession struct {
+	u         serialconsole.USBNet
+	proxyAddr string
+	ln        net.Listener
+	device    string
+}
+
+// setupBridge checks the pod's USB link, listens on this computer's end of it and points the
+// pod's cloud proxy there (unless it already is). The console is closed again before it returns.
+func setupBridge(g *globalFlags, port int) (*bridgeSession, error) {
 	device, err := g.usbDevice("usb-bridge")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	console, path, ctx, cancel, err := g.openSerialConsole(device, 15*time.Second)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	defer cancel()
+	defer console.Close()
 	u, err := console.USBNetwork(ctx)
 	if err == nil {
 		err = usbBridgeReady(u)
 	}
 	if err != nil {
-		console.Close()
-		cancel()
-		return fmt.Errorf("usb-bridge: %w", err)
+		return nil, err
 	}
 	proxyAddr := net.JoinHostPort(u.HostIP, strconv.Itoa(port))
 	cur, err := console.CloudProxy(ctx)
 	if err != nil {
-		console.Close()
-		cancel()
-		return fmt.Errorf("usb-bridge: read the pod's cloud proxy: %w", err)
+		return nil, fmt.Errorf("read the pod's cloud proxy: %w", err)
 	}
 	if cur.Addr != "" && cur.Addr != proxyAddr {
-		console.Close()
-		cancel()
-		return fmt.Errorf("usb-bridge: the pod already has a cloud proxy (%s); the bridge would replace it. "+
+		return nil, fmt.Errorf("the pod already has a cloud proxy (%s); the bridge would replace it. "+
 			"Remove it first with `benchpod cloud proxy clear --connection usb`", cur.Addr)
 	}
-
 	ln, err := net.Listen("tcp", proxyAddr)
 	if err != nil {
-		console.Close()
-		cancel()
-		return fmt.Errorf("usb-bridge: listen on %s, this computer's end of the USB link: %w "+
+		return nil, fmt.Errorf("listen on %s, this computer's end of the USB link: %w "+
 			"(if the adapter has no address yet, run `benchpod usb-reattach`)", proxyAddr, err)
 	}
-	if _, err := console.CloudProxySet(ctx, proxyAddr, "", ""); err != nil {
-		ln.Close()
-		console.Close()
-		cancel()
-		return fmt.Errorf("usb-bridge: set the pod's cloud proxy: %w", err)
+	if cur.Addr != proxyAddr {
+		if _, err := console.CloudProxySet(ctx, proxyAddr, "", ""); err != nil {
+			ln.Close()
+			return nil, fmt.Errorf("set the pod's cloud proxy: %w", err)
+		}
 	}
-	// Free the console for other commands while the bridge runs.
-	console.Close()
-	cancel()
-	fmt.Fprintf(os.Stderr, "usb-bridge: the pod (%s) reaches embeddedci.com through %s. Ctrl-C stops it.\n", u.PodIP, proxyAddr)
+	return &bridgeSession{u: u, proxyAddr: proxyAddr, ln: ln, device: path}, nil
+}
 
-	runCtx, stop := context.WithCancel(context.Background())
-	defer stop()
-	defer installSignalHandler(runCtx, stop)()
-	go func() { <-runCtx.Done(); ln.Close() }()
-	p := &connectProxy{allowFrom: u.PodIP, allowPort: usbBridgeAllowedPort, logf: log.Printf}
-	p.serve(ln)
+// hostHasIP reports whether a local interface holds ip: the USB link is gone when it does not.
+var hostHasIP = func(ip string) bool {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return true // cannot tell: keep serving
+	}
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.String() == ip {
+			return true
+		}
+	}
+	return false
+}
+
+// serveBridge runs the proxy until ctx ends (true) or the USB link goes away (false).
+func serveBridge(ctx context.Context, s *bridgeSession) bool {
+	gone := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				s.ln.Close()
+				return
+			case <-done:
+				return
+			case <-t.C:
+				if !hostHasIP(s.u.HostIP) {
+					close(gone)
+					s.ln.Close()
+					return
+				}
+			}
+		}
+	}()
+	p := &connectProxy{allowFrom: s.u.PodIP, allowPort: usbBridgeAllowedPort, logf: log.Printf}
+	p.serve(s.ln)
+	close(done)
 	p.wait()
+	select {
+	case <-gone:
+		return false
+	default:
+		return ctx.Err() != nil
+	}
+}
+
+func runUSBBridge(g *globalFlags, port int, keep, watch bool) error {
+	if port <= 0 || port > 65535 {
+		return fmt.Errorf("usb-bridge: --port %d is out of range", port)
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	defer installSignalHandler(ctx, stop)()
+
+	var last *bridgeSession
+	lastErr := ""
+	for {
+		s, err := setupBridge(g, port)
+		if err != nil {
+			if !watch {
+				return fmt.Errorf("usb-bridge: %w", err)
+			}
+			if err.Error() != lastErr { // one line per new reason, not one per retry
+				log.Printf("usb-bridge: waiting for the pod: %v", err)
+				lastErr = err.Error()
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(usbBridgeRetry):
+			}
+			continue
+		}
+		lastErr = ""
+		last = s
+		fmt.Fprintf(os.Stderr, "usb-bridge: the pod (%s) reaches embeddedci.com through %s. Ctrl-C stops it.\n", s.u.PodIP, s.proxyAddr)
+		if serveBridge(ctx, s) {
+			break // stopped
+		}
+		log.Printf("usb-bridge: the USB link to the pod (%s) went away", s.u.PodIP)
+		if !watch {
+			return errors.New("usb-bridge: the USB link to the pod went away")
+		}
+	}
 
 	if keep {
-		fmt.Fprintf(os.Stderr, "usb-bridge: stopped; the pod's cloud proxy stays %s (--keep-proxy)\n", proxyAddr)
+		fmt.Fprintf(os.Stderr, "usb-bridge: stopped; the pod's cloud proxy stays %s (--keep-proxy)\n", last.proxyAddr)
 		return nil
 	}
-	console, _, ctx, cancel, err = g.openSerialConsole(path, 15*time.Second)
+	console, _, cctx, cancel, err := g.openSerialConsole(last.device, 15*time.Second)
 	if err != nil {
 		return fmt.Errorf("usb-bridge: stopped, but could not clear the pod's cloud proxy (%w); "+
 			"run `benchpod cloud proxy clear --connection usb`", err)
 	}
 	defer cancel()
 	defer console.Close()
-	if _, err := console.CloudProxyClear(ctx); err != nil {
+	if _, err := console.CloudProxyClear(cctx); err != nil {
 		return fmt.Errorf("usb-bridge: stopped, but clearing the pod's cloud proxy failed: %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "usb-bridge: stopped; cleared the pod's cloud proxy")

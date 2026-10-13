@@ -989,6 +989,32 @@ the bridge are blocked.
 |----------------|---------|------------------------------------------------------|
 | `--port`       | `3128`  | TCP port of the proxy on this computer's USB address. |
 | `--keep-proxy` | off     | Leave the pod's cloud proxy set when the bridge stops. |
+| `--watch`      | off     | Wait for the pod and pick it up again after it is unplugged or restarted (how the background service runs it). |
+
+### `benchpod usb-bridge install`
+
+Run `benchpod usb-bridge --watch` in the background for this user, at every login: a
+launchd agent on macOS (`~/Library/LaunchAgents/com.embeddedci.benchpod-usb-bridge.plist`,
+log in `~/Library/Logs/benchpod-usb-bridge.log`), a systemd user unit on Linux
+(`~/.config/systemd/user/benchpod-usb-bridge.service`; `loginctl enable-linger` keeps it
+running while you are logged out), or a scheduled task at logon on Windows
+(`BenchPod usb-bridge`). A pod with only USB then keeps its cloud link, and so the web
+app, after this computer restarts. `--connection` is passed on, so
+`--connection usb:<name>` installs it for one of several pods. On Windows, also let
+the pod in through Windows Defender Firewall (see `usb-bridge`).
+
+| Flag     | Default | Purpose                                              |
+|----------|---------|------------------------------------------------------|
+| `--port` | `3128`  | TCP port of the proxy on this computer's USB address. |
+
+### `benchpod usb-bridge uninstall`
+
+Stop and remove the background service, then clear the pod's cloud proxy when it still
+points at this computer (the pod must be plugged in for that). No flags.
+
+### `benchpod usb-bridge status`
+
+Show whether the background service is installed and running. No flags.
 
 ### `benchpod usb-reattach`
 
