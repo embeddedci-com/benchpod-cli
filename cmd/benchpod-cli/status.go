@@ -154,6 +154,42 @@ func describeUSB(u podUSB) string {
 	return strings.Join(parts, "; ")
 }
 
+// powerDraw is the firmware's `power_status` reply: the rails' monitors and, on boards with the
+// pod's own current monitor (0x41), the pod's draw and the total from its 5 V input.
+type powerDraw struct {
+	Internal powerRail `json:"internal"`
+	External powerRail `json:"external"`
+	Pod      *struct {
+		powerRail
+		TotalUA *int `json:"total_ua"`
+	} `json:"pod"`
+}
+
+type powerRail struct {
+	OK        bool `json:"ok"`
+	BusMV     int  `json:"bus_mv"`
+	CurrentUA int  `json:"current_ua"`
+}
+
+// describePowerDraw: the rails that are on, then the pod's own draw and the total.
+func describePowerDraw(d powerDraw, tp *targetPower) string {
+	ma := func(ua int) string { return fmt.Sprintf("%d mA", (ua+500)/1000) }
+	var parts []string
+	if d.Internal.OK && (tp == nil || tp.Efuse1.Enabled != 0) {
+		parts = append(parts, fmt.Sprintf("internal 5 V rail %s at %s", ma(d.Internal.CurrentUA), formatMV(d.Internal.BusMV)))
+	}
+	if d.External.OK && (tp == nil || tp.Efuse2.Enabled != 0) {
+		parts = append(parts, fmt.Sprintf("external rail %s at %s", ma(d.External.CurrentUA), formatMV(d.External.BusMV)))
+	}
+	if d.Pod != nil && d.Pod.OK {
+		parts = append(parts, "pod "+ma(d.Pod.CurrentUA))
+		if d.Pod.TotalUA != nil {
+			parts = append(parts, "total from USB "+ma(*d.Pod.TotalUA))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 // targetPower is the firmware's `target_status` reply: eFuse 1 is the internal 5 V rail, eFuse 2
 // the external supply.
 type targetPower struct {
@@ -174,6 +210,7 @@ type statusSummary struct {
 	st      podStatus
 	cloud   *cloudState
 	power   *targetPower
+	draw    *powerDraw
 	account map[string]string // signed-in account's devices by id, nil = not signed in / unknown
 	latest  string            // latest firmware release tag, "" = unknown
 }
@@ -187,6 +224,14 @@ func gatherStatusExtras(ctx context.Context, client podCommander, sum *statusSum
 		if json.Unmarshal(raw, &c) == nil {
 			c.known = true
 			sum.cloud = &c
+		}
+	}
+	cancel()
+	cctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+	if raw, err := client.Command(cctx, map[string]any{"cmd": "power_status"}); err == nil {
+		var d powerDraw
+		if json.Unmarshal(raw, &d) == nil {
+			sum.draw = &d
 		}
 	}
 	cancel()
@@ -245,6 +290,11 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 	}
 	if s.power != nil {
 		row("Target power", describeTargetPower(*s.power))
+	}
+	if s.draw != nil {
+		if d := describePowerDraw(*s.draw, s.power); d != "" {
+			row("Power draw", d)
+		}
 	}
 	row("Network", describeNetwork(st))
 	if st.USB != nil {
