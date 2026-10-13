@@ -112,7 +112,11 @@ func (g *globalFlags) networkTarget(cmd string) (ConnSpec, error) {
 	if g.usbAddr != "" {
 		return ConnSpec{Kind: connNetwork, Addr: g.usbAddr}, nil
 	}
-	addr, uerr := g.usbNetAddr(spec.Device)
+	addr, uerr := g.usbAddr, g.usbErr
+	if uerr == nil {
+		addr, uerr = g.usbNetAddr(spec.Device)
+		g.usbErr = uerr
+	}
 	if errors.Is(uerr, tcpclient.ErrUnreachable) {
 		return spec, uerr
 	}
