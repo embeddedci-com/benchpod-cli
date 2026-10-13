@@ -372,10 +372,12 @@ func dfuDevicePresent(ctx context.Context, dfuPath string) bool {
 // enterDfuViaConsole opens the serial console and sends the `dfu` command to
 // reboot a running pod into its ROM USB DFU bootloader.
 func enterDfuViaConsole(g *globalFlags) error {
-	console, _, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(10*time.Second))
+	console, path, ctx, cancel, err := g.openSerialConsole(g.serialDevice(), g.effectiveTimeout(10*time.Second))
 	if err != nil {
 		return fmt.Errorf("enter-dfu: open USB console: %w", err)
 	}
+	// The USB serial number finds this pod again after the update, under its new USB ID.
+	flashedPodSerial = serialconsole.PortSerialNumber(path)
 	defer cancel()
 	defer console.Close()
 	if err := console.Dfu(ctx); err != nil {
@@ -476,13 +478,27 @@ func checkImageFitsPod(ctx context.Context, dfuPath, file string) error {
 	return nil
 }
 
+// flashedPodSerial is the USB serial number of the pod flash-self rebooted into DFU over its
+// console ("" when it was put in DFU by hand): it finds the pod again after the update.
+var flashedPodSerial string
+
 // Seams for tests: how long installBlobsAfterFlash waits for the flashed pod's USB console,
 // how often it tries, and how it opens it.
 var (
-	flashedConsoleWait  = 60 * time.Second
+	// Generous: from 3.8.x to 3.9.0 the pod comes back under a new USB ID, and Windows installs
+	// drivers and assigns a new COM port before the console appears.
+	flashedConsoleWait  = 150 * time.Second
 	flashedConsoleRetry = time.Second
 	openFlashedConsole  = func(g *globalFlags) (*serialconsole.Console, error) {
-		c, _, err := g.openBenchpodSerial(g.serialDevice(), 2*time.Second)
+		device := g.serialDevice()
+		if flashedPodSerial != "" {
+			// The same pod, whatever its port is called now (0483:5740 -> 1209:xxxx renames it).
+			device = serialconsole.FindPodPortBySerial(flashedPodSerial)
+			if device == "" {
+				return nil, fmt.Errorf("the pod (USB serial number %s) is not back on USB yet", flashedPodSerial)
+			}
+		}
+		c, _, err := g.openBenchpodSerial(device, 2*time.Second)
 		return c, err
 	}
 )
@@ -492,7 +508,8 @@ var (
 // has no slots to fill and is left alone. Anything else that keeps the blobs from being
 // installed is an error, so flash-self does not report success for a pod that is missing them.
 func installBlobsAfterFlash(g *globalFlags, src blobSource) error {
-	fmt.Fprintln(os.Stderr, "flash-self: waiting for the pod's USB console to install its blobs...")
+	fmt.Fprintln(os.Stderr, "flash-self: waiting for the pod's USB console to install its blobs (after an update to 3.9.0 "+
+		"it comes back under a new USB ID: Windows gives it a new COM port and may install drivers first)...")
 	var console *serialconsole.Console
 	deadline := time.Now().Add(flashedConsoleWait)
 	for {
