@@ -85,7 +85,7 @@
     {"id": "lan_policy_from_lan", "file": "stm32h563/src/pod_policy.c", "kind": "json",
      "format": "lan_policy: change it from the cloud or the USB console",
      "example": "lan_policy: change it from the cloud or the USB console"},
-    {"id": "usb_network_not_device", "file": "stm32h563/src/pod_policy.c", "pending": "benchpod-firmware#49", "kind": "json",
+    {"id": "usb_network_not_device", "file": "stm32h563/src/pod_policy.c", "kind": "json",
      "format": "usb_network: change it on the device (the USB console, or over the USB link)",
      "example": "usb_network: change it on the device (the USB console, or over the USB link)"},
     {"id": "cloud_ca_from_lan_v39", "file": "stm32h563/src/pod_policy.c", "kind": "json",
