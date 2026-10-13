@@ -473,7 +473,7 @@ The pod reconnects to the cloud through proxy.corp:3128.
 
   ```
   $ benchpod cloud proxy clear --connection 192.168.1.50
-  [benchpod] cloud proxy clear: the pod refused: cloud_proxy: change it from the cloud or the USB console (the pod only takes this change over USB or from the cloud, never from the LAN; run it over the pod's USB console with --connection usb)
+  [benchpod] cloud proxy clear: the pod refused: cloud_proxy: change it from the cloud or over USB (the pod only takes this change over USB or from the cloud, never from Ethernet or Wi-Fi; run it with --connection usb)
   ```
 
   Older firmware with its LAN policy `locked` refuses the same way, with its own

@@ -422,7 +422,7 @@ func (p *lanCfgPod) handle(req map[string]any) string {
 		return errReply("locked: " + cmd + " needs the cloud or the USB console")
 	}
 	if p.gated && (cmd == "cloud_ca" || cmd == "cloud_proxy") && changes {
-		return errReply(cmd + ": change it from the cloud or the USB console")
+		return errReply(cmd + ": change it from the cloud or over USB")
 	}
 	if p.gated && cmd == "ota_begin" && req["target"] == "ca" {
 		return errReply("cloud_ca: change it from the cloud or the USB console")
@@ -568,7 +568,7 @@ func TestCloudLANGated(t *testing.T) {
 		t.Fatalf("requests = %s", pod.cmds())
 	}
 	_, _, err = runCACapture(g, "clear", "")
-	want = "cloud ca clear: the pod refused: cloud_ca: change it from the cloud or the USB console (" + lanGateHint + ")"
+	want = "cloud ca clear: the pod refused: cloud_ca: change it from the cloud or over USB (" + lanGateHint + ")"
 	if err == nil || err.Error() != want {
 		t.Fatalf("ca clear: err = %v\nwant %s", err, want)
 	}
@@ -578,7 +578,7 @@ func TestCloudLANGated(t *testing.T) {
 			addrArg, user, pw = "proxy.corp:3128", "alice", "s3cret"
 		}
 		_, _, err = runProxyCapture(g, action, addrArg, user, pw)
-		want = "cloud proxy " + action + ": the pod refused: cloud_proxy: change it from the cloud or the USB console (" + lanGateHint + ")"
+		want = "cloud proxy " + action + ": the pod refused: cloud_proxy: change it from the cloud or over USB (" + lanGateHint + ")"
 		if err == nil || err.Error() != want {
 			t.Fatalf("proxy %s: err = %v\nwant %s", action, err, want)
 		}
