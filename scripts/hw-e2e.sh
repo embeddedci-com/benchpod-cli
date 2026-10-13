@@ -9,6 +9,8 @@
 #   --target CFG     OpenOCD target config for --flash (default target/stm32f4x.cfg)
 #   --power N        power the target from eFuse N (1 internal 5V, 2 external) for --flash; the
 #                    DUT stays powered afterwards
+#   --flash-args "A" extra flags for --flash, e.g. "--swclk 11 --swdio 12" when the computer is not
+#                    signed in (the wiring profile on embeddedci.com names them otherwise)
 #   --blobs          also reinstall the gw1 blob (install-blobs --only gw1 --force)
 #   --cloudcfg       also set and clear a test cloud proxy and company CA on the pod
 #   --reattach       also run usb-reattach and check the pod answers again (USB connections)
@@ -17,15 +19,16 @@
 # number of failures (0 = all passed). It changes nothing it does not put back: the proxy and the
 # CA are cleared again, and gw1 is rewritten with the release's own image. Hold the bench lock.
 set -u
-CONN=${1:?usage: scripts/hw-e2e.sh <connection> [--bin PATH] [--flash ELF] [--target CFG] [--power N] [--blobs] [--cloudcfg] [--reattach]}
+CONN=${1:?usage: scripts/hw-e2e.sh <connection> [--bin PATH] [--flash ELF] [--target CFG] [--power N] [--flash-args "..."] [--blobs] [--cloudcfg] [--reattach]}
 shift
-BIN="" FLASH="" TARGET="target/stm32f4x.cfg" POWER="" BLOBS=0 CLOUDCFG=0 REATTACH=0
+BIN="" FLASH="" TARGET="target/stm32f4x.cfg" POWER="" FLASHARGS="" BLOBS=0 CLOUDCFG=0 REATTACH=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--bin) BIN=$2; shift ;;
 	--flash) FLASH=$2; shift ;;
 	--target) TARGET=$2; shift ;;
 	--power) POWER=$2; shift ;;
+	--flash-args) FLASHARGS=$2; shift ;;
 	--blobs) BLOBS=1 ;;
 	--cloudcfg) CLOUDCFG=1 ;;
 	--reattach) REATTACH=1 ;;
@@ -88,7 +91,7 @@ else
 fi
 
 if [ -n "$FLASH" ]; then
-	step "flash (SWD)"       'flash: done|Verified OK|verified' -- flash --file "$FLASH" --target "$TARGET" ${POWER:+--target-power "$POWER"}
+	step "flash (SWD)"       'flash: done|Verified OK|verified' -- flash --file "$FLASH" --target "$TARGET" ${POWER:+--target-power "$POWER"} $FLASHARGS
 else
 	skip "flash" "pass --flash ELF"
 fi

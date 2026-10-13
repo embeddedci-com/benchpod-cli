@@ -182,3 +182,21 @@ func blobTargetFor(ctx context.Context, console *serialconsole.Console, path str
 	return nil, func() {}, errors.New("this pod's firmware (3.9.0 or later) takes blobs over the network, and neither its USB " +
 		"network adapter (Wi-Fi configured on the pod turns it off: `benchpod clear-wifi`) nor its network address answers")
 }
+
+// localBlobTarget is the pod's network API on this computer's end of its USB network link
+// (firmware 3.9.0+), found without opening the console; nil when there is no such link.
+func (g *globalFlags) localBlobTarget(ctx context.Context) (blobTarget, func()) {
+	spec, err := g.resolveTarget()
+	if err != nil || !spec.IsSerial() || spec.Device != "" {
+		return nil, nil
+	}
+	addr := localUSBPod(spec.Pod)
+	if addr == "" {
+		return nil, nil
+	}
+	lan, err := openLAN(ctx, addr)
+	if err != nil {
+		return nil, nil
+	}
+	return lanBlobs{lan: lan, addr: addr}, func() { lan.s.Close() }
+}

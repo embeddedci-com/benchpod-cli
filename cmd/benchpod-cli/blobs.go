@@ -222,16 +222,23 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			console, path, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(blobsInstallTimeout))
-			if err != nil {
-				return err
-			}
+			ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(blobsInstallTimeout))
 			defer cancel()
-			defer console.Close()
-			// The pod's USB network when it is up (firmware 3.9.0+), else its console.
-			target, closeTarget, err := blobTargetFor(ctx, console, path)
-			if err != nil {
-				return err
+			// This computer's end of the pod's USB network link (firmware 3.9.0+) needs no console;
+			// else the console names the way in: the USB network when it is up, else the console.
+			target, closeTarget := g.localBlobTarget(ctx)
+			path := "the USB network"
+			if target == nil {
+				console, cpath, cctx, ccancel, err := g.openSerialConsole(device, g.effectiveTimeout(blobsInstallTimeout))
+				if err != nil {
+					return err
+				}
+				defer ccancel()
+				defer console.Close()
+				ctx, path = cctx, cpath
+				if target, closeTarget, err = blobTargetFor(ctx, console, path); err != nil {
+					return err
+				}
 			}
 			defer closeTarget()
 			src := blobSource{base: dir}
