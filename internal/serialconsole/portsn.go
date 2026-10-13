@@ -6,8 +6,8 @@ import (
 )
 
 // The pod's USB serial number (12 hex digits from the MCU's unique ID) is the same on every
-// firmware, while its USB ID is not (0483:5740 up to 3.8, 1209:xxxx from 3.9.0) and the console's
-// port name may change with it (a new COM port number on Windows). After a firmware update the
+// firmware, while the console's port name may change (a new COM port number on Windows when 3.9.0
+// adds the network adapter; pre-release 3.9.0 builds also had another USB ID, 1209:0001). After a firmware update the
 // serial number is how the same pod is found again.
 
 // PortSerialNumber is the USB serial number of the port at path ("" when the enumerator does not

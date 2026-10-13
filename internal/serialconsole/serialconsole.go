@@ -34,8 +34,9 @@ import (
 //	2E8A — Raspberry Pi, the RP2350 pod's native USB port.
 //	0483 — STMicroelectronics, the STM32H563 pod up to firmware 3.8 (ST's
 //	       stock CDC VID/PID 0483:5740, so the host binds its in-box CDC driver).
-//	1209 — pid.codes, the STM32H563 pod from firmware 3.9.0 (1209:0001): a
-//	       composite device with the console and a USB network adapter.
+//	1209 — pid.codes, pre-release builds of firmware 3.9.0 (test ID 1209:0001). Released
+//	       3.9.0 keeps 0483:5740 (a composite device with the console and a USB network
+//	       adapter); the pod's own pid.codes ID 1209:EC10 is for a later release.
 //
 // None of the IDs is exclusive to a bench pod — 2E8A is shared with the CMSIS-DAP
 // probe's CDC, 0483:5740 with every ST Virtual COM Port on the bench and 1209
