@@ -385,7 +385,7 @@ func enterDfuViaConsole(g *globalFlags) error {
 	if err != nil {
 		return fmt.Errorf("enter-dfu: open USB console: %w", err)
 	}
-	// The USB serial number finds this pod again after the update, under its new USB ID.
+	// The USB serial number finds this pod again after the update, whatever its port is called then.
 	flashedPodSerial = serialconsole.PortSerialNumber(path)
 	defer cancel()
 	defer console.Close()
@@ -497,14 +497,14 @@ var flashedPodSerial string
 // Seams for tests: how long installBlobsAfterFlash waits for the flashed pod's USB console,
 // how often it tries, and how it opens it.
 var (
-	// Generous: from 3.8.x to 3.9.0 the pod comes back under a new USB ID, and Windows installs
-	// drivers and assigns a new COM port before the console appears.
+	// Generous: from 3.8.x to 3.9.0 the pod comes back as a composite device (console + network
+	// adapter), and Windows installs drivers and may assign a new COM port before the console appears.
 	flashedConsoleWait  = 150 * time.Second
 	flashedConsoleRetry = time.Second
 	openFlashedConsole  = func(g *globalFlags) (*serialconsole.Console, error) {
 		device := g.serialDevice()
 		if flashedPodSerial != "" {
-			// The same pod, whatever its port is called now (0483:5740 -> 1209:xxxx renames it).
+			// The same pod, whatever its port is called now (a new COM port on Windows, for one).
 			device = serialconsole.FindPodPortBySerial(flashedPodSerial)
 			if device == "" {
 				return nil, fmt.Errorf("the pod (USB serial number %s) is not back on USB yet", flashedPodSerial)
@@ -523,7 +523,7 @@ var (
 // versions as it came back and the blobs it installed (for the firmware report).
 func installBlobsAfterFlash(g *globalFlags, src blobSource) (after podVersions, installed []blobEntry, err error) {
 	fmt.Fprintln(os.Stderr, "flash-self: waiting for the pod's USB console to install its blobs (after an update to 3.9.0 "+
-		"it comes back under a new USB ID: Windows gives it a new COM port and may install drivers first)...")
+		"Windows may install drivers for its new network adapter and give it a new COM port first)...")
 	var console *serialconsole.Console
 	deadline := time.Now().Add(flashedConsoleWait)
 	for {
