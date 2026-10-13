@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/openocd"
+	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
