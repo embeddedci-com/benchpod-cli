@@ -75,7 +75,7 @@ sudo cp packaging/linux/70-benchpod.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-It sets `ENV{ID_MM_DEVICE_IGNORE}="1"` for the pod's USB IDs: `1209:0001` (firmware
+It sets `ENV{ID_MM_DEVICE_IGNORE}="1"` for the pod's USB IDs: `1209:EC10` and `1209:0001` (firmware
 3.9.0 and later) and `0483:5740` (older firmware), and `TAG+="uaccess"`, which lets the
 user signed in at the desktop open the console without joining the `dialout` group. Over
 SSH, or without the rule, add yourself to `dialout` (`sudo usermod -aG dialout $USER`,

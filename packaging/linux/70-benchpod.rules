@@ -1,7 +1,9 @@
 # BenchPod: keep ModemManager off the pod's USB console, and let the signed-in desktop user open it
 # (uaccess) without joining the dialout group.
 # Install: sudo cp 70-benchpod.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
-# Firmware 3.9.0 and later (pid.codes VID 1209; PID 0001 is the test ID until ours is assigned).
+# Firmware 3.9.0 and later (pid.codes VID 1209): PID EC10, and 0001 (the pid.codes test ID) on
+# builds made before EC10 was assigned.
+ATTRS{idVendor}=="1209", ATTRS{idProduct}=="ec10", ENV{ID_MM_DEVICE_IGNORE}="1", TAG+="uaccess"
 ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_MM_DEVICE_IGNORE}="1", TAG+="uaccess"
 # Older firmware (ST's stock CDC ID).
 ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ENV{ID_MM_DEVICE_IGNORE}="1", TAG+="uaccess"
