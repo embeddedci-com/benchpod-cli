@@ -318,6 +318,13 @@ var globPorts = func() []string {
 // globbed /dev/cu.* and /dev/tty.* nodes (deduped), ordered by benchPodVIDs first
 // (the VIDs a pod's console enumerates under) then everything else by name.
 func candidatePorts() ([]string, error) {
+	names, _, err := candidatePortsVID()
+	return names, err
+}
+
+// candidatePortsVID is candidatePorts plus each port's USB VID ("" when the enumerator did not
+// list it, as for the /dev/tty.* dial-in twins).
+func candidatePortsVID() ([]string, map[string]string, error) {
 	// VID by port name, from the enumerator (cross-platform), for ordering.
 	vid := map[string]string{}
 	if ports, err := portLister(); err == nil {
@@ -351,7 +358,7 @@ func candidatePorts() ([]string, error) {
 		}
 		return names[i] < names[j]
 	})
-	return names, nil
+	return names, vid, nil
 }
 
 func portPrio(vid string) int {

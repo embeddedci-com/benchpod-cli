@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // The pod's USB network adapter (firmware 3.9.0+): the USB device that carries the console is
@@ -45,6 +46,9 @@ var dialUSBPod = func(addr string) error {
 func (g *globalFlags) usbNetAddr(device string) (string, error) {
 	u, err := usbNetwork(g, device)
 	if err != nil {
+		if errors.Is(err, tcpclient.ErrUnreachable) {
+			return "", err // no pod (or not that one) on USB: the console's own message says which
+		}
 		if errors.Is(err, serialconsole.ErrNoUSBNet) {
 			return "", errors.New("the pod's firmware has no USB network adapter (it needs 3.9.0 or later: `benchpod flash-self`)")
 		}
@@ -74,6 +78,9 @@ func (g *globalFlags) networkTarget(cmd string) (ConnSpec, error) {
 		return spec, err
 	}
 	addr, uerr := g.usbNetAddr(spec.Device)
+	if errors.Is(uerr, tcpclient.ErrUnreachable) {
+		return spec, uerr
+	}
 	if uerr != nil {
 		return spec, fmt.Errorf("%w. Here: %v", spec.RequireNetwork(cmd), uerr)
 	}
