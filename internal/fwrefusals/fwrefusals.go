@@ -26,6 +26,9 @@ type Refusal struct {
 	Kind    string `json:"kind"`    // "json" (an error reply), "console", "console_upload"
 	Format  string `json:"format"`  // the C literal, escapes kept
 	Example string `json:"example"` // one rendering, without a trailing newline or prompt
+	// Removed is the firmware version that no longer sends this text ("3.9.0"), "" while current.
+	// Such a text stays pinned: the CLI still meets it on pods running older firmware. Check skips it.
+	Removed string `json:"removed,omitempty"`
 }
 
 type doc struct {
@@ -133,6 +136,9 @@ func Check(dir string) []string {
 		return s, nil
 	}
 	for _, r := range All() {
+		if r.Removed != "" {
+			continue // older firmware only: the current tree has dropped it
+		}
 		src, err := read(r.File)
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", r.ID, err))

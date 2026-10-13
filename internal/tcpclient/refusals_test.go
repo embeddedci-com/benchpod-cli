@@ -37,6 +37,7 @@ func TestFirmwareRefusalsAreShownVerbatim(t *testing.T) {
 func TestFirmwareRefusalsArePodErrorsOfTheirKind(t *testing.T) {
 	want := map[string]RefusalKind{
 		"lan_locked":           Locked,
+		"lan_locked_v39":       Locked,
 		"tunnel_forbidden":     Forbidden,
 		"lease_busy":           Busy,
 		"heavy_busy":           Busy,
