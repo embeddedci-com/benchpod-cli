@@ -1025,7 +1025,7 @@ the bridge are blocked.
 |----------------|---------|------------------------------------------------------|
 | `--port`       | `3128`  | TCP port of the proxy on this computer's USB address. |
 | `--keep-proxy` | off     | Leave the pod's cloud proxy set when the bridge stops. |
-| `--watch`      | off     | Wait for the pod and pick it up again after it is unplugged or restarted (how the background service runs it). |
+| `--watch`      | off     | Wait for the pod and pick it up again after it is unplugged or restarted (how the background service runs it). It never polls or holds the pod's USB console, so the web app's setup wizard, a terminal and other `benchpod` commands keep it: it watches this computer's network interfaces for the pod's USB network link, reads the pod's proxy over that link, and opens the console once only to set the proxy (and to clear it when it stops). With Wi-Fi configured on the pod there is no USB link, so it does nothing. |
 
 ### `benchpod usb-bridge install`
 

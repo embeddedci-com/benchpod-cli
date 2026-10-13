@@ -43,7 +43,9 @@ func newUSBBridgeCmd(g *globalFlags) *cobra.Command {
 			"Ctrl-C, then clears the pod's proxy again (--keep-proxy leaves it set).\n\n" +
 			"--watch keeps going when no pod is plugged in or the USB link goes away, and picks the\n" +
 			"pod up again when it comes back: that is how `usb-bridge install` runs it in the\n" +
-			"background.\n\n" +
+			"background. It never polls or holds the pod's USB console: it watches for this\n" +
+			"computer's USB network address, reads the pod's proxy over that link, and opens the\n" +
+			"console once only to set the proxy (or clear it when it stops).\n\n" +
 			"Needs firmware 3.9.0 or later and no Wi-Fi configured on the pod. The proxy accepts\n" +
 			"only the pod, and only tunnels to port 443. It refuses to replace a proxy the pod\n" +
 			"already has (`benchpod cloud proxy clear` removes it).",
@@ -58,9 +60,6 @@ func newUSBBridgeCmd(g *globalFlags) *cobra.Command {
 	cmd.AddCommand(newUSBBridgeInstallCmd(g), newUSBBridgeUninstallCmd(g), newUSBBridgeStatusCmd(g))
 	return cmd
 }
-
-// usbBridgeRetry is how often --watch looks for the pod again.
-const usbBridgeRetry = 10 * time.Second
 
 // bridgeSession is one bridge run: the pod's USB link, the proxy's listener on this computer's
 // end of it, and the console device it was set up through.
@@ -167,39 +166,21 @@ func runUSBBridge(g *globalFlags, port int, keep, watch bool) error {
 	if port <= 0 || port > 65535 {
 		return fmt.Errorf("usb-bridge: --port %d is out of range", port)
 	}
+	if watch {
+		return runUSBBridgeWatch(g, port, keep) // never polls the console (usbbridge_watch.go)
+	}
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 	defer installSignalHandler(ctx, stop)()
 
-	var last *bridgeSession
-	lastErr := ""
-	for {
-		s, err := setupBridge(g, port)
-		if err != nil {
-			if !watch {
-				return fmt.Errorf("usb-bridge: %w", err)
-			}
-			if err.Error() != lastErr { // one line per new reason, not one per retry
-				log.Printf("usb-bridge: waiting for the pod: %v", err)
-				lastErr = err.Error()
-			}
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(usbBridgeRetry):
-			}
-			continue
-		}
-		lastErr = ""
-		last = s
-		fmt.Fprintf(os.Stderr, "usb-bridge: the pod (%s) reaches embeddedci.com through %s. Ctrl-C stops it.\n", s.u.PodIP, s.proxyAddr)
-		if serveBridge(ctx, s) {
-			break // stopped
-		}
-		log.Printf("usb-bridge: the USB link to the pod (%s) went away", s.u.PodIP)
-		if !watch {
-			return errors.New("usb-bridge: the USB link to the pod went away")
-		}
+	last, err := setupBridge(g, port)
+	if err != nil {
+		return fmt.Errorf("usb-bridge: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "usb-bridge: the pod (%s) reaches embeddedci.com through %s. Ctrl-C stops it.\n", last.u.PodIP, last.proxyAddr)
+	if !serveBridge(ctx, last) {
+		log.Printf("usb-bridge: the USB link to the pod (%s) went away", last.u.PodIP)
+		return errors.New("usb-bridge: the USB link to the pod went away (`usb-bridge --watch` waits for it instead)")
 	}
 
 	if keep {
