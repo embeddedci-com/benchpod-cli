@@ -123,12 +123,14 @@ type podStatus struct {
 
 // podUSB is status.usb: the USB network adapter and what the USB-C source advertises.
 type podUSB struct {
-	Net      string `json:"net"`
-	Link     bool   `json:"link"`
-	IP       string `json:"ip"`
-	HostIP   string `json:"host_ip"`
-	Source   string `json:"source"`    // "none", "default", "1.5A", "3.0A"; "" on v2
-	SourceMA *int   `json:"source_ma"` // nil on v2
+	Net       string `json:"net"`
+	Setting   string `json:"setting"`    // the usb-network setting, "" before it existed
+	OffReason string `json:"off_reason"` // "setting" or "wifi" when Net is "off"
+	Link      bool   `json:"link"`
+	IP        string `json:"ip"`
+	HostIP    string `json:"host_ip"`
+	Source    string `json:"source"`    // "none", "default", "1.5A", "3.0A"; "" on v2
+	SourceMA  *int   `json:"source_ma"` // nil on v2
 }
 
 // describeUSB is the status row for the USB side, with a warning when the port powering the pod
@@ -136,6 +138,8 @@ type podUSB struct {
 func describeUSB(u podUSB) string {
 	var parts []string
 	switch {
+	case u.Net == "off" && u.OffReason == "setting":
+		parts = append(parts, "network off (turned off on the pod: `benchpod usb-network on` over its USB console)")
 	case u.Net == "off":
 		parts = append(parts, "network off (Wi-Fi is configured)")
 	case u.Link:

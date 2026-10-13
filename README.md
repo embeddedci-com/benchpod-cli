@@ -1145,6 +1145,18 @@ Same as `benchpod lan-policy`.
 
 Set the LAN policy (cloud with an owner or admin role, or USB).
 
+### `benchpod usb-network [show|on|off]`
+
+Show the pod's USB network setting, or turn its USB network adapter on or off
+(firmware 3.9.0 and later). With `off` the pod re-enumerates as its USB console only,
+so the computer sees no network adapter; `on` brings the adapter back. The setting
+is stored and is separate from `lan-policy`, which covers Ethernet and Wi-Fi.
+
+Only the device changes it: `off` over `--connection usb` (the USB link itself, or
+the console), `on` over the USB console (the link does not exist while it is off).
+Over Ethernet, Wi-Fi or `--connection embeddedci:<name>` it can only be read.
+`benchpod status` shows the adapter as "network off (turned off on the pod)".
+
 ### `benchpod sig-policy`
 
 Show the pod's signature policy: `audit`, `permissive` or `required`. Same
