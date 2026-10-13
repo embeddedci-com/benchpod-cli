@@ -148,6 +148,9 @@ The USB network adapter works with the in-box drivers of macOS, Linux and Window
 (tested). Windows 10 (1903 or newer) is supported but not tested: if the adapter shows
 up without a driver there, open Device Manager, update its driver, and pick "UsbNcm
 Host Device" from the list of network adapters.
+WSL2 and Docker on Windows are not tested: Windows routes the pod's `10.237.x.y` address
+itself, so a WSL2 distribution or a container on the host network should reach it with
+`--connection <that address>`, but USB auto-detect and mDNS may not work from inside them.
 
 **Compatibility with older firmware and older CLIs.** The CLI decides per pod, from what
 the pod reports (the `usb` line of its console `status`), never from its own version:
