@@ -153,12 +153,6 @@ The USB network adapter works with the in-box drivers of macOS, Linux and Window
 (tested). Windows 10 (1903 or newer) is supported but not tested: if the adapter shows
 up without a driver there, open Device Manager, update its driver, and pick "UsbNcm
 Host Device" from the list of network adapters.
-The pod keeps ST's USB ID `0483:5740`: on a Windows computer with ST's Virtual COM Port
-driver installed, that driver can claim the whole pod, which then shows up as one COM
-port without the network adapter. Uninstall it for the pod (Device Manager, Ports,
-"STMicroelectronics Virtual COM Port", Uninstall device, tick "Attempt to remove the
-driver", then replug the pod); the steps are in the firmware's
-[USB serial interface](https://github.com/embeddedci-com/benchpod-firmware/blob/main/docs/usb-serial-interface.md) docs.
 WSL2 and Docker on Windows are not tested: Windows routes the pod's `10.237.x.y` address
 itself, so a WSL2 distribution or a container on the host network should reach it with
 `--connection <that address>`, but USB auto-detect and mDNS may not work from inside them.
