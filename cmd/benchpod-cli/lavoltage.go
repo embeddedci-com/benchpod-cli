@@ -171,6 +171,13 @@ func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
 		defer cancel()
 		defer console.Close()
 		rep.MV, err = console.LAVoltage(ctx, mv)
+		if errors.Is(err, serialconsole.ErrUnknownCommand) {
+			// Firmware 3.9.0+ moved la-voltage from the console to the JSON API; preferUSBNetwork
+			// already found the USB network unusable, so say why.
+			_, nerr := g.networkTarget(what)
+			return "", rep, fmt.Errorf("%s: this pod's console has no la-voltage (firmware 3.9.0+ sets it over the "+
+				"network API) and its USB network is not usable: %v", what, nerr)
+		}
 		if err != nil {
 			return "", rep, laVoltageError(what, err)
 		}
