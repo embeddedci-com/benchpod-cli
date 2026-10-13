@@ -401,8 +401,8 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 		if err := console.TargetPower(ctx, powerEfuse, true); err != nil {
 			console.Close()
 			if errors.Is(err, serialconsole.ErrUnknownCommand) {
-				return nil, false, fmt.Errorf("flash: this pod's console has no power command (firmware 3.9.0+ switches "+
-					"target power over the network API) and its USB network is not usable; drop --target-power, "+
+				return nil, false, fmt.Errorf("flash: this pod's console has no power command (firmware 3.9.0+ switches " +
+					"target power over the network API) and its USB network is not usable; drop --target-power, " +
 					"or connect over the network")
 			}
 			return nil, false, fmt.Errorf("flash: enable target-power eFuse %d over %s: %w", powerEfuse, path, err)

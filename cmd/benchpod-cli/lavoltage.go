@@ -171,7 +171,7 @@ func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
 		defer cancel()
 		defer console.Close()
 		rep.MV, err = console.LAVoltage(ctx, mv)
-		if errors.Is(err, serialconsole.ErrUnknownCommand) {
+		if errors.Is(err, serialconsole.ErrUnknownCommand) && consoleHasUSBNet(ctx, console) {
 			// Firmware 3.9.0+ moved la-voltage from the console to the JSON API; preferUSBNetwork
 			// already found the USB network unusable, so say why.
 			_, nerr := g.networkTarget(what)
@@ -224,6 +224,19 @@ func laVoltageError(what string, err error) error {
 		return refusedError(what, pe, pe.Cmd == "")
 	}
 	return fmt.Errorf("%s: %w", what, err)
+}
+
+// consoleHasUSBNet: the pod's console reports a USB network adapter (firmware 3.9.0+), which
+// tells a console that moved a command to the JSON API from one too old to have it.
+func consoleHasUSBNet(ctx context.Context, c laVoltageConsole) bool {
+	u, ok := c.(interface {
+		USBNetwork(context.Context) (serialconsole.USBNet, error)
+	})
+	if !ok {
+		return false
+	}
+	_, err := u.USBNetwork(ctx)
+	return err == nil
 }
 
 // formatMV is 3300 -> "3.3 V".
