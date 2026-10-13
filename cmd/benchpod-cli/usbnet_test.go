@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -12,11 +14,33 @@ import (
 func withUSBNet(t *testing.T, u serialconsole.USBNet, uerr, dialErr error) *[]string {
 	t.Helper()
 	var dialed []string
-	oldNet, oldDial := usbNetwork, dialUSBPod
+	oldNet, oldDial, oldNote := usbNetwork, dialUSBPod, usbNote
 	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) { return u, uerr }
 	dialUSBPod = func(addr string) error { dialed = append(dialed, addr); return dialErr }
-	t.Cleanup(func() { usbNetwork, dialUSBPod = oldNet, oldDial })
+	usbNote = io.Discard
+	t.Cleanup(func() { usbNetwork, dialUSBPod, usbNote = oldNet, oldDial, oldNote })
 	return &dialed
+}
+
+// Firmware 3.9.0 with Wi-Fi configured: no USB network, so the pod's network address.
+func TestNetworkTargetFallsBackToThePodsNetworkAddress(t *testing.T) {
+	var note bytes.Buffer
+	withUSBNet(t, serialconsole.USBNet{PodIP: "10.237.8.85", HostIP: "10.237.8.86", LANIP: "192.168.1.221"}, nil, nil)
+	usbNote = &note
+	spec, err := (&globalFlags{connection: "usb"}).networkTarget("la voltage")
+	if err != nil || spec.Addr != "192.168.1.221:8080" {
+		t.Fatalf("spec %+v err %v", spec, err)
+	}
+	if !strings.Contains(note.String(), "192.168.1.221:8080") || !strings.Contains(note.String(), "Wi-Fi is configured") {
+		t.Fatalf("note %q", note.String())
+	}
+	// The network address does not answer either (no route, or the external LAN policy is off).
+	withUSBNet(t, serialconsole.USBNet{PodIP: "10.237.8.85", LANIP: "192.168.1.221"}, nil, errors.New("refused"))
+	_, err = (&globalFlags{connection: "usb"}).networkTarget("la voltage")
+	if err == nil || !strings.Contains(err.Error(), "192.168.1.221:8080") || !strings.Contains(err.Error(), "clear-wifi") ||
+		!strings.Contains(err.Error(), "policy") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestNetworkTargetUsesTheUSBNetworkAdapter(t *testing.T) {

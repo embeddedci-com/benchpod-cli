@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
@@ -54,25 +56,42 @@ func (g *globalFlags) usbNetAddr(device string) (string, error) {
 		}
 		return "", fmt.Errorf("the pod's console did not report its USB network: %w", err)
 	}
-	if !u.On {
-		return "", errors.New("USB networking is off because Wi-Fi is configured on the pod (`benchpod clear-wifi` turns it back on)")
-	}
 	addr := net.JoinHostPort(u.PodIP, "8080")
-	if !u.Link {
-		return "", fmt.Errorf("the pod's USB network adapter (%s) is not up on this computer; "+
+	var why error
+	switch {
+	case !u.On:
+		why = errors.New("USB networking is off because Wi-Fi is configured on the pod (`benchpod clear-wifi` turns it back on)")
+	case !u.Link:
+		why = fmt.Errorf("the pod's USB network adapter (%s) is not up on this computer; "+
 			"macOS ignores a new adapter while the screen is locked: unlock and run `benchpod usb-reattach`", u.PodIP)
+	default:
+		if err := dialUSBPod(addr); err != nil {
+			why = fmt.Errorf("the pod did not answer on its USB network address %s (%v); this computer should have %s on that adapter, "+
+				"run `benchpod usb-reattach` if it does not", addr, err, u.HostIP)
+		}
 	}
-	if err := dialUSBPod(addr); err != nil {
-		return "", fmt.Errorf("the pod did not answer on its USB network address %s (%v); this computer should have %s on that adapter, "+
-			"run `benchpod usb-reattach` if it does not", addr, err, u.HostIP)
+	if why == nil {
+		return addr, nil
 	}
-	return addr, nil
+	// Firmware 3.9.0+ keeps only the console commands that need physical presence, so without
+	// the USB network the way in is the pod's Ethernet or Wi-Fi address, when this computer can
+	// reach it (the external LAN policy applies there).
+	if u.LANIP == "" {
+		return "", why
+	}
+	lan := net.JoinHostPort(u.LANIP, "8080")
+	if err := dialUSBPod(lan); err != nil {
+		return "", fmt.Errorf("%v; its network address %s did not answer either (%v; the pod's external LAN policy "+
+			"`off` refuses it there)", why, lan, err)
+	}
+	fmt.Fprintf(usbNote, "usb: using the pod's network address %s: %v. Its external LAN policy applies there.\n", lan, why)
+	return lan, nil
 }
 
 // preferUSBNetwork turns a USB spec into the pod's address on its USB network adapter when that
-// is up, for a command that works over both; any other spec, or a USB pod without a working USB
-// network (older firmware, Wi-Fi configured, adapter not up), is returned unchanged and the command
-// uses the console.
+// is up (on 3.9.0+ with USB networking off, its Ethernet or Wi-Fi address when that answers), for a
+// command that works over both; any other spec, or a USB pod without a way in over the network
+// (older firmware, nothing answers), is returned unchanged and the command uses the console.
 func (g *globalFlags) preferUSBNetwork(spec ConnSpec, cmd string) ConnSpec {
 	if !spec.IsSerial() {
 		return spec
@@ -82,6 +101,9 @@ func (g *globalFlags) preferUSBNetwork(spec ConnSpec, cmd string) ConnSpec {
 	}
 	return spec
 }
+
+// usbNote is where networkTarget says which way it took (stderr; tests capture it).
+var usbNote io.Writer = os.Stderr
 
 // networkTarget is resolveTarget for a command that needs the pod's network API: a USB connection
 // becomes the pod's address on its USB network adapter, or the standard "needs the network"
