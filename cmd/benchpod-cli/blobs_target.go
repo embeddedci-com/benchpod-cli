@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
@@ -24,6 +25,11 @@ type blobTarget interface {
 	Release(ctx context.Context) string
 	// Via names the way in for messages: "/dev/cu.usbmodem1", "10.237.8.85:8080".
 	Via() string
+	// Identity is the pod's identity public key and short id ("" when unknown), for the
+	// firmware report.
+	Identity(ctx context.Context) (publicKey, shortID string)
+	// Method is the firmware report's name for the way in: "usb_console", "usb_network", "lan".
+	Method() string
 }
 
 // consoleBlobs is the USB console.
@@ -34,6 +40,15 @@ type consoleBlobs struct {
 
 func (c consoleBlobs) Release(ctx context.Context) string { return podFirmwareRelease(ctx, c.Console) }
 func (c consoleBlobs) Via() string                        { return c.path }
+func (c consoleBlobs) Method() string                     { return "usb_console" }
+
+func (c consoleBlobs) Identity(ctx context.Context) (string, string) {
+	id, err := c.Console.Identity(ctx)
+	if err != nil {
+		return "", ""
+	}
+	return id.PublicKey, id.ShortID
+}
 
 // lanBlobChunk is the raw bytes per ota_data line (as the LAN OTA in hwe2e sends).
 const lanBlobChunk = 768
@@ -45,6 +60,23 @@ type lanBlobs struct {
 }
 
 func (l lanBlobs) Via() string { return l.addr }
+
+func (l lanBlobs) Method() string {
+	if host, _, err := net.SplitHostPort(l.addr); err == nil && usbLinkNet.Contains(net.ParseIP(host)) {
+		return "usb_network"
+	}
+	return "lan"
+}
+
+func (l lanBlobs) Identity(ctx context.Context) (string, string) {
+	var rep struct {
+		Public string `json:"public"`
+	}
+	if l.lan.cmd(ctx, map[string]any{"cmd": "identity_public"}, &rep) != nil || rep.Public == "" {
+		return "", ""
+	}
+	return rep.Public, shortIDOf(rep.Public)
+}
 
 func (l lanBlobs) Release(ctx context.Context) string {
 	var st struct {

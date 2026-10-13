@@ -149,6 +149,12 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			// Report on the release's signature (<asset>.sig). Report only: never refuses.
 			checkFirmwareSignature(ctx, location, file)
 
+			// The pod as it is now, for the firmware report (nothing when it is already in DFU).
+			var before podVersions
+			if !g.fwReportOptOut() && !dfuDevicePresent(ctx, dfuPath) {
+				before = g.runningPodVersions()
+			}
+
 			// 2. Make sure the pod is in DFU mode (guiding the user if not).
 			if err := ensureDfuReady(ctx, g, f, dfuPath); err != nil {
 				return err
@@ -181,8 +187,11 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 					if strings.TrimSpace(f.blobsDir) != "" {
 						src = blobSource{base: f.blobsDir}
 					}
-					return installBlobsAfterFlash(g, src)
+					after, installed, err := installBlobsAfterFlash(g, src)
+					g.reportFirmware(firmwareEvent(before, after, f.firmwareVer, installed))
+					return err
 				}
+				g.reportFirmware(firmwareEvent(before, podVersions{}, f.firmwareVer, nil))
 				fmt.Fprintln(os.Stderr, "  If `benchpod discover` does not find it within 30 s, unplug USB-C and plug it back in (without BOOT0).")
 			}
 			return nil
@@ -510,7 +519,9 @@ var (
 // blobs that go with its firmware. A pod whose firmware still embeds its blobs (older releases)
 // has no slots to fill and is left alone. Anything else that keeps the blobs from being
 // installed is an error, so flash-self does not report success for a pod that is missing them.
-func installBlobsAfterFlash(g *globalFlags, src blobSource) error {
+// installBlobsAfterFlash waits for the flashed pod, installs its blobs, and returns the pod's
+// versions as it came back and the blobs it installed (for the firmware report).
+func installBlobsAfterFlash(g *globalFlags, src blobSource) (after podVersions, installed []blobEntry, err error) {
 	fmt.Fprintln(os.Stderr, "flash-self: waiting for the pod's USB console to install its blobs (after an update to 3.9.0 "+
 		"it comes back under a new USB ID: Windows gives it a new COM port and may install drivers first)...")
 	var console *serialconsole.Console
@@ -522,13 +533,14 @@ func installBlobsAfterFlash(g *globalFlags, src blobSource) error {
 			break
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("flash-self: the firmware is flashed, but the pod's USB console did not come back, so its blobs are not installed: unplug USB-C and plug it back in (without BOOT0), then run `benchpod install-blobs` (%w)", err)
+			return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but the pod's USB console did not come back, so its blobs are not installed: unplug USB-C and plug it back in (without BOOT0), then run `benchpod install-blobs` (%w)", err)
 		}
 		time.Sleep(flashedConsoleRetry)
 	}
 	defer console.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), blobsInstallTimeout)
 	defer cancel()
+	after = consoleVersions(ctx, console)
 	target := blobTarget(consoleBlobs{Console: console, path: "the USB console"})
 	if !skipUSBNetForBlobs {
 		// Firmware before 3.9.0: the console. 3.9.0+: the USB network (or the pod's network
@@ -552,19 +564,19 @@ func installBlobsAfterFlash(g *globalFlags, src blobSource) error {
 			time.Sleep(time.Second)
 		}
 		if lastErr != nil {
-			return fmt.Errorf("flash-self: the firmware is flashed, but its blobs are not installed: %w "+
+			return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but its blobs are not installed: %w "+
 				"(retry with `benchpod install-blobs`)", lastErr)
 		}
 	}
 	if _, err := target.Blobs(ctx); err != nil {
 		if errors.Is(err, serialconsole.ErrNoBlobSlots) {
 			fmt.Fprintln(os.Stderr, "flash-self: this firmware keeps its blobs built in; nothing to install")
-			return nil
+			return after, installed, nil
 		}
-		return fmt.Errorf("flash-self: the firmware is flashed, but reading the pod's blob slots failed, so its blobs are not installed (retry with `benchpod install-blobs`): %w", err)
+		return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but reading the pod's blob slots failed, so its blobs are not installed (retry with `benchpod install-blobs`): %w", err)
 	}
-	if err := installBlobs(ctx, target, src, false, nil); err != nil {
-		return fmt.Errorf("flash-self: the firmware is flashed, but installing its blobs failed (retry with `benchpod install-blobs`): %w", err)
+	if installed, err = installBlobsList(ctx, target, src, false, nil); err != nil {
+		return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but installing its blobs failed (retry with `benchpod install-blobs`): %w", err)
 	}
-	return nil
+	return after, installed, nil
 }

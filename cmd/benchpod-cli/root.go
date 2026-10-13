@@ -19,6 +19,8 @@ type globalFlags struct {
 	outputFilename string
 	timeout        time.Duration
 
+	noFirmwareReport bool // --no-firmware-report: do not tell embeddedci.com about firmware updates (fwreport.go)
+
 	usbAddr string // the pod's USB network address, once networkTarget found it (one probe per run)
 	usbErr  error  // why it found none (also one probe per run: the console may be open later)
 }
@@ -87,6 +89,8 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.configFile, "config-file", "", "path to config file")
 	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")
+	pf.BoolVar(&g.noFirmwareReport, "no-firmware-report", false,
+		"do not report firmware and blob updates to embeddedci.com (also BENCHPOD_NO_FIRMWARE_REPORT=1)")
 
 	viper.SetEnvPrefix("BENCHPOD")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
@@ -108,7 +112,7 @@ func newRootCmd() *cobra.Command {
 		{"pod", "The pod:", []*cobra.Command{
 			newStatusCmd(g), newPingCmd(g), newLACmd(g), newIdentityCmd(g),
 			newFlashSelfCmd(g), newInstallBlobsCmd(g), newBootselCmd(g), newDfuCmd(g),
-			newLanPolicyCmd(g), newSigPolicyCmd(g),
+			newLanPolicyCmd(g), newSigPolicyCmd(g), newUSBNetworkCmd(g),
 		}},
 		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{
 			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),

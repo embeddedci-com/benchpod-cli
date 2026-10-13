@@ -69,6 +69,8 @@ func (g *globalFlags) usbNetAddr(device string) (string, error) {
 	addr := net.JoinHostPort(u.PodIP, "8080")
 	var why error
 	switch {
+	case !u.On && u.OffBySetting:
+		why = errors.New("USB networking is turned off on the pod (`benchpod usb-network on` over its USB console turns it back on)")
 	case !u.On:
 		why = errors.New("USB networking is off because Wi-Fi is configured on the pod (`benchpod clear-wifi` turns it back on)")
 	case !u.Link:

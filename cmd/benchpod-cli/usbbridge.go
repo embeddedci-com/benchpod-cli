@@ -246,7 +246,7 @@ func newUSBReattachCmd(g *globalFlags) *cobra.Command {
 			if err := console.USBReattach(ctx); err != nil {
 				return fmt.Errorf("usb-reattach: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "The pod reconnected on USB; its network adapter is back in a few seconds.")
+			fmt.Fprintln(os.Stderr, "The pod reconnected on USB; its network adapter (unless turned off with `benchpod usb-network off`) is back in a few seconds.")
 			return nil
 		},
 	}

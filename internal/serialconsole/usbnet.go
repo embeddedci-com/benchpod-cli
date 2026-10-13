@@ -21,6 +21,9 @@ type USBNet struct {
 	PodIP  string
 	HostIP string
 	LANIP  string // the status `ip` line: the pod's Ethernet (else Wi-Fi) address, "" when it has none
+	// OffBySetting: off because the pod's usb-network setting is off, not because Wi-Fi is
+	// configured (the console line reads "net off (setting)").
+	OffBySetting bool
 }
 
 // ErrMovedToNetwork is a console command firmware 3.9.0 moved to the JSON API: the console answers
@@ -55,6 +58,7 @@ func ParseUSBNet(status string) (USBNet, error) {
 			switch f[i] {
 			case "net":
 				u.On = f[i+1] == "on"
+				u.OffBySetting = !u.On && i+2 < len(f) && f[i+2] == "(setting)"
 			case "pod":
 				u.PodIP = f[i+1]
 			case "host":
