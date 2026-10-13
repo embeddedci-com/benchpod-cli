@@ -158,14 +158,14 @@ the pod reports (the `usb` line of its console `status`), never from its own ver
 | | Pod firmware before 3.9.0 | Pod firmware 3.9.0 and later |
 |---|---|---|
 | **This CLI (0.6.0+)** | Works as before: the USB console for `status`, `la voltage`, `install-blobs`, `flash-self`, `set-wifi`, the policies, `cloud ca`/`proxy` and `identity`; the network commands need the pod's network address, as before, and say so. The serial auto-detect still finds `0483:5740` and `2E8A` consoles. | Over `usb`, every command uses the pod's USB network adapter when it is up (including `flash`, which the STM32 pod's console never ran), and the console for the commands that stay there. When USB networking is off (Wi-Fi configured) or not up, the network commands use the pod's Ethernet or Wi-Fi address from its console `status` if this computer reaches it, say so, and are subject to the pod's external LAN policy there (`benchpod clear-wifi` turns USB networking back on). |
-| **An older CLI (0.5.x)** | Unchanged. | The kept console commands keep their names and replies (`status`, `dfu`, `identity`, `identity wipe`, `lan-policy`, `sig-policy`, `set-wifi`, `show-network`, `clear-wifi`, `install-blobs`, `flash-self`, `cloud ca`/`proxy`), so those still work. A command 3.9.0 moved to the network API (`la voltage` over USB) prints the pod's "moved to the network API ... update the benchpod CLI to 0.6.0 or later" line. Over a network address everything works. |
+| **An older CLI (0.5.x)** | Unchanged. | The kept console commands keep their names and replies (`status`, `dfu`, `identity`, `identity wipe`, `lan-policy`, `sig-policy`, `set-wifi`, `show-network`, `clear-wifi`, `cloud ca show`/`clear`, `cloud proxy`), so those still work, and `flash-self` still flashes over DFU. What 3.9.0 moved to the network API (`la voltage` over USB, and every upload: `install-blobs`, the blob step of `flash-self` and `set-wifi`, `cloud ca set`) prints the pod's "moved to the network API ... update the benchpod CLI to 0.6.0 or later" line: update the CLI with the firmware. Over a network address everything works. |
 
 Which command works over which connection:
 
 | Connection          | Commands |
 |---------------------|----------|
 | Network address     | Every pod command except the USB-only ones below. |
-| USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD) and `install-blobs`, which fall back to the console when the adapter is not up. `lan-policy`, `sig-policy`, `cloud ca` and `cloud proxy` always use the console (physical presence). |
+| USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD), `install-blobs`, `cloud ca` and `cloud proxy`; without it the pod's Ethernet or Wi-Fi address, and the console where it still has the command. Firmware before 3.9.0: the console, as before. `lan-policy`, `sig-policy` and `identity` always use the console (physical presence). |
 | `embeddedci:<name>` | `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
 | USB only            | `set-wifi`, `show-network`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU. These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
@@ -1013,7 +1013,8 @@ Erase the stored Wi-Fi credentials (USB). Wi-Fi goes down at once, no reboot nee
 Carry the pod's cloud link over USB through this computer, until Ctrl-C (USB). The
 pod's USB network adapter has no router, so the pod cannot reach embeddedci.com over
 it by itself. The bridge runs an HTTP CONNECT proxy on this computer's end of the
-USB link and sets it as the pod's cloud proxy; the pod then connects to
+USB link and sets it as the pod's cloud proxy over that link (never the USB console:
+the web app's setup wizard, terminals and other commands keep it); the pod then connects to
 embeddedci.com through this computer's internet connection, with no Ethernet or
 Wi-Fi. When it stops it clears the pod's proxy again. The proxy serves only the pod,
 and only tunnels to port 443. It refuses to replace a proxy the pod already has
@@ -1029,7 +1030,7 @@ the bridge are blocked.
 |----------------|---------|------------------------------------------------------|
 | `--port`       | `3128`  | TCP port of the proxy on this computer's USB address. |
 | `--keep-proxy` | off     | Leave the pod's cloud proxy set when the bridge stops. |
-| `--watch`      | off     | Wait for the pod and pick it up again after it is unplugged or restarted (how the background service runs it). It never polls or holds the pod's USB console, so the web app's setup wizard, a terminal and other `benchpod` commands keep it: it watches this computer's network interfaces for the pod's USB network link, reads the pod's proxy over that link, and opens the console once only to set the proxy (and to clear it when it stops). With Wi-Fi configured on the pod there is no USB link, so it does nothing. |
+| `--watch`      | off     | Wait for the pod and pick it up again after it is unplugged or restarted (how the background service runs it). It watches this computer's network interfaces for the pod's USB network link and reads, sets and clears the pod's proxy over that link; it never opens the USB console. With Wi-Fi configured on the pod there is no USB link, so it does nothing. |
 
 ### `benchpod usb-bridge install`
 
@@ -1197,8 +1198,9 @@ Show the company CA certificates the pod holds. No flags.
 ### `benchpod cloud ca set <file.pem>`
 
 Check a PEM file (at most 16 KB) and store its CA certificates on the pod. Over USB
-only (the network refuses the change, and embeddedci.com does not carry the upload).
-No flags.
+only: through the pod's USB network adapter on firmware 3.9.0+ (which may change the CA,
+physical presence; the pod's Ethernet and Wi-Fi refuse it, and embeddedci.com does not
+carry the upload), or the USB console on older firmware. No flags.
 
 ### `benchpod cloud ca clear`
 

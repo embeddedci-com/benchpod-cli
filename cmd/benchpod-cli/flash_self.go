@@ -530,17 +530,30 @@ func installBlobsAfterFlash(g *globalFlags, src blobSource) error {
 	ctx, cancel := context.WithTimeout(context.Background(), blobsInstallTimeout)
 	defer cancel()
 	target := blobTarget(consoleBlobs{Console: console, path: "the USB console"})
-	if u, err := console.USBNetwork(ctx); err == nil && u.On && !skipUSBNetForBlobs {
-		// The freshly booted pod's USB network may need a few seconds on the computer's side.
-		for i := 0; i < 10; i++ {
-			if t, closeT, err := blobTargetFor(ctx, console, "the USB console"); err == nil {
-				if _, ok := t.(lanBlobs); ok {
-					target = t
-					defer closeT()
+	if !skipUSBNetForBlobs {
+		// Firmware before 3.9.0: the console. 3.9.0+: the USB network (or the pod's network
+		// address), which may need some seconds on the computer's side after the reboot.
+		var lastErr error
+		for i := 0; i < 20; i++ {
+			t, closeT, err := blobTargetFor(ctx, console, "the USB console")
+			if err == nil {
+				target = t
+				defer closeT()
+				lastErr = nil
+				if _, ok := t.(lanBlobs); ok || i >= 10 {
 					break
 				}
+				if u, uerr := console.USBNetwork(ctx); uerr != nil || !u.On {
+					break // older firmware, or USB networking off: no point waiting for it
+				}
+			} else {
+				lastErr = err
 			}
 			time.Sleep(time.Second)
+		}
+		if lastErr != nil {
+			return fmt.Errorf("flash-self: the firmware is flashed, but its blobs are not installed: %w "+
+				"(retry with `benchpod install-blobs`)", lastErr)
 		}
 	}
 	if _, err := target.Blobs(ctx); err != nil {

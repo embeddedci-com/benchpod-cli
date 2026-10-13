@@ -358,7 +358,18 @@ func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error 
 	case spec.IsCloud():
 		label, certs, err = cloudCACloud(g, spec, action)
 	case spec.IsSerial():
+		// Firmware 3.9.0+: over the USB network link, which may change the CA (physical presence).
+		if addr := g.usbLinkAddr(spec.Device); addr != "" {
+			label = addr
+			certs, err = cloudCALAN(g, addr, action, upload, warn)
+			break
+		}
 		label, certs, err = cloudCAUSB(g, spec.Device, action, upload, warn)
+		if err != nil && strings.Contains(err.Error(), "moved to the network API") {
+			err = errors.New("this pod's firmware (3.9.0 or later) installs a CA over the network: its USB network " +
+				"adapter is not usable here (Wi-Fi configured on the pod turns it off: `benchpod clear-wifi`), so use the " +
+				"cloud (`--connection embeddedci:<name>`) or turn USB networking back on")
+		}
 	default:
 		label = spec.Addr
 		certs, err = cloudCALAN(g, spec.Addr, action, upload, warn)
@@ -669,6 +680,12 @@ func runCloudProxy(g *globalFlags, action, addr, user, password string, out, war
 	case spec.IsCloud():
 		label, p, err = cloudProxyCloud(g, spec, action, addr, user, password)
 	case spec.IsSerial():
+		// Firmware 3.9.0+: over the USB network link, which may change the proxy (physical presence).
+		if link := g.usbLinkAddr(spec.Device); link != "" {
+			label = link
+			p, err = cloudProxyLAN(g, link, action, addr, user, password)
+			break
+		}
 		label, p, err = cloudProxyUSB(g, spec.Device, action, addr, user, password)
 	default:
 		label = spec.Addr

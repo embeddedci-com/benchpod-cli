@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -317,34 +320,31 @@ func newUSBBridgeUninstallCmd(g *globalFlags) *cobra.Command {
 	}
 }
 
-// clearBridgeProxy clears the pod's cloud proxy when it points at a bridge on this computer.
+// clearBridgeProxy clears the pod's cloud proxy over its USB network link when it points at this
+// computer's end of that link (never the console).
 func clearBridgeProxy(g *globalFlags) error {
-	device, err := g.usbDevice("usb-bridge uninstall")
-	if err != nil {
-		return err
+	links := localUSBLinks()
+	if len(links) == 0 {
+		return errors.New("no pod on a USB network link")
 	}
-	console, _, ctx, cancel, err := g.openSerialConsole(device, 15*time.Second)
-	if err != nil {
-		return err
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	defer console.Close()
-	u, err := console.USBNetwork(ctx)
+	link, err := pickUSBLink(ctx, links, g.usbPodName())
 	if err != nil {
 		return err
 	}
-	cur, err := console.CloudProxy(ctx)
+	raw, err := bridgePodAPI(ctx, net.JoinHostPort(link.pod, "8080"), map[string]any{"cmd": "cloud_proxy"})
 	if err != nil {
 		return err
 	}
-	host := cur.Addr
-	if i := strings.LastIndex(host, ":"); i >= 0 {
-		host = host[:i]
+	var cur struct {
+		Host string `json:"host"`
 	}
-	if cur.Addr == "" || host != u.HostIP {
+	_ = json.Unmarshal(raw, &cur)
+	if cur.Host != link.host {
 		return nil // not ours
 	}
-	if _, err := console.CloudProxyClear(ctx); err != nil {
+	if err := bridgeSetProxy(link.pod, ""); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "usb-bridge: cleared the pod's cloud proxy")

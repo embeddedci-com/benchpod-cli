@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 )
 
 // startProxy runs a connectProxy on a loopback listener that serves 127.0.0.1 and tunnels to
@@ -119,17 +117,5 @@ func TestConnectProxyRefusesPlainRequests(t *testing.T) {
 	status, _ := bufio.NewReader(c).ReadString('\n')
 	if !strings.Contains(status, " "+strconv.Itoa(405)+" ") {
 		t.Fatalf("status %q, want 405", status)
-	}
-}
-
-func TestUSBBridgeReady(t *testing.T) {
-	if err := usbBridgeReady(serialconsole.USBNet{On: true, Link: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := usbBridgeReady(serialconsole.USBNet{}); err == nil || !strings.Contains(err.Error(), "clear-wifi") {
-		t.Fatalf("net off: %v", err)
-	}
-	if err := usbBridgeReady(serialconsole.USBNet{On: true}); err == nil || !strings.Contains(err.Error(), "usb-reattach") {
-		t.Fatalf("link down: %v", err)
 	}
 }

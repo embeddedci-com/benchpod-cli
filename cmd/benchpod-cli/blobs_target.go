@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -148,13 +149,36 @@ func (l lanBlobs) UploadSigned(ctx context.Context, target string, data []byte, 
 // blobTargetFor picks the pod's USB network over its console when it is up (the console's
 // status names the address); the caller closes the returned closer.
 func blobTargetFor(ctx context.Context, console *serialconsole.Console, path string) (blobTarget, func(), error) {
-	if u, err := console.USBNetwork(ctx); err == nil && u.On && u.Link {
-		addr := u.PodIP + ":8080"
-		if dialUSBPod(addr) == nil {
-			if lan, err := openLAN(ctx, addr); err == nil {
-				return lanBlobs{lan: lan, addr: addr}, func() { lan.s.Close() }, nil
-			}
+	u, err := console.USBNetwork(ctx)
+	if errors.Is(err, serialconsole.ErrNoUSBNet) {
+		return consoleBlobs{Console: console, path: path}, func() {}, nil // firmware before 3.9.0
+	}
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("read the pod's status: %w", err)
+	}
+	try := func(addr string, check func(string) error) (blobTarget, func(), bool) {
+		if check(addr) != nil {
+			return nil, nil, false
+		}
+		lan, err := openLAN(ctx, addr)
+		if err != nil {
+			return nil, nil, false
+		}
+		return lanBlobs{lan: lan, addr: addr}, func() { lan.s.Close() }, true
+	}
+	if u.On && u.Link {
+		if t, c, ok := try(u.PodIP+":8080", dialUSBPod); ok {
+			return t, c, nil
 		}
 	}
-	return consoleBlobs{Console: console, path: path}, func() {}, nil
+	// Firmware 3.9.0+ has no console upload: without the USB network, the pod's Ethernet or Wi-Fi
+	// address (its external LAN policy applies there).
+	if u.LANIP != "" {
+		if t, c, ok := try(u.LANIP+":8080", pingLANPod); ok {
+			fmt.Fprintf(usbNote, "blobs: the pod's USB network is not usable; using its network address %s:8080\n", u.LANIP)
+			return t, c, nil
+		}
+	}
+	return nil, func() {}, errors.New("this pod's firmware (3.9.0 or later) takes blobs over the network, and neither its USB " +
+		"network adapter (Wi-Fi configured on the pod turns it off: `benchpod clear-wifi`) nor its network address answers")
 }

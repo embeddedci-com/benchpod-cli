@@ -115,6 +115,27 @@ func (g *globalFlags) preferUSBNetwork(spec ConnSpec, cmd string) ConnSpec {
 // usbNote is where networkTarget says which way it took (stderr; tests capture it).
 var usbNote io.Writer = os.Stderr
 
+// usbLinkAddr is the pod's API address on its USB network link when that works (firmware 3.9.0+,
+// no Wi-Fi configured, adapter up), else "": never the Ethernet or Wi-Fi fallback. For the settings
+// only the USB link may change over the network (the company CA and the cloud proxy).
+func (g *globalFlags) usbLinkAddr(device string) string {
+	if g.usbAddr != "" {
+		if host, _, err := net.SplitHostPort(g.usbAddr); err == nil && usbLinkNet.Contains(net.ParseIP(host)) {
+			return g.usbAddr
+		}
+		return ""
+	}
+	u, err := usbNetwork(g, device)
+	if err != nil || !u.On || !u.Link {
+		return ""
+	}
+	addr := net.JoinHostPort(u.PodIP, "8080")
+	if dialUSBPod(addr) != nil {
+		return ""
+	}
+	return addr
+}
+
 // networkTarget is resolveTarget for a command that needs the pod's network API: a USB connection
 // becomes the pod's address on its USB network adapter, or the standard "needs the network"
 // error with the reason that is not possible.

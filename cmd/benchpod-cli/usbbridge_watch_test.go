@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,7 +35,7 @@ func withFakeBridge(t *testing.T, f *fakeBridge) {
 		host, port, _ := net.SplitHostPort(f.proxy)
 		return json.RawMessage(fmt.Sprintf(`{"host":%q,"port":%s,"auth":false}`, host, port)), nil
 	}
-	bridgeSetProxy = func(_ *globalFlags, addr string) error {
+	bridgeSetProxy = func(_ string, addr string) error {
 		f.console = append(f.console, addr)
 		f.proxy = addr
 		return nil
@@ -46,7 +47,7 @@ func runWatchFor(t *testing.T, d time.Duration, port int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
-	if err := watchBridge(ctx, &globalFlags{connection: "usb"}, port, false, 5*time.Millisecond); err != nil {
+	if err := watchBridge(ctx, &globalFlags{connection: "usb"}, port, false, 5*time.Millisecond, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -95,5 +96,14 @@ func TestWatchBridgeLeavesSomeoneElsesProxy(t *testing.T) {
 func TestShortIDOf(t *testing.T) {
 	if got := shortIDOf("uuoGf1v6n9yeBZZVzswU4MDC1Lndgx6OXY5FG9_dUJQ"); got != "baea06" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// Without --watch the bridge stops with the reason instead of waiting.
+func TestBridgeWithoutWatchSaysWhyItCannotStart(t *testing.T) {
+	withFakeBridge(t, &fakeBridge{})
+	err := watchBridge(context.Background(), &globalFlags{connection: "usb"}, 39132, false, time.Millisecond, true)
+	if err == nil || !strings.Contains(err.Error(), "clear-wifi") || !strings.Contains(err.Error(), "usb-reattach") {
+		t.Fatalf("err = %v", err)
 	}
 }
