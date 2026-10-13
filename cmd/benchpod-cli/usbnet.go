@@ -43,6 +43,16 @@ var dialUSBPod = func(addr string) error {
 	return c.Close()
 }
 
+// pingLANPod checks the pod answers its API on a network address: a JSON ping, not just a TCP
+// connect, because with the external LAN policy off the pod accepts the connection and resets it.
+// A variable so tests can replace it.
+var pingLANPod = func(addr string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), usbNetProbeTimeout)
+	defer cancel()
+	_, err := (&tcpclient.Client{Addr: addr}).Command(ctx, map[string]any{"cmd": "ping"})
+	return err
+}
+
 // usbNetAddr returns the pod's API address on its USB network adapter (podIP:8080), or why there
 // is none, phrased to follow "over USB, ".
 func (g *globalFlags) usbNetAddr(device string) (string, error) {
@@ -80,7 +90,7 @@ func (g *globalFlags) usbNetAddr(device string) (string, error) {
 		return "", why
 	}
 	lan := net.JoinHostPort(u.LANIP, "8080")
-	if err := dialUSBPod(lan); err != nil {
+	if err := pingLANPod(lan); err != nil {
 		return "", fmt.Errorf("%v; its network address %s did not answer either (%v; the pod's external LAN policy "+
 			"`off` refuses it there)", why, lan, err)
 	}
