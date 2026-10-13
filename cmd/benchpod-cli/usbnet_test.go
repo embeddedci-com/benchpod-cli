@@ -14,11 +14,12 @@ import (
 func withUSBNet(t *testing.T, u serialconsole.USBNet, uerr, dialErr error) *[]string {
 	t.Helper()
 	var dialed []string
-	oldNet, oldDial, oldNote := usbNetwork, dialUSBPod, usbNote
+	oldNet, oldDial, oldPing, oldNote := usbNetwork, dialUSBPod, pingLANPod, usbNote
 	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) { return u, uerr }
 	dialUSBPod = func(addr string) error { dialed = append(dialed, addr); return dialErr }
+	pingLANPod = func(addr string) error { dialed = append(dialed, addr); return dialErr }
 	usbNote = io.Discard
-	t.Cleanup(func() { usbNetwork, dialUSBPod, usbNote = oldNet, oldDial, oldNote })
+	t.Cleanup(func() { usbNetwork, dialUSBPod, pingLANPod, usbNote = oldNet, oldDial, oldPing, oldNote })
 	return &dialed
 }
 
