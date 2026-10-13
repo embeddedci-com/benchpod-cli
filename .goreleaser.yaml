@@ -74,6 +74,7 @@ archives:
     files:
       - README.md
       - LICENSE
+      - packaging/linux/70-benchpod.rules
 
 checksum:
   name_template: checksums.txt

@@ -34,7 +34,7 @@ import (
 // with target "ca") or the LAN JSON API (`cloud_ca`, `cloud_proxy`, ota_* with target "ca").
 // Both settings are T2 commands, so a pod whose LAN policy is locked refuses changes on the LAN.
 // Newer firmware goes further: it refuses every change to them from the LAN, whatever the LAN
-// policy ("cloud_ca: change it from the cloud or the USB console"); only reading works there.
+// policy ("cloud_ca: change it from the cloud or over USB"); only reading works there.
 
 const (
 	caMaxPEM     = 16 * 1024   // the pod's limit on the stored PEM
@@ -42,18 +42,23 @@ const (
 	caLANChunk   = 768         // raw bytes per ota_data line (as the hwe2e LAN OTA sends)
 	caMissing    = "this firmware has no company CA support; update the pod's firmware"
 	proxyMissing = "this firmware has no HTTP proxy support; update the pod's firmware"
-	lanGateHint  = "the pod only takes this change over USB or from the cloud, never from the LAN; run it over the pod's USB console with --connection usb"
+	lanGateHint  = "the pod only takes this change over USB or from the cloud, never from Ethernet or Wi-Fi; run it with --connection usb"
 )
 
-// lanGateRefusal is the tail of the firmware's refusal of a cloud link change from the LAN
-// (pod_policy_cloud_link_gate): "cloud_ca: ..." or "cloud_proxy: ...".
-const lanGateRefusal = ": change it from the cloud or the USB console"
+// lanGateRefusals are the tails of the firmware's refusal of a cloud link change from the LAN
+// (pod_policy_cloud_link_gate): "cloud_ca: ..." or "cloud_proxy: ...". Firmware 3.9.0 also takes
+// the change over its USB network adapter and says so; older firmware names the console.
+var lanGateRefusals = []string{": change it from the cloud or over USB", ": change it from the cloud or the USB console"}
 
 // isLANGateRefusal reports whether msg is the firmware's refusal to change the company CA or
 // the HTTP proxy from the LAN.
 func isLANGateRefusal(msg string) bool {
-	verb, ok := strings.CutSuffix(strings.TrimSpace(msg), lanGateRefusal)
-	return ok && (verb == "cloud_ca" || verb == "cloud_proxy")
+	for _, tail := range lanGateRefusals {
+		if verb, ok := strings.CutSuffix(strings.TrimSpace(msg), tail); ok {
+			return verb == "cloud_ca" || verb == "cloud_proxy"
+		}
+	}
+	return false
 }
 
 func newCloudCmd(g *globalFlags) *cobra.Command {
@@ -358,7 +363,18 @@ func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error 
 	case spec.IsCloud():
 		label, certs, err = cloudCACloud(g, spec, action)
 	case spec.IsSerial():
+		// Firmware 3.9.0+: over the USB network link, which may change the CA (physical presence).
+		if addr := g.usbLinkAddr(spec.Device, spec.Pod); addr != "" {
+			label = addr
+			certs, err = cloudCALAN(g, addr, action, upload, warn)
+			break
+		}
 		label, certs, err = cloudCAUSB(g, spec.Device, action, upload, warn)
+		if err != nil && strings.Contains(err.Error(), "moved to the network API") {
+			err = errors.New("this pod's firmware (3.9.0 or later) installs a CA over the network: its USB network " +
+				"adapter is not usable here (Wi-Fi configured on the pod turns it off: `benchpod clear-wifi`), so use the " +
+				"cloud (`--connection embeddedci:<name>`) or turn USB networking back on")
+		}
 	default:
 		label = spec.Addr
 		certs, err = cloudCALAN(g, spec.Addr, action, upload, warn)
@@ -669,6 +685,12 @@ func runCloudProxy(g *globalFlags, action, addr, user, password string, out, war
 	case spec.IsCloud():
 		label, p, err = cloudProxyCloud(g, spec, action, addr, user, password)
 	case spec.IsSerial():
+		// Firmware 3.9.0+: over the USB network link, which may change the proxy (physical presence).
+		if link := g.usbLinkAddr(spec.Device, spec.Pod); link != "" {
+			label = link
+			p, err = cloudProxyLAN(g, link, action, addr, user, password)
+			break
+		}
 		label, p, err = cloudProxyUSB(g, spec.Device, action, addr, user, password)
 	default:
 		label = spec.Addr

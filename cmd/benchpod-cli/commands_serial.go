@@ -113,13 +113,19 @@ func runSetWifi(g *globalFlags, ssid, pw string, skipBlobs bool) (string, error)
 func ensureEspBlob(console *serialconsole.Console) error {
 	ctx, cancel := context.WithTimeout(context.Background(), blobsInstallTimeout)
 	defer cancel()
-	slots, err := console.Blobs(ctx)
+	// Before Wi-Fi is set the pod's USB network is still on (firmware 3.9.0+): use it when up.
+	target, closeTarget, err := blobTargetFor(ctx, console, "the USB console")
+	if err != nil {
+		return err
+	}
+	defer closeTarget()
+	slots, err := target.Blobs(ctx)
 	missing, err := espBlobMissing(slots, err)
 	if err != nil || !missing {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "set-wifi: the pod has no ESP32-C3 image for Wi-Fi yet; installing it over USB first")
-	return installBlobs(ctx, console, releaseBlobSource(podFirmwareRelease(ctx, console)), false, nil)
+	return installBlobs(ctx, target, releaseBlobSource(target.Release(ctx)), false, nil)
 }
 
 // espBlobMissing reads the pod's blob listing for set-wifi: whether the ESP32-C3 image needs
@@ -210,7 +216,8 @@ func newClearWifiCmd(g *globalFlags) *cobra.Command {
 			if err := console.WifiClear(ctx); err != nil {
 				return fmt.Errorf("clear-wifi: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "Erased the stored Wi-Fi credentials. Wi-Fi is off; no reboot needed.")
+			fmt.Fprintln(os.Stderr, "Erased the stored Wi-Fi credentials. Wi-Fi is off; no reboot needed. "+
+				"USB networking is on again (firmware 3.9.0+).")
 			return nil
 		},
 	}

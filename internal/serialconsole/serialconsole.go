@@ -32,14 +32,17 @@ import (
 // under, matched case-insensitively against enumerator VID strings:
 //
 //	2E8A — Raspberry Pi, the RP2350 pod's native USB port.
-//	0483 — STMicroelectronics, the STM32H563 pod (ST's stock CDC VID/PID
-//	       0483:5740, so the host binds its in-box CDC driver).
+//	0483 — STMicroelectronics, the STM32H563 pod up to firmware 3.8 (ST's
+//	       stock CDC VID/PID 0483:5740, so the host binds its in-box CDC driver).
+//	1209 — pid.codes, the STM32H563 pod from firmware 3.9.0 (1209:0001): a
+//	       composite device with the console and a USB network adapter.
 //
-// Neither ID is exclusive to a bench pod — 2E8A is shared with the CMSIS-DAP
-// probe's CDC and 0483:5740 with every ST Virtual COM Port on the bench — so
+// None of the IDs is exclusive to a bench pod — 2E8A is shared with the CMSIS-DAP
+// probe's CDC, 0483:5740 with every ST Virtual COM Port on the bench and 1209
+// with every pid.codes device — so
 // these only ORDER the ports to probe (see portPrio). Identification is always
 // by probing for benchpodMarker, never by VID alone.
-var benchPodVIDs = []string{"2E8A", "0483"}
+var benchPodVIDs = []string{"2E8A", "0483", "1209"}
 
 // isBenchPodVID reports whether vid is one of benchPodVIDs.
 func isBenchPodVID(vid string) bool {
@@ -233,6 +236,26 @@ type noPodError struct{ err error }
 
 func noPod(err error) error { return &noPodError{err: err} }
 
+// isPermissionDenied reports whether opening a serial port failed for lack of access (Linux: the
+// device belongs to the dialout group).
+func isPermissionDenied(err error) bool {
+	var pe *serial.PortError
+	if errors.As(err, &pe) && pe.Code() == serial.PermissionDenied {
+		return true
+	}
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied")
+}
+
+// deniedHint explains a pod console this user may not open, or "" when none was refused.
+func deniedHint(denied []string) string {
+	if len(denied) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %s could not be opened (permission denied): on Linux add yourself to the dialout group "+
+		"(`sudo usermod -aG dialout $USER`, then log in again) or install the udev rule 70-benchpod.rules. "+
+		"On firmware 3.9.0+ the network commands work over USB without the console", strings.Join(denied, ", "))
+}
+
 func (e *noPodError) Error() string        { return e.err.Error() }
 func (e *noPodError) Unwrap() error        { return e.err }
 func (e *noPodError) Is(target error) bool { return target == tcpclient.ErrUnreachable }
@@ -264,12 +287,15 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 	if len(cands) == 0 {
 		return nil, "", noPod(errors.New("no USB ports found; plug in the pod or pass --connection <device>"))
 	}
-	var tried []string
+	var tried, denied []string
 	for _, name := range cands {
 		serialLogf("probing %s for a bench-pod console...", name)
 		port, err := serial.Open(name, &serial.Mode{BaudRate: baudRate})
 		if err != nil {
 			serialLogf("  %s: open failed: %v", name, err)
+			if isPermissionDenied(err) {
+				denied = append(denied, name)
+			}
 			continue
 		}
 		c := newConsole(port)
@@ -285,8 +311,8 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 		_ = c.Close()
 		tried = append(tried, name)
 	}
-	return nil, "", noPod(fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]; pass --connection <device> to force one",
-		len(tried), strings.Join(tried, ", ")))
+	return nil, "", noPod(fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]%s; pass --connection <device> to force one",
+		len(tried), strings.Join(tried, ", "), deniedHint(denied)))
 }
 
 // serialGlobs are the /dev node patterns scanned (in addition to the enumerator)
@@ -315,6 +341,13 @@ var globPorts = func() []string {
 // globbed /dev/cu.* and /dev/tty.* nodes (deduped), ordered by benchPodVIDs first
 // (the VIDs a pod's console enumerates under) then everything else by name.
 func candidatePorts() ([]string, error) {
+	names, _, err := candidatePortsVID()
+	return names, err
+}
+
+// candidatePortsVID is candidatePorts plus each port's USB VID ("" when the enumerator did not
+// list it, as for the /dev/tty.* dial-in twins).
+func candidatePortsVID() ([]string, map[string]string, error) {
 	// VID by port name, from the enumerator (cross-platform), for ordering.
 	vid := map[string]string{}
 	if ports, err := portLister(); err == nil {
@@ -348,7 +381,7 @@ func candidatePorts() ([]string, error) {
 		}
 		return names[i] < names[j]
 	})
-	return names, nil
+	return names, vid, nil
 }
 
 func portPrio(vid string) int {
@@ -547,6 +580,8 @@ func parsePowerReply(raw string, efuse int, want string) error {
 	for _, ln := range strings.Split(s, "\n") {
 		ln = strings.TrimSpace(strings.TrimLeft(ln, "> \t\x08"))
 		switch {
+		case strings.Contains(ln, movedLine):
+			return ErrMovedToNetwork
 		case strings.Contains(ln, "unknown command"):
 			return ErrUnknownCommand
 		case ln == ok:

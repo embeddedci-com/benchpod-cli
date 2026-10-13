@@ -61,6 +61,27 @@ You need Go (see `go.mod` for the version), then `make build`. On macOS the
 build requires cgo (`CGO_ENABLED=1`, the default for a native build) because USB
 serial-port enumeration uses the IOKit framework; Linux and Windows are pure Go.
 
+### Linux: keep ModemManager off the pod
+
+On Linux, ModemManager probes new USB serial ports as if they were modems, which
+garbles the pod's USB console for its first seconds. The release archives include
+`packaging/linux/70-benchpod.rules`; install it once:
+
+```bash
+sudo cp packaging/linux/70-benchpod.rules /etc/udev/rules.d/
+```
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+It sets `ENV{ID_MM_DEVICE_IGNORE}="1"` for the pod's USB IDs: `1209:0001` (firmware
+3.9.0 and later) and `0483:5740` (older firmware), and `TAG+="uaccess"`, which lets the
+user signed in at the desktop open the console without joining the `dialout` group. Over
+SSH, or without the rule, add yourself to `dialout` (`sudo usermod -aG dialout $USER`,
+then log in again). On firmware 3.9.0 and later the network commands need neither: over
+`--connection usb` the CLI finds the pod from this computer's end of its USB network link.
+
 ### OpenOCD (for `flash`)
 
 The `flash` command shells out to **OpenOCD**, which must be installed
@@ -101,8 +122,9 @@ reach the pod; the transport is inferred from its value:
 | `--connection` value             | Transport                                              |
 |----------------------------------|--------------------------------------------------------|
 | `192.168.1.5[:8080]`             | The pod's network TCP/JSON API (Ethernet or Wi-Fi).    |
-| `/dev/tty...`, `COM3`            | USB console, explicit device path.                     |
-| `usb`                            | USB console, auto-detected by probing the ports.       |
+| `/dev/tty...`, `COM3`            | USB, explicit console device path.                     |
+| `usb`                            | USB, the console auto-detected by probing the ports.   |
+| `usb:<name>`                     | USB, the pod with that name (`usb:benchpod-a1b2c3`) when several are plugged in; plain `usb` then lists them (not yet tested with two physical pods). |
 | `embeddedci:<name>`              | Through embeddedci.com to the pod with that name on your account (see below). |
 | *(omitted)*                      | the default saved by `benchpod discover --save`, `benchpod setup` or `benchpod set-connection`. |
 
@@ -115,14 +137,41 @@ The firmware itself is unauthenticated; `benchpod login` is independent of the
 device path and authenticates with `embeddedci-server` (device-login flow) for
 cloud features. Direct firmware commands on the network or USB do not send tokens.
 
+**USB networking (firmware 3.9.0+).** The pod's USB device is also a network
+adapter that carries the full network API on a fixed address (`10.237.x.y`, its own
+point-to-point link: the computer keeps its default route and DNS). With a USB
+connection (`usb` or a device path), a command that needs the network uses that
+adapter, so the whole CLI works over one USB cable; the console is still used for
+the commands it runs (below) and as the fallback. USB networking is off while Wi-Fi
+is configured on the pod (`set-wifi` turns it off, `clear-wifi` back on). If a
+command says the adapter is not up, unlock the screen (macOS ignores a new adapter
+while it is locked) and run `benchpod usb-reattach`. `benchpod usb-bridge` carries
+the pod's cloud link over the same cable.
+
+The USB network adapter works with the in-box drivers of macOS, Linux and Windows 11
+(tested). Windows 10 (1903 or newer) is supported but not tested: if the adapter shows
+up without a driver there, open Device Manager, update its driver, and pick "UsbNcm
+Host Device" from the list of network adapters.
+WSL2 and Docker on Windows are not tested: Windows routes the pod's `10.237.x.y` address
+itself, so a WSL2 distribution or a container on the host network should reach it with
+`--connection <that address>`, but USB auto-detect and mDNS may not work from inside them.
+
+**Compatibility with older firmware and older CLIs.** The CLI decides per pod, from what
+the pod reports (the `usb` line of its console `status`), never from its own version:
+
+| | Pod firmware before 3.9.0 | Pod firmware 3.9.0 and later |
+|---|---|---|
+| **This CLI (0.6.0+)** | Works as before: the USB console for `status`, `la voltage`, `install-blobs`, `flash-self`, `set-wifi`, the policies, `cloud ca`/`proxy` and `identity`; the network commands need the pod's network address, as before, and say so. The serial auto-detect still finds `0483:5740` and `2E8A` consoles. | Over `usb`, every command uses the pod's USB network adapter when it is up (including `flash`, which the STM32 pod's console never ran), and the console for the commands that stay there. When USB networking is off (Wi-Fi configured) or not up, the network commands use the pod's Ethernet or Wi-Fi address from its console `status` if this computer reaches it, say so, and are subject to the pod's external LAN policy there (`benchpod clear-wifi` turns USB networking back on). |
+| **An older CLI (0.5.x)** | Unchanged. | The kept console commands keep their names and replies (`status`, `dfu`, `identity`, `identity wipe`, `lan-policy`, `sig-policy`, `set-wifi`, `show-network`, `clear-wifi`, `cloud ca show`/`clear`, `cloud proxy`), so those still work, and `flash-self` still flashes over DFU. What 3.9.0 moved to the network API (`la voltage` over USB, and every upload: `install-blobs`, the blob step of `flash-self` and `set-wifi`, `cloud ca set`) prints the pod's "moved to the network API ... update the benchpod CLI to 0.6.0 or later" line: update the CLI with the firmware. Over a network address everything works. |
+
 Which command works over which connection:
 
 | Connection          | Commands |
 |---------------------|----------|
 | Network address     | Every pod command except the USB-only ones below. |
-| USB                 | `status`, `la voltage`, `flash` (SWD), `lan-policy`, `sig-policy`, `cloud ca`, `cloud proxy`. |
+| USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD), `install-blobs`, `cloud ca` and `cloud proxy`; without it the pod's Ethernet or Wi-Fi address, and the console where it still has the command. Firmware before 3.9.0: the console, as before. `lan-policy`, `sig-policy` and `identity` always use the console (physical presence). |
 | `embeddedci:<name>` | `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
-| USB only            | `set-wifi`, `show-network`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`; `flash-self` uses USB DFU. These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
+| USB only            | `set-wifi`, `show-network`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU. These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
 A command that cannot use the connection it is given says so and names what to use
 instead.
@@ -240,6 +289,11 @@ benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 benchpod set-wifi
 benchpod show-network     # the pod's IP (wired lease included), SSID, state, RSSI
 benchpod clear-wifi
+
+# One USB cable (firmware 3.9.0+, no Wi-Fi configured):
+benchpod capture --connection usb ...   # network commands use the pod's USB network adapter
+benchpod usb-bridge                     # the pod's cloud link through this computer (Ctrl-C stops it)
+benchpod usb-reattach                   # re-enumerate on USB (macOS: after unlocking the screen)
 
 # Firmware:
 benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP; --build: an uploaded build)
@@ -423,7 +477,7 @@ The pod reconnects to the cloud through proxy.corp:3128.
 
   ```
   $ benchpod cloud proxy clear --connection 192.168.1.50
-  [benchpod] cloud proxy clear: the pod refused: cloud_proxy: change it from the cloud or the USB console (the pod only takes this change over USB or from the cloud, never from the LAN; run it over the pod's USB console with --connection usb)
+  [benchpod] cloud proxy clear: the pod refused: cloud_proxy: change it from the cloud or over USB (the pod only takes this change over USB or from the cloud, never from Ethernet or Wi-Fi; run it with --connection usb)
   ```
 
   Older firmware with its LAN policy `locked` refuses the same way, with its own
@@ -634,10 +688,13 @@ report whether it is registered. When this machine is signed in (`benchpod login
 a registered pod is also checked against that account: discover names it when it is
 yours, and says so when it is registered to a different account (usually a second
 account; a pod set up for you is on the account your activation email was sent to).
+A pod advertises itself on each of its interfaces; when this computer hears it on the
+pod's USB network link (firmware 3.9.0+), discover shows and uses that address rather
+than the LAN one, and `--save` stores `usb` for it.
 
 | Flag              | Default | Purpose                                                         |
 |-------------------|---------|-----------------------------------------------------------------|
-| `--save`          | off     | Save the pod as the default connection when exactly one is found (the network address first). |
+| `--save`          | off     | Save the pod as the default connection when exactly one is found (the network address first; `usb` for a pod on its USB link). |
 | `--no-usb`        | off     | Skip probing USB ports.                                          |
 | `--no-network`    | off     | Skip mDNS browsing of the LAN.                                   |
 | `--wait`          | `3s`    | How long to browse the LAN for mDNS replies.                     |
@@ -653,9 +710,15 @@ A short summary of the pod over the network or through embeddedci.com
 (`--connection embeddedci:<name>`): firmware version (and whether a newer
 release exists, when GitHub answers within a few seconds), gateware, board, the board
 I/O (LA) voltage or "not set", target power (the internal 5 V and external eFuses),
+the power draw (each rail that is on and, on boards with the pod's own current monitor,
+the pod's draw and the total it takes from USB),
 the network address and link, the cloud registration (and, when this machine is
 signed in, whether the pod is on your account), and a cloud job's lease when one
-holds the pod. Over USB it prints the console's `status` text.
+holds the pod. With firmware 3.9.0+ a `USB` line shows the pod's USB network address
+and warns when the USB port powering the pod offers only default USB power (500 mA),
+which may not carry the pod plus a DUT on the internal 5 V rail. Over USB it asks over
+the pod's USB network adapter when that is up, else it prints the console's `status`
+text.
 
 ```text
 BenchPod at 192.168.1.220:8080
@@ -898,7 +961,8 @@ fit the pod's flash, the download's checksum does not match, or dfu-util fails.
 
 ### `benchpod install-blobs`
 
-Install the gateware and ESP32-C3 images the pod's firmware goes with (USB). By
+Install the gateware and ESP32-C3 images the pod's firmware goes with (USB: over the
+pod's USB network adapter when it is up, firmware 3.9.0+, else its console). By
 default they come from the release that matches the firmware the pod runs. Each
 blob's signature is reported; for now a missing or failing one never stops it.
 
@@ -928,7 +992,7 @@ Reboot a (retired) RP2350 pod into its UF2 bootloader (USB).
 
 ### `benchpod set-wifi`
 
-Save Wi-Fi credentials and join (USB). Installs the ESP32-C3 image first when the
+Save Wi-Fi credentials and join (USB). With firmware 3.9.0+ this turns the pod's USB networking off (Wi-Fi and USB networking are one or the other; `clear-wifi` turns it back on). Installs the ESP32-C3 image first when the
 pod lacks it; if the pod's image slots cannot be read, it stops and says so
 (`--skip-blobs` sets Wi-Fi without the check).
 
@@ -946,7 +1010,64 @@ The pod's IP (the wired lease first) plus the stored Wi-Fi SSID, state and RSSI
 
 ### `benchpod clear-wifi`
 
-Erase the stored Wi-Fi credentials (USB). Wi-Fi goes down at once, no reboot needed. Firmware after 3.7.0 also erases the copy older firmware left on the ESP32-C3 Wi-Fi chip, which takes a few seconds more. No flags.
+Erase the stored Wi-Fi credentials (USB). Wi-Fi goes down at once, no reboot needed, and USB networking (firmware 3.9.0+) comes back on. Firmware after 3.7.0 also erases the copy older firmware left on the ESP32-C3 Wi-Fi chip, which takes a few seconds more. No flags.
+
+### `benchpod usb-bridge`
+
+Carry the pod's cloud link over USB through this computer, until Ctrl-C (USB). The
+pod's USB network adapter has no router, so the pod cannot reach embeddedci.com over
+it by itself. The bridge runs an HTTP CONNECT proxy on this computer's end of the
+USB link and sets it as the pod's cloud proxy over that link (never the USB console:
+the web app's setup wizard, terminals and other commands keep it); the pod then connects to
+embeddedci.com through this computer's internet connection, with no Ethernet or
+Wi-Fi. When it stops it clears the pod's proxy again. The proxy serves only the pod,
+and only tunnels to port 443. It refuses to replace a proxy the pod already has
+(`benchpod cloud proxy clear --connection usb` removes it). Needs firmware 3.9.0 or
+later and no Wi-Fi configured on the pod.
+
+On Windows the USB link is an unidentified network, which the firewall treats as
+Public: allow `benchpod` through Windows Defender Firewall when it asks, or add an
+inbound rule for TCP port 3128 from `10.237.0.0/16`, or the pod's connections to
+the bridge are blocked.
+
+| Flag           | Default | Purpose                                              |
+|----------------|---------|------------------------------------------------------|
+| `--port`       | `3128`  | TCP port of the proxy on this computer's USB address. |
+| `--keep-proxy` | off     | Leave the pod's cloud proxy set when the bridge stops. |
+| `--watch`      | off     | Wait for the pod and pick it up again after it is unplugged or restarted (how the background service runs it). It watches this computer's network interfaces for the pod's USB network link and reads, sets and clears the pod's proxy over that link; it never opens the USB console. With Wi-Fi configured on the pod there is no USB link, so it does nothing. |
+
+### `benchpod usb-bridge install`
+
+Run `benchpod usb-bridge --watch` in the background for this user, at every login: a
+launchd agent on macOS (`~/Library/LaunchAgents/com.embeddedci.benchpod-usb-bridge.plist`,
+log in `~/Library/Logs/benchpod-usb-bridge.log`), a systemd user unit on Linux
+(`~/.config/systemd/user/benchpod-usb-bridge.service`; `loginctl enable-linger` keeps it
+running while you are logged out), or a scheduled task at logon on Windows
+(`BenchPod usb-bridge`). A pod with only USB then keeps its cloud link, and so the web
+app, after this computer restarts. `--connection` is passed on, so
+`--connection usb:<name>` installs it for one of several pods. On Windows, also let
+the pod in through Windows Defender Firewall (see `usb-bridge`).
+
+| Flag     | Default | Purpose                                              |
+|----------|---------|------------------------------------------------------|
+| `--port` | `3128`  | TCP port of the proxy on this computer's USB address. |
+
+### `benchpod usb-bridge uninstall`
+
+Stop and remove the background service, then clear the pod's cloud proxy when it still
+points at this computer (the pod must be plugged in for that). No flags.
+
+### `benchpod usb-bridge status`
+
+Show whether the background service is installed and running. No flags.
+
+### `benchpod usb-reattach`
+
+Make the pod drop off the USB bus for half a second and connect again (USB). The
+computer then sets up the console and the USB network adapter anew, as after
+replugging the cable. macOS ignores a new network adapter while the screen is
+locked: run this after unlocking when the pod was plugged in or rebooted meanwhile.
+Needs firmware 3.9.0 or later. No flags.
 
 ### `benchpod login`
 
@@ -1081,8 +1202,9 @@ Show the company CA certificates the pod holds. No flags.
 ### `benchpod cloud ca set <file.pem>`
 
 Check a PEM file (at most 16 KB) and store its CA certificates on the pod. Over USB
-only (the network refuses the change, and embeddedci.com does not carry the upload).
-No flags.
+only: through the pod's USB network adapter on firmware 3.9.0+ (which may change the CA,
+physical presence; the pod's Ethernet and Wi-Fi refuse it, and embeddedci.com does not
+carry the upload), or the USB console on older firmware. No flags.
 
 ### `benchpod cloud ca clear`
 

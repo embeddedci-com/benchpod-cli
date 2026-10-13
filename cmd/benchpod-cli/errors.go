@@ -18,7 +18,7 @@ import (
 // pins the texts) and explainRefusal is the one place that says what to do about each.
 
 const (
-	lockedUSBHint = "the pod's LAN policy is locked; run this over the pod's USB console with --connection usb"
+	lockedUSBHint = "the pod's external LAN policy is locked; run this over USB with --connection usb"
 	leaseBusyHint = "on the LAN the pod can only be read while a cloud job holds it; try again when the job ends"
 	heavyBusyHint = "the pod is running another long command; try again when it ends"
 	forbiddenHint = "API keys need the benchpod:admin scope"

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/openocd"
+	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
@@ -144,6 +145,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if err != nil {
 		return err
 	}
+	spec = g.preferUSBNetwork(spec, "flash")
 	fromBuild := f.fromBuild()
 	if fromBuild && strings.TrimSpace(f.file) != "" {
 		return fmt.Errorf("pass either --file or an uploaded build (--build, --repo, --ref, --artifact), not both")
@@ -352,6 +354,7 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 	if err != nil {
 		return nil, false, err
 	}
+	spec = g.preferUSBNetwork(spec, "flash") // the probe over the USB network is much faster
 	if spec.IsNetwork() {
 		client := &tcpclient.Client{Addr: spec.Addr}
 		// Ask the pod whether it has the dedicated reset pin BEFORE arming the
@@ -397,6 +400,11 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 	if powerEfuse != 0 {
 		if err := console.TargetPower(ctx, powerEfuse, true); err != nil {
 			console.Close()
+			if errors.Is(err, serialconsole.ErrMovedToNetwork) || errors.Is(err, serialconsole.ErrUnknownCommand) {
+				return nil, false, fmt.Errorf("flash: this pod's console has no power command (firmware 3.9.0+ switches " +
+					"target power over the network API) and its USB network is not usable; drop --target-power, " +
+					"or connect over the network")
+			}
 			return nil, false, fmt.Errorf("flash: enable target-power eFuse %d over %s: %w", powerEfuse, path, err)
 		}
 		fmt.Fprintf(os.Stderr, "flash: target-power eFuse %d on\n", powerEfuse)

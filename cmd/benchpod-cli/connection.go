@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
+	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/spf13/cobra"
 )
 
@@ -27,11 +28,13 @@ const (
 //	192.168.1.5[:port], host        -> network/TCP (Addr set)
 //	/dev/tty..., COM3, \\.\COM3      -> USB console (Device set)
 //	usb (legacy: serial)            -> USB console, auto-detect (Device == "")
+//	usb:<name>                      -> USB, the pod with that name when several are plugged in (Pod set)
 //	embeddedci:<name>               -> through embeddedci.com (Name set), where a command can work over it
 type ConnSpec struct {
 	Kind   connKind
 	Addr   string // TCP host:port for the network transport
 	Device string // serial device path; "" means auto-detect
+	Pod    string // usb:<name>: the pod's identity short id ("baea06") among several on USB
 	Name   string // the pod's name on embeddedci.com, for the cloud form
 }
 
@@ -83,6 +86,15 @@ func parseTarget(raw string) (ConnSpec, error) {
 	// written before the rename keep working; it is not advertised anywhere.
 	case "usb", "serial":
 		return ConnSpec{Kind: connSerial}, nil
+	}
+	if strings.HasPrefix(strings.ToLower(raw), "usb:") {
+		pod := serialconsole.NormalizePodName(raw[len("usb:"):])
+		if pod == "" {
+			return ConnSpec{}, fmt.Errorf("--connection %s needs the pod's name, e.g. usb:benchpod-a1b2c3", raw)
+		}
+		return ConnSpec{Kind: connSerial, Pod: pod}, nil
+	}
+	switch strings.ToLower(raw) {
 	case "wifi", "tcp":
 		return ConnSpec{}, fmt.Errorf("--connection %s needs an address, e.g. --connection 192.168.1.5", strings.ToLower(raw))
 	}
@@ -116,6 +128,9 @@ func describeConn(c ConnSpec) string {
 	if c.Device != "" {
 		return "usb " + c.Device
 	}
+	if c.Pod != "" {
+		return "usb benchpod-" + c.Pod
+	}
 	return "usb (auto-detect)"
 }
 
@@ -132,9 +147,9 @@ func (c ConnSpec) RequireNetwork(cmd string) error {
 	if c.IsCloud() {
 		return cloudRefusal(cmd, c, false)
 	}
-	return fmt.Errorf("%s needs the pod on the network; it is not available over a USB connection. "+
-		"Run `benchpod discover` to find the pod's address, then pass --connection <address>. "+
-		"If it has no address yet, plug in Ethernet or run `benchpod set-wifi --ssid <ssid>`", cmd)
+	return fmt.Errorf("%s needs the pod's network API, which a USB connection reaches only through the pod's USB "+
+		"network adapter (firmware 3.9.0 or later, with no Wi-Fi configured). "+
+		"Or run `benchpod discover` to find the pod's network address, then pass --connection <address>", cmd)
 }
 
 // cloudRefusal is the one message for a command that cannot go through embeddedci.com: it streams

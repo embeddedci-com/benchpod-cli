@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
+	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 )
 
 // TestMain keeps every test off the real embeddedci.com session and config: the CLI's files go
@@ -29,6 +31,11 @@ func TestMain(m *testing.M) {
 	for _, k := range []string{"BENCHPOD_API_KEY", "BENCHPOD_API_BASE", "BENCHPOD_CONNECTION", "BENCHPOD_CONFIG_FILE"} {
 		os.Unsetenv(k)
 	}
+	// Never probe this machine's USB ports for a pod's USB network adapter.
+	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) {
+		return serialconsole.USBNet{}, errors.New("no pod on USB (tests)")
+	}
+	localUSBPod = func(string) string { return "" }
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

@@ -109,7 +109,7 @@ func (g *globalFlags) usbDevice(cmd string) (string, error) {
 // handling. It is for the commands that need the pod's own port: chunked replies and raw streams.
 // Single-reply commands use podClient, which also goes through embeddedci.com.
 func (g *globalFlags) networkClient(cmdName string, def time.Duration) (context.Context, context.CancelFunc, *tcpclient.Client, error) {
-	spec, err := g.resolveTarget()
+	spec, err := g.networkTarget(cmdName)
 	if err != nil {
 		return nil, func() {}, nil, err
 	}
@@ -158,7 +158,7 @@ func (g *globalFlags) openBenchpodSerial(device string, probeTimeout time.Durati
 			hint = strings.TrimSpace(cfg.LastSerial)
 		}
 	}
-	console, path, err := serialconsole.OpenBenchpod(device, hint, probeTimeout)
+	console, path, err := serialconsole.OpenBenchpodSelect(device, hint, g.usbPodName(), probeTimeout)
 	if err != nil {
 		return nil, "", err
 	}
@@ -169,6 +169,18 @@ func (g *globalFlags) openBenchpodSerial(device string, probeTimeout time.Durati
 		}
 	}
 	return console, path, nil
+}
+
+// usbPodName is the pod a usb:<name> connection selects, or "".
+func (g *globalFlags) usbPodName() string {
+	raw, err := g.rawConnection()
+	if err != nil {
+		return ""
+	}
+	if spec, err := parseTarget(raw); err == nil && spec.IsSerial() {
+		return spec.Pod
+	}
+	return ""
 }
 
 // saveLastSerial persists the auto-detected serial device path to config.

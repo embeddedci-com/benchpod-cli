@@ -70,7 +70,7 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 
 	var client *tcpclient.Client
 	if usePod {
-		spec, err := g.resolveTarget()
+		spec, err := g.networkTarget("deregister")
 		if err != nil {
 			return err
 		}

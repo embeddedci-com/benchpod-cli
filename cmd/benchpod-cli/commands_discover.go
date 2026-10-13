@@ -226,6 +226,7 @@ func discoverPods(wait time.Duration) ([]discoveredPod, error) {
 	// the context expires, so the loop ends on its own; byKey is read only after
 	// the drain has finished (below), so no lock is needed.
 	drained := make(chan struct{})
+	ips := map[string][]net.IP{} // every IPv4 heard per instance, across interfaces
 	go func() {
 		defer close(drained)
 		for e := range entries {
@@ -234,11 +235,12 @@ func discoverPods(wait time.Duration) ([]discoveredPod, error) {
 				hostname: strings.TrimSuffix(e.HostName, "."),
 				id:       txtValue(e.Text, "id"),
 			}
+			ips[e.Instance] = append(ips[e.Instance], e.AddrIPv4...)
 			// Prefer a numeric IPv4 over the .local name so we don't depend on
-			// the OS mDNS resolver later.
+			// the OS mDNS resolver later, and the pod's USB link over the LAN.
 			host := p.hostname
-			if len(e.AddrIPv4) > 0 {
-				host = e.AddrIPv4[0].String()
+			if ip := preferredPodIP(ips[e.Instance]); ip != nil {
+				host = ip.String()
 			}
 			p.addr = benchpodconfig.EnsurePort(fmt.Sprintf("%s:%d", host, e.Port))
 			byKey[e.Instance] = p
@@ -273,6 +275,25 @@ func discoverPods(wait time.Duration) ([]discoveredPod, error) {
 	}
 	sort.Slice(pods, func(i, j int) bool { return pods[i].instance < pods[j].instance })
 	return pods, nil
+}
+
+// usbLinkNet is where a pod's USB network adapter lives (firmware 3.9.0+): a /30 per pod,
+// derived from its unique ID. Only the computer the pod is plugged into hears it there.
+var usbLinkNet = &net.IPNet{IP: net.IPv4(10, 237, 0, 0), Mask: net.CIDRMask(16, 32)}
+
+// preferredPodIP picks the address to reach a pod by from what mDNS returned for it on every
+// interface: its USB link when it has one (a pod advertises on each of its interfaces, and the
+// OS would otherwise pick any), else the first. nil when there is none.
+func preferredPodIP(ips []net.IP) net.IP {
+	for _, ip := range ips {
+		if usbLinkNet.Contains(ip) {
+			return ip
+		}
+	}
+	if len(ips) > 0 {
+		return ips[0]
+	}
+	return nil
 }
 
 // multicastIfaces lists the interfaces worth browsing for mDNS: up, multicast
@@ -693,9 +714,15 @@ func plural(n int, one, many string) string {
 // saveTarget is the connection string --save would store: the network address
 // of the single pod found (preferred — it works from other machines and from
 // CI), else the serial device of the single pod found over USB. It returns ""
-// when the choice is ambiguous, so --save never guesses between two pods.
+// when the choice is ambiguous, so --save never guesses between two pods. A pod
+// heard on its USB network link is saved as `usb`: its link address is only
+// reachable from this computer, and `usb` keeps working (over the console) when
+// Wi-Fi turns the pod's USB networking off.
 func saveTarget(netPods []discoveredPod, serialPods []serialconsole.SerialPod) string {
 	if len(netPods) == 1 {
+		if host, _, err := net.SplitHostPort(netPods[0].addr); err == nil && usbLinkNet.Contains(net.ParseIP(host)) {
+			return "usb"
+		}
 		return netPods[0].addr
 	}
 	if len(netPods) == 0 && len(serialPods) == 1 {

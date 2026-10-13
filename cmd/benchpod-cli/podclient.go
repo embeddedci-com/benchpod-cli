@@ -45,14 +45,11 @@ type podTarget struct {
 
 // podClient resolves the connection for a single-reply JSON command: the pod's network address,
 // or embeddedci:<name> through embeddedci.com. A USB connection gets the standard "needs the
-// network" error. It returns a deadline context (overridable by --timeout) with signal handling.
+// network" error unless the pod's USB network adapter is up. It returns a deadline context (overridable by --timeout) with signal handling.
 func (g *globalFlags) podClient(cmdName string, def time.Duration) (context.Context, context.CancelFunc, *podTarget, error) {
-	spec, err := g.resolveTarget()
+	spec, err := g.networkTarget(cmdName)
 	if err != nil {
 		return nil, func() {}, nil, err
-	}
-	if spec.IsSerial() {
-		return nil, func() {}, nil, spec.RequireNetwork(cmdName)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(def))
 	cancel = withSignalCleanup(cancel, installSignalHandler(ctx, cancel))
@@ -166,7 +163,10 @@ const wiringLookupTimeout = 6 * time.Second
 // fails (then it writes one warning line to warn). A variable so tests can replace it.
 var loadPodWiring = func(g *globalFlags, warn io.Writer) *podWiring {
 	spec, err := g.resolveTarget()
-	if err != nil || spec.IsSerial() {
+	if err != nil {
+		return nil
+	}
+	if spec = g.preferUSBNetwork(spec, "wiring"); spec.IsSerial() {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), wiringLookupTimeout)

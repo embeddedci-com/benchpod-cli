@@ -196,6 +196,14 @@ func runPolicy(g *globalFlags, p podPolicy, t policyTarget, set string, out, war
 		return runPolicyCloud(g, p, t, set, out, warn)
 	}
 	if spec.IsSerial() {
+		// Showing is a read the pod's USB network link answers (firmware 3.9.0+), with no
+		// console: a Linux user outside the dialout group cannot open it. Changes stay on the
+		// console (physical presence).
+		if set == "" && spec.Device == "" {
+			if addr := localUSBPod(spec.Pod); addr != "" {
+				return runPolicyLAN(g, p, addr, out)
+			}
+		}
 		return runPolicyUSB(g, p, spec.Device, set, out, warn)
 	}
 	if set != "" {

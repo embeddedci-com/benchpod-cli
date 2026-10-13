@@ -52,6 +52,9 @@ func parseLAVoltageReply(raw string) (int, error) {
 	s = strings.ReplaceAll(s, "\r", "\n")
 	for _, ln := range strings.Split(s, "\n") {
 		ln = strings.TrimSpace(strings.TrimLeft(ln, "> \t\x08"))
+		if strings.Contains(ln, movedLine) {
+			return 0, ErrMovedToNetwork
+		}
 		if strings.Contains(ln, "unknown command") {
 			return 0, ErrUnknownCommand
 		}

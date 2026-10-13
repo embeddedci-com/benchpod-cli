@@ -112,7 +112,7 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 	host = podHostFor(host, opts.podHost)
 	// Verify the server cert by default when using TLS; --insecure-skip-verify opts out for bring-up.
 	verify := tls && !opts.insecureSkipVerify
-	spec, err := g.resolveTarget()
+	spec, err := g.networkTarget("register")
 	if err != nil {
 		return err
 	}
