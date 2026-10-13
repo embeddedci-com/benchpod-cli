@@ -236,6 +236,26 @@ type noPodError struct{ err error }
 
 func noPod(err error) error { return &noPodError{err: err} }
 
+// isPermissionDenied reports whether opening a serial port failed for lack of access (Linux: the
+// device belongs to the dialout group).
+func isPermissionDenied(err error) bool {
+	var pe *serial.PortError
+	if errors.As(err, &pe) && pe.Code() == serial.PermissionDenied {
+		return true
+	}
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "permission denied")
+}
+
+// deniedHint explains a pod console this user may not open, or "" when none was refused.
+func deniedHint(denied []string) string {
+	if len(denied) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %s could not be opened (permission denied): on Linux add yourself to the dialout group "+
+		"(`sudo usermod -aG dialout $USER`, then log in again) or install the udev rule 70-benchpod.rules. "+
+		"On firmware 3.9.0+ the network commands work over USB without the console", strings.Join(denied, ", "))
+}
+
 func (e *noPodError) Error() string        { return e.err.Error() }
 func (e *noPodError) Unwrap() error        { return e.err }
 func (e *noPodError) Is(target error) bool { return target == tcpclient.ErrUnreachable }
@@ -267,12 +287,15 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 	if len(cands) == 0 {
 		return nil, "", noPod(errors.New("no USB ports found; plug in the pod or pass --connection <device>"))
 	}
-	var tried []string
+	var tried, denied []string
 	for _, name := range cands {
 		serialLogf("probing %s for a bench-pod console...", name)
 		port, err := serial.Open(name, &serial.Mode{BaudRate: baudRate})
 		if err != nil {
 			serialLogf("  %s: open failed: %v", name, err)
+			if isPermissionDenied(err) {
+				denied = append(denied, name)
+			}
 			continue
 		}
 		c := newConsole(port)
@@ -288,8 +311,8 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 		_ = c.Close()
 		tried = append(tried, name)
 	}
-	return nil, "", noPod(fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]; pass --connection <device> to force one",
-		len(tried), strings.Join(tried, ", ")))
+	return nil, "", noPod(fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]%s; pass --connection <device> to force one",
+		len(tried), strings.Join(tried, ", "), deniedHint(denied)))
 }
 
 // serialGlobs are the /dev node patterns scanned (in addition to the enumerator)

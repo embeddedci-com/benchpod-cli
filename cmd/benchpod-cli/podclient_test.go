@@ -35,6 +35,7 @@ func TestMain(m *testing.M) {
 	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) {
 		return serialconsole.USBNet{}, errors.New("no pod on USB (tests)")
 	}
+	localUSBPod = func(string) string { return "" }
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

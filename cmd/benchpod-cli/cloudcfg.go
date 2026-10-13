@@ -364,7 +364,7 @@ func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error 
 		label, certs, err = cloudCACloud(g, spec, action)
 	case spec.IsSerial():
 		// Firmware 3.9.0+: over the USB network link, which may change the CA (physical presence).
-		if addr := g.usbLinkAddr(spec.Device); addr != "" {
+		if addr := g.usbLinkAddr(spec.Device, spec.Pod); addr != "" {
 			label = addr
 			certs, err = cloudCALAN(g, addr, action, upload, warn)
 			break
@@ -686,7 +686,7 @@ func runCloudProxy(g *globalFlags, action, addr, user, password string, out, war
 		label, p, err = cloudProxyCloud(g, spec, action, addr, user, password)
 	case spec.IsSerial():
 		// Firmware 3.9.0+: over the USB network link, which may change the proxy (physical presence).
-		if link := g.usbLinkAddr(spec.Device); link != "" {
+		if link := g.usbLinkAddr(spec.Device, spec.Pod); link != "" {
 			label = link
 			p, err = cloudProxyLAN(g, link, action, addr, user, password)
 			break

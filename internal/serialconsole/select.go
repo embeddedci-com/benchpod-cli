@@ -58,6 +58,7 @@ func OpenBenchpodSelect(explicit, preferred, name string, probeTimeout time.Dura
 		return nil, "", noPod(errors.New("no USB ports found; plug in the pod or pass --connection <device>"))
 	}
 	var found []foundPod
+	var denied []string
 	closeAll := func(keep string) {
 		for _, f := range found {
 			if f.port != keep {
@@ -74,6 +75,9 @@ func OpenBenchpodSelect(explicit, preferred, name string, probeTimeout time.Dura
 		c, err := openPort(port)
 		if err != nil {
 			serialLogf("  %s: open failed: %v", port, err)
+			if isPermissionDenied(err) {
+				denied = append(denied, port)
+			}
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
@@ -110,7 +114,7 @@ func OpenBenchpodSelect(explicit, preferred, name string, probeTimeout time.Dura
 	}
 	switch len(found) {
 	case 0:
-		return nil, "", noPod(errors.New("no bench-pod console found on USB; pass --connection <device> to force one"))
+		return nil, "", noPod(fmt.Errorf("no bench-pod console found on USB%s; pass --connection <device> to force one", deniedHint(denied)))
 	case 1:
 		return found[0].c, found[0].port, nil
 	}

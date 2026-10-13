@@ -112,18 +112,46 @@ func (g *globalFlags) preferUSBNetwork(spec ConnSpec, cmd string) ConnSpec {
 	return spec
 }
 
+// localUSBPod finds the pod's API address from this computer's own end of its USB network link
+// (firmware 3.9.0+), without opening its console: the one link there is, or the one whose pod is
+// named pod (usb:<name>). "" when there is none, several and no name, or the pod does not answer.
+// So the network commands work over USB without access to the console device (Linux users
+// outside the dialout group) and without probing serial ports. A variable so tests can replace it.
+var localUSBPod = func(pod string) string {
+	links := localUSBLinks()
+	if len(links) == 0 {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	l, err := pickUSBLink(ctx, links, serialconsole.NormalizePodName(pod))
+	if err != nil {
+		return ""
+	}
+	addr := net.JoinHostPort(l.pod, "8080")
+	if dialUSBPod(addr) != nil {
+		return ""
+	}
+	return addr
+}
+
 // usbNote is where networkTarget says which way it took (stderr; tests capture it).
 var usbNote io.Writer = os.Stderr
 
 // usbLinkAddr is the pod's API address on its USB network link when that works (firmware 3.9.0+,
 // no Wi-Fi configured, adapter up), else "": never the Ethernet or Wi-Fi fallback. For the settings
 // only the USB link may change over the network (the company CA and the cloud proxy).
-func (g *globalFlags) usbLinkAddr(device string) string {
+func (g *globalFlags) usbLinkAddr(device, pod string) string {
 	if g.usbAddr != "" {
 		if host, _, err := net.SplitHostPort(g.usbAddr); err == nil && usbLinkNet.Contains(net.ParseIP(host)) {
 			return g.usbAddr
 		}
 		return ""
+	}
+	if device == "" {
+		if addr := localUSBPod(pod); addr != "" {
+			return addr
+		}
 	}
 	u, err := usbNetwork(g, device)
 	if err != nil || !u.On || !u.Link {
@@ -146,6 +174,12 @@ func (g *globalFlags) networkTarget(cmd string) (ConnSpec, error) {
 	}
 	if g.usbAddr != "" {
 		return ConnSpec{Kind: connNetwork, Addr: g.usbAddr}, nil
+	}
+	if spec.Device == "" && g.usbErr == nil {
+		if addr := localUSBPod(spec.Pod); addr != "" {
+			g.usbAddr = addr
+			return ConnSpec{Kind: connNetwork, Addr: addr}, nil
+		}
 	}
 	addr, uerr := g.usbAddr, g.usbErr
 	if uerr == nil {

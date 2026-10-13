@@ -76,7 +76,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 It sets `ENV{ID_MM_DEVICE_IGNORE}="1"` for the pod's USB IDs: `1209:0001` (firmware
-3.9.0 and later) and `0483:5740` (older firmware).
+3.9.0 and later) and `0483:5740` (older firmware), and `TAG+="uaccess"`, which lets the
+user signed in at the desktop open the console without joining the `dialout` group. Over
+SSH, or without the rule, add yourself to `dialout` (`sudo usermod -aG dialout $USER`,
+then log in again). On firmware 3.9.0 and later the network commands need neither: over
+`--connection usb` the CLI finds the pod from this computer's end of its USB network link.
 
 ### OpenOCD (for `flash`)
 

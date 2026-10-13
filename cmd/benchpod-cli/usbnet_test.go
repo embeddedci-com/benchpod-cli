@@ -149,15 +149,46 @@ func TestDescribePowerDraw(t *testing.T) {
 // The CA and proxy may change only over the USB link itself, never over the LAN fallback.
 func TestUSBLinkAddrNeverFallsBackToTheLAN(t *testing.T) {
 	withUSBNet(t, serialconsole.USBNet{On: true, Link: true, PodIP: "10.237.8.85", HostIP: "10.237.8.86", LANIP: "192.168.1.221"}, nil, nil)
-	if got := (&globalFlags{connection: "usb"}).usbLinkAddr(""); got != "10.237.8.85:8080" {
+	if got := (&globalFlags{connection: "usb"}).usbLinkAddr("", ""); got != "10.237.8.85:8080" {
 		t.Fatalf("up: %q", got)
 	}
 	withUSBNet(t, serialconsole.USBNet{PodIP: "10.237.8.85", LANIP: "192.168.1.221"}, nil, nil) // Wi-Fi set
-	if got := (&globalFlags{connection: "usb"}).usbLinkAddr(""); got != "" {
+	if got := (&globalFlags{connection: "usb"}).usbLinkAddr("", ""); got != "" {
 		t.Fatalf("USB networking off: %q, want none (the console instead)", got)
 	}
 	g := &globalFlags{connection: "usb", usbAddr: "192.168.1.221:8080"} // networkTarget took the LAN
-	if got := g.usbLinkAddr(""); got != "" {
+	if got := g.usbLinkAddr("", ""); got != "" {
 		t.Fatalf("LAN fallback used for the CA/proxy: %q", got)
+	}
+}
+
+// A network command over `usb` takes the pod's USB link from this computer's own interface, with
+// no console: Linux users outside the dialout group cannot open the console device.
+func TestNetworkTargetUsesTheLocalUSBLinkWithoutTheConsole(t *testing.T) {
+	old := localUSBPod
+	t.Cleanup(func() { localUSBPod = old })
+	var asked string
+	localUSBPod = func(pod string) string { asked = pod; return "10.237.8.85:8080" }
+	consoleUsed := false
+	oldNet := usbNetwork
+	t.Cleanup(func() { usbNetwork = oldNet })
+	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) {
+		consoleUsed = true
+		return serialconsole.USBNet{}, errors.New("permission denied")
+	}
+	got, err := (&globalFlags{connection: "usb:benchpod-baea06"}).networkTarget("capture")
+	if err != nil || !got.IsNetwork() || got.Addr != "10.237.8.85:8080" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if consoleUsed || asked != "baea06" && asked != "benchpod-baea06" {
+		t.Fatalf("console used %v, pod asked %q", consoleUsed, asked)
+	}
+	if got := (&globalFlags{connection: "usb"}).usbLinkAddr("", ""); got != "10.237.8.85:8080" {
+		t.Fatalf("CA/proxy link: %q", got)
+	}
+	// An explicit console device names that pod: no guessing from the interfaces.
+	localUSBPod = func(string) string { t.Fatal("local link used for an explicit device"); return "" }
+	if _, err := (&globalFlags{connection: "/dev/ttyACM0"}).networkTarget("capture"); err == nil {
+		t.Fatal("want the console's error")
 	}
 }
