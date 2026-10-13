@@ -20,6 +20,7 @@ type USBNet struct {
 	Link   bool
 	PodIP  string
 	HostIP string
+	LANIP  string // the status `ip` line: the pod's Ethernet (else Wi-Fi) address, "" when it has none
 }
 
 // ErrNoUSBNet means the pod's console reports no USB network adapter: firmware older than 3.9.0.
@@ -28,12 +29,20 @@ var ErrNoUSBNet = errors.New("the pod's firmware has no USB network adapter (nee
 // ParseUSBNet reads the `usb` line of the console's `status` output. It returns ErrNoUSBNet when
 // there is none.
 func ParseUSBNet(status string) (USBNet, error) {
+	lan := ""
+	for _, ln := range strings.Split(strings.ReplaceAll(status, "\r", "\n"), "\n") {
+		if k, v, ok := strings.Cut(ln, ":"); ok && strings.TrimSpace(k) == "ip" {
+			if ip := net.ParseIP(strings.TrimSpace(v)).To4(); ip != nil && !ip.IsUnspecified() {
+				lan = ip.String()
+			}
+		}
+	}
 	for _, ln := range strings.Split(strings.ReplaceAll(status, "\r", "\n"), "\n") {
 		k, v, ok := strings.Cut(ln, ":")
 		if !ok || strings.TrimSpace(k) != "usb" {
 			continue
 		}
-		u := USBNet{On: true} // the line without a net field (pre-release builds): on
+		u := USBNet{On: true, LANIP: lan} // the line without a net field (pre-release builds): on
 		f := strings.Fields(v)
 		for i := 0; i+1 < len(f); i++ {
 			switch f[i] {
