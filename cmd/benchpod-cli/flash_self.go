@@ -63,6 +63,7 @@ type flashSelfFlags struct {
 	firmwareVer string
 	skipBlobs   bool
 	blobsDir    string
+	network     bool
 }
 
 // firmwareReleaseURL returns the GitHub release download URL for the STM32
@@ -115,9 +116,17 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			"The release's signature (bench_pod_stm32.bin.sig, or <file>.sig next to a local\n" +
 			"file) is checked and reported before writing; for now it never stops a flash.\n\n" +
 			"Requires dfu-util on PATH (`brew install dfu-util`; the Homebrew cask pulls\n" +
-			"it in automatically).",
+			"it in automatically).\n\n" +
+			"--network updates over the pod's network API instead, with no dfu-util and no\n" +
+			"bootloader: over its USB network adapter (firmware 3.9.0+) or, with --connection\n" +
+			"<address>, over Ethernet or Wi-Fi. The image is staged in the pod's PSRAM and\n" +
+			"SHA-256 verified before the pod writes it to flash and restarts. DFU stays the\n" +
+			"default because it also recovers a pod whose firmware does not run.",
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cc *cobra.Command, args []string) error {
+			if f.network {
+				return runFlashSelfNetwork(g, f, func(name string) bool { return cc.Flags().Changed(name) }, args)
+			}
 			if _, err := g.usbDevice("flash-self"); err != nil {
 				return err
 			}
@@ -207,6 +216,8 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 	fl.StringVar(&f.firmwareVer, "firmware-version", "", "fetch a specific firmware release tag instead of the latest")
 	fl.BoolVar(&f.skipBlobs, "skip-blobs", false, "do not install the gateware and ESP32-C3 images after flashing")
 	fl.StringVar(&f.blobsDir, "blobs-dir", "", "take the blobs from this directory instead of next to the firmware")
+	fl.BoolVar(&f.network, "network", false, "update over the pod's network API instead of USB DFU: its USB network adapter "+
+		"(firmware 3.9.0+, the default USB connection) or the address in --connection; the pod must be running firmware")
 	return cmd
 }
 
