@@ -690,6 +690,8 @@ A short summary of the pod over the network or through embeddedci.com
 (`--connection embeddedci:<name>`): firmware version (and whether a newer
 release exists, when GitHub answers within a few seconds), gateware, board, the board
 I/O (LA) voltage or "not set", target power (the internal 5 V and external eFuses),
+the power draw (each rail that is on and, on boards with the pod's own current monitor,
+the pod's draw and the total it takes from USB),
 the network address and link, the cloud registration (and, when this machine is
 signed in, whether the pod is on your account), and a cloud job's lease when one
 holds the pod. With firmware 3.9.0+ a `USB` line shows the pod's USB network address

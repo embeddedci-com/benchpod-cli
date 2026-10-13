@@ -97,3 +97,26 @@ func TestDescribeUSBWarnsAboutDefaultPower(t *testing.T) {
 		t.Fatalf("off: %q", got)
 	}
 }
+
+func TestDescribePowerDraw(t *testing.T) {
+	total := 373300
+	d := powerDraw{Internal: powerRail{OK: true, BusMV: 5008, CurrentUA: 142300}, External: powerRail{OK: true}}
+	d.Pod = &struct {
+		powerRail
+		TotalUA *int `json:"total_ua"`
+	}{powerRail{OK: true, BusMV: 5012, CurrentUA: 231000}, &total}
+	tp := &targetPower{}
+	tp.Efuse1.Enabled = 1
+	got := describePowerDraw(d, tp)
+	for _, want := range []string{"internal 5 V rail 142 mA", "pod 231 mA", "total from USB 373 mA"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q lacks %q", got, want)
+		}
+	}
+	if strings.Contains(got, "external") {
+		t.Errorf("an off rail is listed: %q", got)
+	}
+	if got := describePowerDraw(powerDraw{}, nil); got != "" {
+		t.Errorf("nothing readable: %q", got)
+	}
+}
