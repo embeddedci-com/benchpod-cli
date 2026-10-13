@@ -650,10 +650,13 @@ report whether it is registered. When this machine is signed in (`benchpod login
 a registered pod is also checked against that account: discover names it when it is
 yours, and says so when it is registered to a different account (usually a second
 account; a pod set up for you is on the account your activation email was sent to).
+A pod advertises itself on each of its interfaces; when this computer hears it on the
+pod's USB network link (firmware 3.9.0+), discover shows and uses that address rather
+than the LAN one, and `--save` stores `usb` for it.
 
 | Flag              | Default | Purpose                                                         |
 |-------------------|---------|-----------------------------------------------------------------|
-| `--save`          | off     | Save the pod as the default connection when exactly one is found (the network address first). |
+| `--save`          | off     | Save the pod as the default connection when exactly one is found (the network address first; `usb` for a pod on its USB link). |
 | `--no-usb`        | off     | Skip probing USB ports.                                          |
 | `--no-network`    | off     | Skip mDNS browsing of the LAN.                                   |
 | `--wait`          | `3s`    | How long to browse the LAN for mDNS replies.                     |

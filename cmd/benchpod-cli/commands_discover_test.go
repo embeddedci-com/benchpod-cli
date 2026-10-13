@@ -333,3 +333,10 @@ func TestDescribeSerialRegistration(t *testing.T) {
 		})
 	}
 }
+
+func TestSaveTargetSavesUSBForAPodOnItsUSBLink(t *testing.T) {
+	got := saveTarget([]discoveredPod{{addr: "10.237.8.85:8080"}}, []serialconsole.SerialPod{{Device: "/dev/cu.usbmodem1"}})
+	if got != "usb" {
+		t.Fatalf("saveTarget = %q, want usb for a pod found on its USB network link", got)
+	}
+}

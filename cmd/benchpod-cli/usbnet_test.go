@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"net"
 	"strings"
 	"testing"
 
@@ -67,5 +68,18 @@ func TestNetworkTargetSaysWhyUSBNetworkIsUnavailable(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "benchpod discover") {
 			t.Errorf("%s: err = %v, want it to mention %q and the discover way out", c.name, err, c.want)
 		}
+	}
+}
+
+func TestPreferredPodIPPicksTheUSBLink(t *testing.T) {
+	lan, usb := net.ParseIP("192.168.1.221"), net.ParseIP("10.237.8.85")
+	if got := preferredPodIP([]net.IP{lan, usb}); !got.Equal(usb) {
+		t.Fatalf("got %v, want the USB link address", got)
+	}
+	if got := preferredPodIP([]net.IP{lan}); !got.Equal(lan) {
+		t.Fatalf("got %v, want the LAN address when there is no USB link", got)
+	}
+	if preferredPodIP(nil) != nil {
+		t.Fatal("no addresses: want nil")
 	}
 }
