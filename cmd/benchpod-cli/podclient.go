@@ -163,7 +163,10 @@ const wiringLookupTimeout = 6 * time.Second
 // fails (then it writes one warning line to warn). A variable so tests can replace it.
 var loadPodWiring = func(g *globalFlags, warn io.Writer) *podWiring {
 	spec, err := g.resolveTarget()
-	if err != nil || spec.IsSerial() {
+	if err != nil {
+		return nil
+	}
+	if spec = g.preferUSBNetwork(spec, "wiring"); spec.IsSerial() {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), wiringLookupTimeout)

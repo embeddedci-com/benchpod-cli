@@ -118,7 +118,10 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 // cannot tell). It never prompts or fails. A variable so tests can replace it.
 var accountDeviceForConnection = func(g *globalFlags) string {
 	spec, err := g.resolveTarget()
-	if err != nil || spec.IsSerial() {
+	if err != nil {
+		return ""
+	}
+	if spec = g.preferUSBNetwork(spec, "la voltage"); spec.IsSerial() {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -158,6 +161,7 @@ func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
 	if err != nil {
 		return "", laVoltageReply{}, err
 	}
+	spec = g.preferUSBNetwork(spec, what)
 	var rep laVoltageReply
 	if spec.IsSerial() {
 		console, path, ctx, cancel, err := openLAVoltageConsole(g, spec.Device, g.effectiveTimeout(15*time.Second))

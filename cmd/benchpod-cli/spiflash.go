@@ -71,7 +71,7 @@ func (f *spiFlags) fillFromWiring(g *globalFlags) {
 		log.Printf("spi-flash: pins from the flags")
 		return
 	}
-	if spec, err := g.resolveTarget(); err != nil || !spec.IsNetwork() {
+	if spec, err := g.resolveTarget(); err != nil || !g.preferUSBNetwork(spec, "spi-flash").IsNetwork() {
 		return // the connection error comes from the command itself
 	}
 	w := loadPodWiring(g, os.Stderr)

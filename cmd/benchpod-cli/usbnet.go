@@ -69,6 +69,20 @@ func (g *globalFlags) usbNetAddr(device string) (string, error) {
 	return addr, nil
 }
 
+// preferUSBNetwork turns a USB spec into the pod's address on its USB network adapter when that
+// is up, for a command that works over both; any other spec, or a USB pod without a working USB
+// network (older firmware, Wi-Fi configured, adapter not up), is returned unchanged and the command
+// uses the console.
+func (g *globalFlags) preferUSBNetwork(spec ConnSpec, cmd string) ConnSpec {
+	if !spec.IsSerial() {
+		return spec
+	}
+	if net, err := g.networkTarget(cmd); err == nil && net.IsNetwork() {
+		return net
+	}
+	return spec
+}
+
 // networkTarget is resolveTarget for a command that needs the pod's network API: a USB connection
 // becomes the pod's address on its USB network adapter, or the standard "needs the network"
 // error with the reason that is not possible.

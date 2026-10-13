@@ -137,7 +137,7 @@ func blobsToInstall(m blobsManifest, slots []serialconsole.BlobSlot, force bool)
 
 // installBlobs brings the pod's blob slots in line with the manifest at src, over the USB
 // console. only, when non-empty, limits it to those slot names.
-func installBlobs(ctx context.Context, console *serialconsole.Console, src blobSource, force bool, only []string) error {
+func installBlobs(ctx context.Context, console blobTarget, src blobSource, force bool, only []string) error {
 	slots, err := console.Blobs(ctx)
 	if err != nil {
 		return err
@@ -170,7 +170,7 @@ func installBlobs(ctx context.Context, console *serialconsole.Console, src blobS
 			return err
 		}
 		manifest := checkBlobSignature(ctx, src, e, data) // report only
-		fmt.Fprintf(os.Stderr, "blobs: installing %s (%d KB) over USB...\n", e.Name, (e.Size+1023)/1024)
+		fmt.Fprintf(os.Stderr, "blobs: installing %s (%d KB) through %s...\n", e.Name, (e.Size+1023)/1024, console.Via())
 		last := -1
 		start := time.Now()
 		rep, err := console.UploadSigned(ctx, e.Name, data, e.Version, manifest, func(done, total int) {
@@ -211,7 +211,8 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 		Short: "Install the gateware and ESP32-C3 images the pod's firmware goes with (over USB)",
 		Long: "The pod keeps its iCE40 gateware images and its ESP32-C3 Wi-Fi image in the\n" +
 			"W25Q flash next to the FPGA, not in its firmware. This sends the ones it lacks\n" +
-			"over the USB console. By default they come from the GitHub release that matches\n" +
+			"over USB: the pod's USB network adapter when it is up (firmware 3.9.0+), else its\n" +
+			"USB console. By default they come from the GitHub release that matches\n" +
 			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).\n\n" +
 			"Each blob's signature (blob-*.bin.sig) is checked and reported, and handed to\n" +
 			"firmware that checks it too; for now a missing or failing one never stops an install.",
@@ -227,20 +228,26 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			}
 			defer cancel()
 			defer console.Close()
+			// The pod's USB network when it is up (firmware 3.9.0+), else its console.
+			target, closeTarget, err := blobTargetFor(ctx, console, path)
+			if err != nil {
+				return err
+			}
+			defer closeTarget()
 			src := blobSource{base: dir}
 			if strings.TrimSpace(dir) == "" {
 				tag := release
 				if strings.TrimSpace(tag) == "" {
-					tag = podFirmwareRelease(ctx, console)
+					tag = target.Release(ctx)
 				}
 				src = releaseBlobSource(tag)
 			}
-			fmt.Fprintf(os.Stderr, "blobs: pod on %s, blobs from %s\n", path, src)
+			fmt.Fprintf(os.Stderr, "blobs: pod on %s (through %s), blobs from %s\n", path, target.Via(), src)
 			var sel []string
 			if strings.TrimSpace(only) != "" {
 				sel = strings.Split(only, ",")
 			}
-			return installBlobs(ctx, console, src, force, sel)
+			return installBlobs(ctx, target, src, force, sel)
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "take the blobs from this directory (holding blobs-manifest.json)")

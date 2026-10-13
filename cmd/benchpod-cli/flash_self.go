@@ -476,6 +476,9 @@ func checkImageFitsPod(ctx context.Context, dfuPath, file string) error {
 	return nil
 }
 
+// skipUSBNetForBlobs keeps installBlobsAfterFlash on the console (tests).
+var skipUSBNetForBlobs = false
+
 // Seams for tests: how long installBlobsAfterFlash waits for the flashed pod's USB console,
 // how often it tries, and how it opens it.
 var (
@@ -509,14 +512,28 @@ func installBlobsAfterFlash(g *globalFlags, src blobSource) error {
 	defer console.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), blobsInstallTimeout)
 	defer cancel()
-	if _, err := console.Blobs(ctx); err != nil {
+	target := blobTarget(consoleBlobs{Console: console, path: "the USB console"})
+	if u, err := console.USBNetwork(ctx); err == nil && u.On && !skipUSBNetForBlobs {
+		// The freshly booted pod's USB network may need a few seconds on the computer's side.
+		for i := 0; i < 10; i++ {
+			if t, closeT, err := blobTargetFor(ctx, console, "the USB console"); err == nil {
+				if _, ok := t.(lanBlobs); ok {
+					target = t
+					defer closeT()
+					break
+				}
+			}
+			time.Sleep(time.Second)
+		}
+	}
+	if _, err := target.Blobs(ctx); err != nil {
 		if errors.Is(err, serialconsole.ErrNoBlobSlots) {
 			fmt.Fprintln(os.Stderr, "flash-self: this firmware keeps its blobs built in; nothing to install")
 			return nil
 		}
 		return fmt.Errorf("flash-self: the firmware is flashed, but reading the pod's blob slots failed, so its blobs are not installed (retry with `benchpod install-blobs`): %w", err)
 	}
-	if err := installBlobs(ctx, console, src, false, nil); err != nil {
+	if err := installBlobs(ctx, target, src, false, nil); err != nil {
 		return fmt.Errorf("flash-self: the firmware is flashed, but installing its blobs failed (retry with `benchpod install-blobs`): %w", err)
 	}
 	return nil

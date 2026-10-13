@@ -100,19 +100,19 @@ func runStatusSerial(g *globalFlags, device string) error {
 
 // podStatus is the part of the firmware's `status` reply the summary shows.
 type podStatus struct {
-	Version          string `json:"version"`
-	Board            string `json:"board"`
-	BoardRev         string `json:"board_rev"`
-	Net              string `json:"net"`
-	IP               string `json:"ip"`
-	RSSI             *int   `json:"rssi_dbm"`
-	Wifi             string `json:"wifi"`
-	Cloud            string `json:"cloud"`
-	LAVccioMV        int    `json:"la_vccio_mv"`
-	Gateware         int    `json:"gateware"`
-	GatewareEmbedded int    `json:"gateware_embedded"`
-	SafeMode         bool   `json:"safe_mode"`
-	SafeReason       string `json:"safe_reason"`
+	Version          string  `json:"version"`
+	Board            string  `json:"board"`
+	BoardRev         string  `json:"board_rev"`
+	Net              string  `json:"net"`
+	IP               string  `json:"ip"`
+	RSSI             *int    `json:"rssi_dbm"`
+	Wifi             string  `json:"wifi"`
+	Cloud            string  `json:"cloud"`
+	LAVccioMV        int     `json:"la_vccio_mv"`
+	Gateware         int     `json:"gateware"`
+	GatewareEmbedded int     `json:"gateware_embedded"`
+	SafeMode         bool    `json:"safe_mode"`
+	SafeReason       string  `json:"safe_reason"`
 	USB              *podUSB `json:"usb"` // firmware 3.9.0+
 	Lease            *struct {
 		Held   bool   `json:"held"`

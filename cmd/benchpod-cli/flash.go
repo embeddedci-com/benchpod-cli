@@ -144,6 +144,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if err != nil {
 		return err
 	}
+	spec = g.preferUSBNetwork(spec, "flash")
 	fromBuild := f.fromBuild()
 	if fromBuild && strings.TrimSpace(f.file) != "" {
 		return fmt.Errorf("pass either --file or an uploaded build (--build, --repo, --ref, --artifact), not both")
@@ -352,6 +353,7 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 	if err != nil {
 		return nil, false, err
 	}
+	spec = g.preferUSBNetwork(spec, "flash") // the probe over the USB network is much faster
 	if spec.IsNetwork() {
 		client := &tcpclient.Client{Addr: spec.Addr}
 		// Ask the pod whether it has the dedicated reset pin BEFORE arming the

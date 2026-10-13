@@ -149,7 +149,7 @@ Which command works over which connection:
 | Connection          | Commands |
 |---------------------|----------|
 | Network address     | Every pod command except the USB-only ones below. |
-| USB                 | `status`, `la voltage`, `flash` (SWD), `lan-policy`, `sig-policy`, `cloud ca`, `cloud proxy` over the console; with firmware 3.9.0+ and no Wi-Fi configured, every other network command too, over the pod's USB network adapter. |
+| USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD) and `install-blobs`, which fall back to the console when the adapter is not up. `lan-policy`, `sig-policy`, `cloud ca` and `cloud proxy` always use the console (physical presence). |
 | `embeddedci:<name>` | `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
 | USB only            | `set-wifi`, `show-network`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU. These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
@@ -939,7 +939,8 @@ fit the pod's flash, the download's checksum does not match, or dfu-util fails.
 
 ### `benchpod install-blobs`
 
-Install the gateware and ESP32-C3 images the pod's firmware goes with (USB). By
+Install the gateware and ESP32-C3 images the pod's firmware goes with (USB: over the
+pod's USB network adapter when it is up, firmware 3.9.0+, else its console). By
 default they come from the release that matches the firmware the pod runs. Each
 blob's signature is reported; for now a missing or failing one never stops it.
 
