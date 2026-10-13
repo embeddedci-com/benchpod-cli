@@ -901,7 +901,7 @@ func TestParseSerialPodWithoutLease(t *testing.T) {
 }
 
 func TestIsBenchPodVIDCoversBothPodGenerations(t *testing.T) {
-	for _, vid := range []string{"2E8A", "2e8a", "0483", "0483"} {
+	for _, vid := range []string{"2E8A", "2e8a", "0483", "1209"} {
 		if !isBenchPodVID(vid) {
 			t.Fatalf("VID %s should be recognised as a bench-pod console", vid)
 		}

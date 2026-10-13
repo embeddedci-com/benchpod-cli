@@ -32,14 +32,17 @@ import (
 // under, matched case-insensitively against enumerator VID strings:
 //
 //	2E8A — Raspberry Pi, the RP2350 pod's native USB port.
-//	0483 — STMicroelectronics, the STM32H563 pod (ST's stock CDC VID/PID
-//	       0483:5740, so the host binds its in-box CDC driver).
+//	0483 — STMicroelectronics, the STM32H563 pod up to firmware 3.8 (ST's
+//	       stock CDC VID/PID 0483:5740, so the host binds its in-box CDC driver).
+//	1209 — pid.codes, the STM32H563 pod from firmware 3.9.0 (1209:0001): a
+//	       composite device with the console and a USB network adapter.
 //
-// Neither ID is exclusive to a bench pod — 2E8A is shared with the CMSIS-DAP
-// probe's CDC and 0483:5740 with every ST Virtual COM Port on the bench — so
+// None of the IDs is exclusive to a bench pod — 2E8A is shared with the CMSIS-DAP
+// probe's CDC, 0483:5740 with every ST Virtual COM Port on the bench and 1209
+// with every pid.codes device — so
 // these only ORDER the ports to probe (see portPrio). Identification is always
 // by probing for benchpodMarker, never by VID alone.
-var benchPodVIDs = []string{"2E8A", "0483"}
+var benchPodVIDs = []string{"2E8A", "0483", "1209"}
 
 // isBenchPodVID reports whether vid is one of benchPodVIDs.
 func isBenchPodVID(vid string) bool {

@@ -109,7 +109,7 @@ func (g *globalFlags) usbDevice(cmd string) (string, error) {
 // handling. It is for the commands that need the pod's own port: chunked replies and raw streams.
 // Single-reply commands use podClient, which also goes through embeddedci.com.
 func (g *globalFlags) networkClient(cmdName string, def time.Duration) (context.Context, context.CancelFunc, *tcpclient.Client, error) {
-	spec, err := g.resolveTarget()
+	spec, err := g.networkTarget(cmdName)
 	if err != nil {
 		return nil, func() {}, nil, err
 	}

@@ -1,0 +1,81 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"time"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+)
+
+// The pod's USB network adapter (firmware 3.9.0+): the USB device that carries the console is
+// also a network adapter, with the pod's full network API on its fixed address. A command that
+// needs the network and is given a USB connection uses it; the console stays for the commands
+// that only the console runs and as the fallback.
+
+// usbNetProbeTimeout bounds the TCP check of the pod's address on the USB link.
+const usbNetProbeTimeout = 2 * time.Second
+
+// usbNetwork reads the USB network adapter's state from the pod's console. A variable so tests
+// can replace it.
+var usbNetwork = func(g *globalFlags, device string) (serialconsole.USBNet, error) {
+	console, _, err := g.openBenchpodSerial(device, 2*time.Second)
+	if err != nil {
+		return serialconsole.USBNet{}, err
+	}
+	defer console.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return console.USBNetwork(ctx)
+}
+
+// dialUSBPod checks the pod answers on its USB address. A variable so tests can replace it.
+var dialUSBPod = func(addr string) error {
+	c, err := net.DialTimeout("tcp", addr, usbNetProbeTimeout)
+	if err != nil {
+		return err
+	}
+	return c.Close()
+}
+
+// usbNetAddr returns the pod's API address on its USB network adapter (podIP:8080), or why there
+// is none, phrased to follow "over USB, ".
+func (g *globalFlags) usbNetAddr(device string) (string, error) {
+	u, err := usbNetwork(g, device)
+	if err != nil {
+		if errors.Is(err, serialconsole.ErrNoUSBNet) {
+			return "", errors.New("the pod's firmware has no USB network adapter (it needs 3.9.0 or later: `benchpod flash-self`)")
+		}
+		return "", fmt.Errorf("the pod's console did not report its USB network: %w", err)
+	}
+	if !u.On {
+		return "", errors.New("USB networking is off because Wi-Fi is configured on the pod (`benchpod clear-wifi` turns it back on)")
+	}
+	addr := net.JoinHostPort(u.PodIP, "8080")
+	if !u.Link {
+		return "", fmt.Errorf("the pod's USB network adapter (%s) is not up on this computer; "+
+			"macOS ignores a new adapter while the screen is locked: unlock and run `benchpod usb-reattach`", u.PodIP)
+	}
+	if err := dialUSBPod(addr); err != nil {
+		return "", fmt.Errorf("the pod did not answer on its USB network address %s (%v); this computer should have %s on that adapter, "+
+			"run `benchpod usb-reattach` if it does not", addr, err, u.HostIP)
+	}
+	return addr, nil
+}
+
+// networkTarget is resolveTarget for a command that needs the pod's network API: a USB connection
+// becomes the pod's address on its USB network adapter, or the standard "needs the network"
+// error with the reason that is not possible.
+func (g *globalFlags) networkTarget(cmd string) (ConnSpec, error) {
+	spec, err := g.resolveTarget()
+	if err != nil || !spec.IsSerial() {
+		return spec, err
+	}
+	addr, uerr := g.usbNetAddr(spec.Device)
+	if uerr != nil {
+		return spec, fmt.Errorf("%w. Here: %v", spec.RequireNetwork(cmd), uerr)
+	}
+	return ConnSpec{Kind: connNetwork, Addr: addr}, nil
+}

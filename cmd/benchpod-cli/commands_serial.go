@@ -210,7 +210,8 @@ func newClearWifiCmd(g *globalFlags) *cobra.Command {
 			if err := console.WifiClear(ctx); err != nil {
 				return fmt.Errorf("clear-wifi: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "Erased the stored Wi-Fi credentials. Wi-Fi is off; no reboot needed.")
+			fmt.Fprintln(os.Stderr, "Erased the stored Wi-Fi credentials. Wi-Fi is off; no reboot needed. "+
+				"USB networking is on again (firmware 3.9.0+).")
 			return nil
 		},
 	}

@@ -132,9 +132,9 @@ func (c ConnSpec) RequireNetwork(cmd string) error {
 	if c.IsCloud() {
 		return cloudRefusal(cmd, c, false)
 	}
-	return fmt.Errorf("%s needs the pod on the network; it is not available over a USB connection. "+
-		"Run `benchpod discover` to find the pod's address, then pass --connection <address>. "+
-		"If it has no address yet, plug in Ethernet or run `benchpod set-wifi --ssid <ssid>`", cmd)
+	return fmt.Errorf("%s needs the pod's network API, which a USB connection reaches only through the pod's USB "+
+		"network adapter (firmware 3.9.0 or later, with no Wi-Fi configured). "+
+		"Or run `benchpod discover` to find the pod's network address, then pass --connection <address>", cmd)
 }
 
 // cloudRefusal is the one message for a command that cannot go through embeddedci.com: it streams

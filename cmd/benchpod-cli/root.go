@@ -48,17 +48,20 @@ func newRootCmd() *cobra.Command {
 			"the board I/O voltage, registers it with embeddedci.com and saves the connection.\n\n" +
 			"--connection says where and how to reach the pod; the transport follows from\n" +
 			"its value. An address (192.168.1.5[:8080]) uses the pod's network (TCP/JSON) API;\n" +
-			"a device path (/dev/tty..., COM3) or `usb` uses the pod's USB console;\n" +
+			"a device path (/dev/tty..., COM3) or `usb` uses the pod's USB console, and its\n" +
+			"USB network adapter for the network commands (firmware 3.9.0+, no Wi-Fi set);\n" +
 			"embeddedci:<name> goes through embeddedci.com to the pod with that name on your\n" +
 			"account (signed in with `benchpod login`, or BENCHPOD_API_KEY). Omit it to use the\n" +
 			"default saved by `benchpod discover --save` or `benchpod set-connection`.\n\n" +
-			"Over the network: every pod command but the USB-only ones below. Over USB:\n" +
-			"status, la voltage, flash (SWD), lan-policy, sig-policy, cloud ca and cloud proxy.\n" +
+			"Over the network: every pod command but the USB-only ones below. Over the USB\n" +
+			"console: status, la voltage, flash (SWD), lan-policy, sig-policy, cloud ca and\n" +
+			"cloud proxy; the rest over the pod's USB network adapter when it is up.\n" +
 			"Through embeddedci.com: status, ping, la voltage, la pullup, la status, la step,\n" +
 			"generate, lan-policy, sig-policy, cloud ca show/clear, cloud proxy and deregister.\n" +
 			"Always over the USB console: set-wifi, show-network, clear-wifi, identity,\n" +
-			"install-blobs, bootsel and dfu; flash-self reflashes the pod over USB DFU. A\n" +
-			"command that cannot use the connection says so and names what to use instead.\n\n" +
+			"install-blobs, bootsel, dfu, usb-bridge and usb-reattach; flash-self reflashes\n" +
+			"the pod over USB DFU. A command that cannot use the connection says so and\n" +
+			"names what to use instead.\n\n" +
 			"flash and spi-flash over the network take the pins you leave out from the pod's\n" +
 			"wiring profile on embeddedci.com when you are signed in and the pod is on your\n" +
 			"account.\n\n" +
@@ -97,6 +100,7 @@ func newRootCmd() *cobra.Command {
 		{"setup", "Setup:", []*cobra.Command{
 			newSetupCmd(g), newDiscoverCmd(g), newSetConnectionCmd(g),
 			newSetWifiCmd(g), newShowNetworkCmd(g), newClearWifiCmd(g),
+			newUSBBridgeCmd(g), newUSBReattachCmd(g),
 		}},
 		{"pod", "The pod:", []*cobra.Command{
 			newStatusCmd(g), newPingCmd(g), newLACmd(g), newIdentityCmd(g),
