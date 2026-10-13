@@ -570,6 +570,24 @@ firmware** there are two paths, mirroring how the two pod MCUs boot:
   Overrides: a local path (`benchpod flash-self ./bench_pod_stm32.bin`), an
   explicit `--firmware-url`, or a pinned `--firmware-version v0.0.5`.
 
+- **Over the network instead of DFU** (`--network`): the pod receives the image
+  over its own network API, stages it in PSRAM, checks its SHA-256 and writes it
+  to flash itself, then restarts. No dfu-util and no bootloader. Over the USB
+  cable this uses the pod's USB network adapter (firmware 3.9.0 and later, no
+  Wi-Fi configured); with `--connection <address>` it goes over Ethernet or
+  Wi-Fi (an external LAN policy of `locked` or `off` refuses it there).
+  Afterwards the gateware and ESP32-C3 images are installed the same way.
+
+  ```
+  benchpod flash-self --network                          # over the USB cable
+  benchpod flash-self --network --connection 192.168.1.42 # over the LAN
+  ```
+
+  DFU stays the default: it needs nothing from the running firmware, so it also
+  brings back a pod whose firmware does not start. If power is lost while the pod
+  writes its flash (a few seconds), only DFU recovers it. A pod on
+  embeddedci.com is updated from the web app instead.
+
 The prebuilt firmware is fetched from the public
 [`embeddedci-com/benchpod-firmware`](https://github.com/embeddedci-com/benchpod-firmware)
 releases (the firmware source repo is private); a published `.sha256` is
@@ -978,6 +996,7 @@ blobs. With no argument it fetches the latest release. See
 | `--no-leave`         | off          | Stay in DFU after flashing instead of starting the firmware.  |
 | `--skip-blobs`       | off          | Do not install the gateware and ESP32-C3 images afterwards.   |
 | `--blobs-dir`        | (next to the firmware) | Take the blobs from this directory.                 |
+| `--network`          | off          | Update over the pod's network API instead of USB DFU: its USB network adapter (firmware 3.9.0+) or the `--connection` address. Needs running firmware; the DFU-only flags do not apply. |
 
 It prints a `signature:` line for the release's `.sig` (report only, see
 [dfu-util](#dfu-util-for-flash-self)) and exits non-zero when the firmware does not
