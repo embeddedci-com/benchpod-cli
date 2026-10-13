@@ -83,3 +83,17 @@ func TestPreferredPodIPPicksTheUSBLink(t *testing.T) {
 		t.Fatal("no addresses: want nil")
 	}
 }
+
+func TestDescribeUSBWarnsAboutDefaultPower(t *testing.T) {
+	ma := 500
+	got := describeUSB(podUSB{Net: "on", Link: true, IP: "10.237.8.85", HostIP: "10.237.8.86", Source: "default", SourceMA: &ma})
+	if !strings.Contains(got, "10.237.8.85") || !strings.Contains(got, "500 mA") || !strings.Contains(got, "1.5 A") {
+		t.Fatalf("got %q", got)
+	}
+	if got := describeUSB(podUSB{Net: "on", Source: "3.0A"}); strings.Contains(got, "500 mA") || !strings.Contains(got, "power 3.0A") {
+		t.Fatalf("3.0A: %q", got)
+	}
+	if got := describeUSB(podUSB{Net: "off"}); !strings.Contains(got, "Wi-Fi") {
+		t.Fatalf("off: %q", got)
+	}
+}

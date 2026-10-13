@@ -77,6 +77,9 @@ func (g *globalFlags) networkTarget(cmd string) (ConnSpec, error) {
 	if err != nil || !spec.IsSerial() {
 		return spec, err
 	}
+	if g.usbAddr != "" {
+		return ConnSpec{Kind: connNetwork, Addr: g.usbAddr}, nil
+	}
 	addr, uerr := g.usbNetAddr(spec.Device)
 	if errors.Is(uerr, tcpclient.ErrUnreachable) {
 		return spec, uerr
@@ -84,5 +87,6 @@ func (g *globalFlags) networkTarget(cmd string) (ConnSpec, error) {
 	if uerr != nil {
 		return spec, fmt.Errorf("%w. Here: %v", spec.RequireNetwork(cmd), uerr)
 	}
+	g.usbAddr = addr
 	return ConnSpec{Kind: connNetwork, Addr: addr}, nil
 }

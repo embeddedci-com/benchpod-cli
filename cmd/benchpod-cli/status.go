@@ -25,7 +25,8 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			"network address, whether it is registered with embeddedci.com and, when this\n" +
 			"machine is signed in, whether it is on your account, and a cloud job's lease.\n\n" +
 			"--json prints the pod's raw `status` reply instead (network and embeddedci.com).\n" +
-			"Over USB (--connection usb) this prints the console's `status` text. With\n" +
+			"Over USB (--connection usb) it asks over the pod's USB network adapter when that is\n" +
+			"up, else it prints the console's `status` text. With\n" +
 			"--connection embeddedci:<name> it asks the pod through embeddedci.com.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -34,7 +35,10 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				return err
 			}
 			if spec.IsSerial() {
-				return runStatusSerial(g, spec.Device)
+				// The full status over the pod's USB network adapter when it is up; else the console's.
+				if _, err := g.networkTarget("status"); err != nil {
+					return runStatusSerial(g, spec.Device)
+				}
 			}
 
 			ctx, cancel, pod, err := g.podClient("status", 30*time.Second)
@@ -109,11 +113,45 @@ type podStatus struct {
 	GatewareEmbedded int    `json:"gateware_embedded"`
 	SafeMode         bool   `json:"safe_mode"`
 	SafeReason       string `json:"safe_reason"`
+	USB              *podUSB `json:"usb"` // firmware 3.9.0+
 	Lease            *struct {
 		Held   bool   `json:"held"`
 		Holder string `json:"holder"`
 		LeftS  int    `json:"left_s"`
 	} `json:"lease"`
+}
+
+// podUSB is status.usb: the USB network adapter and what the USB-C source advertises.
+type podUSB struct {
+	Net      string `json:"net"`
+	Link     bool   `json:"link"`
+	IP       string `json:"ip"`
+	HostIP   string `json:"host_ip"`
+	Source   string `json:"source"`    // "none", "default", "1.5A", "3.0A"; "" on v2
+	SourceMA *int   `json:"source_ma"` // nil on v2
+}
+
+// describeUSB is the status row for the USB side, with a warning when the port powering the pod
+// offers only default USB power.
+func describeUSB(u podUSB) string {
+	var parts []string
+	switch {
+	case u.Net == "off":
+		parts = append(parts, "network off (Wi-Fi is configured)")
+	case u.Link:
+		parts = append(parts, "network "+u.IP+" (this computer "+u.HostIP+")")
+	default:
+		parts = append(parts, "network "+u.IP+", not connected")
+	}
+	switch u.Source {
+	case "default":
+		parts = append(parts, "power: this USB port offers only default USB power (500 mA), which may not "+
+			"carry the pod plus a DUT on the internal 5 V rail; use a USB-C port or charger with 1.5 A or more, "+
+			"or power the DUT externally")
+	case "1.5A", "3.0A":
+		parts = append(parts, "power "+u.Source)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // targetPower is the firmware's `target_status` reply: eFuse 1 is the internal 5 V rail, eFuse 2
@@ -209,6 +247,9 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 		row("Target power", describeTargetPower(*s.power))
 	}
 	row("Network", describeNetwork(st))
+	if st.USB != nil {
+		row("USB", describeUSB(*st.USB))
+	}
 	row("Cloud", describeStatusCloud(st, s.cloud, s.account))
 	if st.Lease != nil && st.Lease.Held {
 		row("Lease", fmt.Sprintf("held by cloud job %s (%d s left); the LAN is read-only until it ends",

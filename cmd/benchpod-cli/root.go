@@ -18,6 +18,8 @@ type globalFlags struct {
 	configFile     string
 	outputFilename string
 	timeout        time.Duration
+
+	usbAddr string // the pod's USB network address, once networkTarget found it (one probe per run)
 }
 
 // effectiveTimeout returns the explicit --timeout when set (> 0), else the

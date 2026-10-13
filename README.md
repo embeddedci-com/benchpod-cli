@@ -692,7 +692,11 @@ release exists, when GitHub answers within a few seconds), gateware, board, the 
 I/O (LA) voltage or "not set", target power (the internal 5 V and external eFuses),
 the network address and link, the cloud registration (and, when this machine is
 signed in, whether the pod is on your account), and a cloud job's lease when one
-holds the pod. Over USB it prints the console's `status` text.
+holds the pod. With firmware 3.9.0+ a `USB` line shows the pod's USB network address
+and warns when the USB port powering the pod offers only default USB power (500 mA),
+which may not carry the pod plus a DUT on the internal 5 V rail. Over USB it asks over
+the pod's USB network adapter when that is up, else it prints the console's `status`
+text.
 
 ```text
 BenchPod at 192.168.1.220:8080
