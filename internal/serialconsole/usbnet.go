@@ -22,6 +22,13 @@ type USBNet struct {
 	HostIP string
 }
 
+// ErrMovedToNetwork is a console command firmware 3.9.0 moved to the JSON API: the console answers
+// "<cmd>: moved to the network API (JSON <name>) ..." instead of running it.
+var ErrMovedToNetwork = errors.New("firmware 3.9.0 moved this command from the USB console to the network API")
+
+// movedLine is the marker of that answer.
+const movedLine = "moved to the network API"
+
 // ErrNoUSBNet means the pod's console reports no USB network adapter: firmware older than 3.9.0.
 var ErrNoUSBNet = errors.New("the pod's firmware has no USB network adapter (needs firmware 3.9.0 or later)")
 

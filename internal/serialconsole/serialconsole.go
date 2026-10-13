@@ -557,6 +557,8 @@ func parsePowerReply(raw string, efuse int, want string) error {
 	for _, ln := range strings.Split(s, "\n") {
 		ln = strings.TrimSpace(strings.TrimLeft(ln, "> \t\x08"))
 		switch {
+		case strings.Contains(ln, movedLine):
+			return ErrMovedToNetwork
 		case strings.Contains(ln, "unknown command"):
 			return ErrUnknownCommand
 		case ln == ok:

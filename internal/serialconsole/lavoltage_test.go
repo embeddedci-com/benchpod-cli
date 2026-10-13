@@ -16,6 +16,7 @@ type laVoltagePod struct {
 	v2     bool   // a v2 board: no 1.8 V
 	inUse  string // pins in use: a change is refused
 	old    bool
+	moved  bool // firmware 3.9.0+: la-voltage moved to the JSON API
 	writes []string
 }
 
@@ -27,6 +28,8 @@ func (p *laVoltagePod) console() *Console {
 		switch {
 		case p.old:
 			fmt.Fprintf(out, "  unknown command '%s' (try 'help')\r\n", f[0])
+		case p.moved:
+			fmt.Fprintf(out, "%s: moved to the network API (JSON la_voltage) in firmware 3.9.0; update the benchpod CLI to 0.6.0 or later (or embeddedci to 2.12.0), which uses it over USB\r\n", f[0])
 		case len(f) == 1 && p.mv == 0:
 			out.WriteString("  LA VCCIO = UNSET (st=0)\r\n")
 		case len(f) == 1:
@@ -76,5 +79,17 @@ func TestLAVoltageRefusals(t *testing.T) {
 	_, err := (&laVoltagePod{old: true}).console().LAVoltage(testContext(t), 0)
 	if !errors.Is(err, ErrUnknownCommand) {
 		t.Fatalf("old firmware: %v", err)
+	}
+}
+
+// Firmware 3.9.0 answers la-voltage with the moved line; firmware before it runs the command.
+func TestLAVoltageAcrossFirmwareGenerations(t *testing.T) {
+	_, err := (&laVoltagePod{moved: true}).console().LAVoltage(testContext(t), 3300)
+	if !errors.Is(err, ErrMovedToNetwork) {
+		t.Fatalf("3.9.0 console: err = %v, want ErrMovedToNetwork", err)
+	}
+	got, err := (&laVoltagePod{}).console().LAVoltage(testContext(t), 3300)
+	if err != nil || got != 3300 {
+		t.Fatalf("older firmware: %d, %v", got, err)
 	}
 }

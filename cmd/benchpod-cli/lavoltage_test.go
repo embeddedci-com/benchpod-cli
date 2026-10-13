@@ -156,6 +156,12 @@ func TestLAVoltageUSB(t *testing.T) {
 	if err := runLAVoltage(&globalFlags{connection: "usb"}, 0, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || err.Error() != laVoltageMissing {
 		t.Fatalf("old firmware: %v", err)
 	}
+	// A 3.9.0 console moved la-voltage to the network API, and the USB network was not usable.
+	fc.err = serialconsole.ErrMovedToNetwork
+	if err := runLAVoltage(&globalFlags{connection: "usb"}, 0, &bytes.Buffer{}, &bytes.Buffer{}); err == nil ||
+		!strings.Contains(err.Error(), "network API") || !strings.Contains(err.Error(), "USB network is not usable") {
+		t.Fatalf("3.9.0 console without a usable USB network: %v", err)
+	}
 }
 
 func TestLAVoltageArgIsAUsageError(t *testing.T) {

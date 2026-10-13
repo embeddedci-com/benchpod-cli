@@ -171,7 +171,8 @@ func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
 		defer cancel()
 		defer console.Close()
 		rep.MV, err = console.LAVoltage(ctx, mv)
-		if errors.Is(err, serialconsole.ErrUnknownCommand) && consoleHasUSBNet(ctx, console) {
+		if errors.Is(err, serialconsole.ErrMovedToNetwork) ||
+			(errors.Is(err, serialconsole.ErrUnknownCommand) && consoleHasUSBNet(ctx, console)) {
 			// Firmware 3.9.0+ moved la-voltage from the console to the JSON API; preferUSBNetwork
 			// already found the USB network unusable, so say why.
 			_, nerr := g.networkTarget(what)

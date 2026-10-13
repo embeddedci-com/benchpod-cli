@@ -13,6 +13,7 @@ import (
 // powerPod answers `power` like the firmware's console (console.c).
 type powerPod struct {
 	old    bool
+	moved  bool // firmware 3.9.0+: power moved to the JSON API
 	on     [3]bool
 	writes []string
 }
@@ -23,6 +24,8 @@ func (p *powerPod) console() *Console {
 		out.WriteString(line + "\r\n[net] dhcp renew\r\n")
 		f := strings.Fields(line)
 		switch {
+		case p.moved:
+			fmt.Fprintf(out, "%s: moved to the network API (JSON target_power) in firmware 3.9.0; update the benchpod CLI to 0.6.0 or later (or embeddedci to 2.12.0), which uses it over USB\r\n", f[0])
 		case p.old || f[0] != "power" || len(f) < 3:
 			fmt.Fprintf(out, "  unknown command '%s' (try 'help')\r\n", f[0])
 		case f[1] != "1" && f[1] != "2":
@@ -64,5 +67,14 @@ func TestTargetPowerRefusals(t *testing.T) {
 	err = (&powerPod{old: true}).console().TargetPower(testContext(t), 1, true)
 	if !errors.Is(err, ErrUnknownCommand) {
 		t.Fatalf("old firmware: %v", err)
+	}
+}
+
+func TestTargetPowerAcrossFirmwareGenerations(t *testing.T) {
+	if err := (&powerPod{moved: true}).console().TargetPower(testContext(t), 1, true); !errors.Is(err, ErrMovedToNetwork) {
+		t.Fatalf("3.9.0 console: err = %v, want ErrMovedToNetwork", err)
+	}
+	if err := (&powerPod{}).console().TargetPower(testContext(t), 1, true); err != nil {
+		t.Fatalf("older firmware: %v", err)
 	}
 }
