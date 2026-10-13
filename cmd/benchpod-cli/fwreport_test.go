@@ -92,3 +92,12 @@ func TestFirmwareEventFromBeforeAndAfter(t *testing.T) {
 		t.Fatal("gatewareOf")
 	}
 }
+
+// A report the server refuses (4xx) is dropped, not kept for a retry.
+func TestFirmwareReportRejectedIsDropped(t *testing.T) {
+	withFWReports(t, func(fwEvent) error { return errFWReportRejected })
+	(&globalFlags{}).reportFirmware(fwEvent{PublicKey: "pk", Kind: "firmware"})
+	if q := readFWQueue(); len(q) != 0 {
+		t.Fatalf("queued a rejected report: %+v", q)
+	}
+}

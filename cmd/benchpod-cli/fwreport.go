@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -109,10 +110,16 @@ var fwReportPost = func(ctx context.Context, ev fwEvent) error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
+		if resp.StatusCode/100 == 4 && resp.StatusCode != http.StatusTooManyRequests {
+			return errFWReportRejected // the server will not take it: no point retrying
+		}
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
+
+// errFWReportRejected is a report the server refused (4xx other than 429): dropped, not queued.
+var errFWReportRejected = errors.New("firmware report rejected")
 
 // fwReportQueuePath is where unsent reports wait: next to the sign-in token.
 var fwReportQueuePath = func() string {
@@ -147,7 +154,7 @@ func (g *globalFlags) reportFirmware(ev fwEvent) {
 		if err == errNoCloudCredential {
 			return // not signed in: send nothing, keep nothing (the queue stays as it was)
 		}
-		if err == nil {
+		if err == nil || err == errFWReportRejected {
 			continue
 		}
 		if q.Tries++; q.Tries < 2 {
