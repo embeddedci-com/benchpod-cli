@@ -61,6 +61,23 @@ You need Go (see `go.mod` for the version), then `make build`. On macOS the
 build requires cgo (`CGO_ENABLED=1`, the default for a native build) because USB
 serial-port enumeration uses the IOKit framework; Linux and Windows are pure Go.
 
+### Linux: keep ModemManager off the pod
+
+On Linux, ModemManager probes new USB serial ports as if they were modems, which
+garbles the pod's USB console for its first seconds. The release archives include
+`packaging/linux/70-benchpod.rules`; install it once:
+
+```bash
+sudo cp packaging/linux/70-benchpod.rules /etc/udev/rules.d/
+```
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+It sets `ENV{ID_MM_DEVICE_IGNORE}="1"` for the pod's USB IDs: `1209:0001` (firmware
+3.9.0 and later) and `0483:5740` (older firmware).
+
 ### OpenOCD (for `flash`)
 
 The `flash` command shells out to **OpenOCD**, which must be installed
