@@ -976,6 +976,11 @@ and only tunnels to port 443. It refuses to replace a proxy the pod already has
 (`benchpod cloud proxy clear --connection usb` removes it). Needs firmware 3.9.0 or
 later and no Wi-Fi configured on the pod.
 
+On Windows the USB link is an unidentified network, which the firewall treats as
+Public: allow `benchpod` through Windows Defender Firewall when it asks, or add an
+inbound rule for TCP port 3128 from `10.237.0.0/16`, or the pod's connections to
+the bridge are blocked.
+
 | Flag           | Default | Purpose                                              |
 |----------------|---------|------------------------------------------------------|
 | `--port`       | `3128`  | TCP port of the proxy on this computer's USB address. |
