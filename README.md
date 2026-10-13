@@ -144,6 +144,19 @@ command says the adapter is not up, unlock the screen (macOS ignores a new adapt
 while it is locked) and run `benchpod usb-reattach`. `benchpod usb-bridge` carries
 the pod's cloud link over the same cable.
 
+The USB network adapter works with the in-box drivers of macOS, Linux and Windows 11
+(tested). Windows 10 (1903 or newer) is supported but not tested: if the adapter shows
+up without a driver there, open Device Manager, update its driver, and pick "UsbNcm
+Host Device" from the list of network adapters.
+
+**Compatibility with older firmware and older CLIs.** The CLI decides per pod, from what
+the pod reports (the `usb` line of its console `status`), never from its own version:
+
+| | Pod firmware before 3.9.0 | Pod firmware 3.9.0 and later |
+|---|---|---|
+| **This CLI (0.6.0+)** | Works as before: the USB console for `status`, `la voltage`, `install-blobs`, `flash-self`, `set-wifi`, the policies, `cloud ca`/`proxy` and `identity`; the network commands need the pod's network address, as before, and say so. The serial auto-detect still finds `0483:5740` and `2E8A` consoles. | Over `usb`, every command uses the pod's USB network adapter when it is up (including `flash`, which the STM32 pod's console never ran), and the console for the commands that stay there (and as the fallback). |
+| **An older CLI (0.5.x)** | Unchanged. | The kept console commands keep their names and replies (`status`, `dfu`, `identity`, `identity wipe`, `lan-policy`, `sig-policy`, `set-wifi`, `show-network`, `clear-wifi`, `install-blobs`, `flash-self`, `cloud ca`/`proxy`), so those still work. A command 3.9.0 moved to the network API (`la voltage` over USB) prints the pod's "moved to the network API ... update the benchpod CLI to 0.6.0 or later" line. Over a network address everything works. |
+
 Which command works over which connection:
 
 | Connection          | Commands |
