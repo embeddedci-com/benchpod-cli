@@ -138,13 +138,19 @@ func blobsToInstall(m blobsManifest, slots []serialconsole.BlobSlot, force bool)
 // installBlobs brings the pod's blob slots in line with the manifest at src, over the USB
 // console. only, when non-empty, limits it to those slot names.
 func installBlobs(ctx context.Context, console blobTarget, src blobSource, force bool, only []string) error {
+	_, err := installBlobsList(ctx, console, src, force, only)
+	return err
+}
+
+// installBlobsList is installBlobs, returning the blobs it installed (for the firmware report).
+func installBlobsList(ctx context.Context, console blobTarget, src blobSource, force bool, only []string) ([]blobEntry, error) {
 	slots, err := console.Blobs(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	m, err := loadBlobsManifest(ctx, src)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	todo := blobsToInstall(m, slots, force)
 	if len(only) > 0 {
@@ -162,12 +168,13 @@ func installBlobs(ctx context.Context, console blobTarget, src blobSource, force
 	}
 	if len(todo) == 0 {
 		fmt.Fprintln(os.Stderr, "blobs: the pod already holds every blob this firmware goes with")
-		return nil
+		return nil, nil
 	}
+	var done []blobEntry
 	for _, e := range todo {
 		data, err := fetchBlob(ctx, src, e)
 		if err != nil {
-			return err
+			return done, err
 		}
 		manifest := checkBlobSignature(ctx, src, e, data) // report only
 		fmt.Fprintf(os.Stderr, "blobs: installing %s (%d KB) through %s...\n", e.Name, (e.Size+1023)/1024, console.Via())
@@ -180,14 +187,15 @@ func installBlobs(ctx context.Context, console blobTarget, src blobSource, force
 			}
 		})
 		if err != nil {
-			return err
+			return done, err
 		}
 		if line := podSigLine(rep); line != "" {
 			fmt.Fprintf(os.Stderr, "  %s %s\n", e.Name, line)
 		}
 		fmt.Fprintf(os.Stderr, "blobs: %s installed (%.1f s)\n", e.Name, time.Since(start).Seconds())
+		done = append(done, e)
 	}
-	return nil
+	return done, nil
 }
 
 // podFirmwareRelease is the release tag of the firmware a pod runs ("v3.4.0"), "" if unknown.
@@ -254,7 +262,12 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			if strings.TrimSpace(only) != "" {
 				sel = strings.Split(only, ",")
 			}
-			return installBlobs(ctx, target, src, force, sel)
+			before, _ := target.Blobs(ctx)
+			installed, err := installBlobsList(ctx, target, src, force, sel)
+			if len(installed) > 0 {
+				g.reportFirmware(blobsEvent(ctx, target, before, installed))
+			}
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "take the blobs from this directory (holding blobs-manifest.json)")

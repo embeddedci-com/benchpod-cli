@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,9 @@ func TestMain(m *testing.M) {
 		return serialconsole.USBNet{}, errors.New("no pod on USB (tests)")
 	}
 	localUSBPod = func(string) string { return "" }
+	// Never report to the real embeddedci.com, never touch the real queue.
+	fwReportPost = func(context.Context, fwEvent) error { return errNoCloudCredential }
+	fwReportQueuePath = func() string { return "" }
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

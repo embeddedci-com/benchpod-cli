@@ -593,6 +593,23 @@ and `token.json` for the embeddedci.com session.
 | `--config-file`     | `~/.config/benchpod-cli/config.json` | The CLI's config file, where `set-connection` saves the default. |
 | `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.              |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
+| `--no-firmware-report` | `false`                       | Do not report firmware and blob updates to embeddedci.com (also `BENCHPOD_NO_FIRMWARE_REPORT=1`); see [Firmware-update reports](#firmware-update-reports). |
+
+### Firmware-update reports
+
+When you are signed in to embeddedci.com (`benchpod login` or `BENCHPOD_API_KEY`),
+`flash-self` and `install-blobs` tell embeddedci.com which pod they updated, so the
+server keeps each pod's firmware history next to what the pod reports when it
+connects. A report holds the pod's identity public key and name, the firmware and
+gateware versions before and after, the blobs installed, how they were installed
+(`dfu`, `usb_network`, `usb_console`, `lan`), the CLI version and the time. Nothing
+else from your computer is sent.
+
+The report never slows down or fails an update: it is sent with a short timeout,
+nothing is sent when you are not signed in, and a report that could not be sent
+(offline) is kept in `~/.config/benchpod-cli/firmware-reports.jsonl` for one more
+try on a later run. Turn it off with `--no-firmware-report` or
+`BENCHPOD_NO_FIRMWARE_REPORT=1`.
 
 ### Exit codes
 
