@@ -42,9 +42,8 @@ func newUSBBridgeCmd(g *globalFlags) *cobra.Command {
 			"Ctrl-C, then clears the pod's proxy again (--keep-proxy leaves it set).\n\n" +
 			"--watch keeps going when no pod is plugged in or the USB link goes away, and picks the\n" +
 			"pod up again when it comes back: that is how `usb-bridge install` runs it in the\n" +
-			"background. It never polls or holds the pod's USB console: it watches for this\n" +
-			"computer's USB network address, reads the pod's proxy over that link, and opens the\n" +
-			"console once only to set the proxy (or clear it when it stops).\n\n" +
+			"background. It never opens the pod's USB console: it watches for this computer's\n" +
+			"USB network address and reads, sets and clears the pod's proxy over that link.\n\n" +
 			"Needs firmware 3.9.0 or later and no Wi-Fi configured on the pod. The proxy accepts\n" +
 			"only the pod, and only tunnels to port 443. It refuses to replace a proxy the pod\n" +
 			"already has (`benchpod cloud proxy clear` removes it).",
