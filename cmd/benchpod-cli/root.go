@@ -143,11 +143,12 @@ func Execute() int {
 
 // run runs the CLI with args and returns its exit code.
 func run(args []string) int {
+	savedConnectionUsed = ""
 	root := newRootCmd()
 	markUsageErrors(root)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		log.Printf("%v", withRefusalHint(err))
+		log.Printf("%v", withSavedConnectionHint(withRefusalHint(err), savedConnectionUsed))
 		return exitCode(err)
 	}
 	return exitOK

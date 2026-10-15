@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ type fakeSetupEnv struct {
 	profileMV int        // la_mv in the stored wiring profile, 0 = none
 	saveErr   error      // what saveLaMV fails with
 	latest    string     // latest firmware release, "" = unknown
+	regErr    error      // what register returns after registering
 
 	calls      []string
 	wifiSSID   string
@@ -82,7 +84,7 @@ func (f *fakeSetupEnv) register(addr string) error {
 	f.calls = append(f.calls, "register")
 	f.registered = addr
 	f.cloud = f.afterReg
-	return nil
+	return f.regErr
 }
 func (f *fakeSetupEnv) save(target string) error {
 	f.calls = append(f.calls, "save")
@@ -371,6 +373,32 @@ func TestSetupSkipsTheProfileWhenNotOnTheAccount(t *testing.T) {
 		if env.did("save-profile") || !strings.Contains(out, "Set to 3.3 V on the pod.\n") {
 			t.Errorf("%s: calls %v\n%s", name, env.calls, out)
 		}
+	}
+}
+
+// A pod registered but not yet on the network (no cable) does not stop setup: step 5 still saves
+// the connection, or the CLI keeps aiming at the previous default.
+func TestSetupCarriesOnWhenTheRegisteredPodIsNotConnectedYet(t *testing.T) {
+	unreg := cloudState{known: true}
+	env := &fakeSetupEnv{
+		pods: []setupPod{{addr: "10.237.94.169:8080", cloud: unreg}}, cloud: unreg, laMV: 3300, who: "me@x.com",
+		afterReg: registeredMine, account: map[string]string{"dev-1": "bench-01"},
+		regErr: fmt.Errorf("%w within 30s", errRegisteredNotConnected),
+	}
+	out, err := runSetupWith(t, env, "", setupOpts{yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !env.did("save") || env.saved == "" || !strings.Contains(out, "embeddedci:bench-01") {
+		t.Fatalf("calls %v saved %q\n%s", env.calls, env.saved, out)
+	}
+	// Any other register error still stops it.
+	env = &fakeSetupEnv{
+		pods: []setupPod{{addr: "10.0.0.5:8080", cloud: unreg}}, cloud: unreg, laMV: 3300, who: "me@x.com",
+		regErr: errors.New("register the pod: 401"),
+	}
+	if _, err := runSetupWith(t, env, "", setupOpts{yes: true}); err == nil || env.did("save") {
+		t.Fatalf("err %v calls %v", err, env.calls)
 	}
 }
 

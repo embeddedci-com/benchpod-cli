@@ -146,6 +146,18 @@ func withRefusalHint(err error) error {
 	return fmt.Errorf("%w (%s)", err, hint)
 }
 
+// withSavedConnectionHint adds where the address came from when the pod did not answer at the
+// saved default (saved, "" when the run did not use it): after a pod is unplugged or another pod
+// takes its place, that default is stale and only `discover` / `set-connection` fix it.
+func withSavedConnectionHint(err error, saved string) error {
+	if saved == "" || !errors.Is(err, tcpclient.ErrUnreachable) {
+		return err
+	}
+	return fmt.Errorf("%w\n%s is the saved default connection. If that pod is unplugged or you use another one, "+
+		"run `benchpod discover` to list the pods, then `benchpod set-connection <address|usb:<name>>`, "+
+		"or pass --connection", err, saved)
+}
+
 // ── exit codes ──────────────────────────────────────────────────────────────
 
 // The CLI's exit codes, so a script can tell a refusal from an unreachable pod. Documented in

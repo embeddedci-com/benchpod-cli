@@ -506,7 +506,12 @@ func setupCloud(env setupEnv, ui *setupUI, o setupOpts, p setupPod, mv int) (str
 		}
 	}
 	if err := env.register(p.addr); err != nil {
-		return "", err
+		if !errors.Is(err, errRegisteredNotConnected) {
+			return "", err
+		}
+		// Registered; the pod connects once it has a network. Saving the connection (step 5)
+		// still matters, or the CLI keeps the previous default.
+		fmt.Fprintln(out, "     Registered. It connects to embeddedci.com once it has a network; setup carries on.")
 	}
 	if c := env.cloudStatus(p.addr); c.known && c.DeviceID != "" {
 		id := strings.TrimSpace(c.DeviceID)
