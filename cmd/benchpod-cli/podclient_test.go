@@ -37,6 +37,9 @@ func TestMain(m *testing.M) {
 		return serialconsole.USBNet{}, errors.New("no pod on USB (tests)")
 	}
 	localUSBPod = func(string) string { return "" }
+	// Never browse this machine's LAN for a pod given by name.
+	lookupPodName = func(string) (*namedPod, error) { return nil, nil }
+	podNameNote = io.Discard
 	// Never report to the real embeddedci.com, never touch the real queue.
 	fwReportPost = func(context.Context, fwEvent) error { return errNoCloudCredential }
 	fwReportQueuePath = func() string { return "" }

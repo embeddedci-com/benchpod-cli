@@ -26,6 +26,7 @@ const (
 // inferred from the value's shape — there is no separate address flag.
 //
 //	192.168.1.5[:port], host        -> network/TCP (Addr set)
+//	benchpod-a1b2c3, a1b2c3         -> the pod with that name: its address found over mDNS, else usb:<name>
 //	/dev/tty..., COM3, \\.\COM3      -> USB console (Device set)
 //	usb (legacy: serial)            -> USB console, auto-detect (Device == "")
 //	usb:<name>                      -> USB, the pod with that name when several are plugged in (Pod set)
@@ -109,6 +110,11 @@ func parseTarget(raw string) (ConnSpec, error) {
 	if isSerialDevice(raw) {
 		return ConnSpec{Kind: connSerial, Device: raw}, nil
 	}
+	// A pod's name (benchpod-a1b2c3 or a1b2c3) is not something the OS resolver finds: look it up
+	// over mDNS, like discover, and fall back to that pod on USB.
+	if short := podShortName(raw); short != "" {
+		return resolvePodName(short), nil
+	}
 	return ConnSpec{Kind: connNetwork, Addr: benchpodconfig.EnsurePort(raw)}, nil
 }
 
@@ -173,13 +179,16 @@ const cloudCommandList = "status, ping, la voltage, la pullup, la status, la ste
 
 func newSetConnectionCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:     "set-connection <address|device|usb|embeddedci:name>",
+		Use:     "set-connection <address|name|device|usb|embeddedci:name>",
 		Aliases: []string{"set-bench-pod"},
-		Short:   `Store the default connection: a network address, a device path, "usb", or embeddedci:<name>`,
+		Short:   `Store the default connection: a network address, a pod name, a device path, "usb", or embeddedci:<name>`,
 		Long: "Store the default connection in the config file, so later commands can leave out\n" +
 			"--connection. The value is what --connection takes: the pod's network address\n" +
 			"(192.168.1.5[:8080]), a USB device path, `usb` to auto-detect the pod on USB, or\n" +
 			"embeddedci:<name> to go through embeddedci.com.\n\n" +
+			"A pod name (benchpod-a1b2c3, or a1b2c3) is looked up on the LAN over mDNS and saved\n" +
+			"as the pod's Ethernet or Wi-Fi address; a pod that is only on USB is saved as\n" +
+			"usb:benchpod-a1b2c3.\n\n" +
 			"The Python SDK and the MCP server read the same saved connection (see the README,\n" +
 			"\"Shared config\").",
 		Args: cobra.ExactArgs(1),
@@ -209,6 +218,13 @@ func runSetConnection(g *globalFlags, arg string) error {
 	}
 	if cfg == nil {
 		cfg = &benchpodconfig.Config{}
+	}
+	if short := podShortName(target); short != "" {
+		// Save where the pod is now rather than its name, so later commands do not browse first.
+		target = savedPodName(short)
+		if spec, err = parseTarget(target); err != nil {
+			return err
+		}
 	}
 	cfg.Connection = target
 	cfg.BenchPodAddr = "" // Connection is the source of truth; drop the legacy field.
