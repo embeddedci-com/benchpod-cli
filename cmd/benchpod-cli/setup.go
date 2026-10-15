@@ -48,7 +48,11 @@ func newSetupCmd(g *globalFlags) *cobra.Command {
 			"  4. embeddedci.com: an unregistered pod is registered to your account (signing\n" +
 			"     in first when needed), and its wiring profile gets the I/O voltage. A pod\n" +
 			"     on another account is explained, not touched.\n" +
-			"  5. Save the pod's address as the default connection (like `discover --save`).\n\n" +
+			"  5. Save the default connection (like `discover --save`): the pod's Ethernet\n" +
+			"     or Wi-Fi address when it has one, else `usb` for a pod reached only over\n" +
+			"     its USB network link (that 10.237.x.y address only works while the pod is\n" +
+			"     plugged into this computer; `usb` finds it again). A --connection given to\n" +
+			"     setup is saved as it is.\n\n" +
 			"It then prints the next steps: wiring SWD, flashing and running tests.\n\n" +
 			"Pass --connection to set up a pod at a known address or USB device instead of\n" +
 			"discovering it. With --yes setup never prompts: it fails with a message naming\n" +
@@ -92,7 +96,10 @@ type setupOpts struct {
 // setupPod is one physical pod as setup sees it.
 type setupPod struct {
 	device   string // USB console device, "" when not seen over USB
-	addr     string // network host:port, "" when it has no address
+	addr     string // network host:port setup drives it at, "" when it has no address
+	lanAddr  string // its Ethernet or Wi-Fi host:port, "" when it only has its USB network link
+	saveAs   string // the connection step 5 saves when --connection named it; "" = savedConnection
+	usbConn  string // what step 5 saves instead of `usb`: "usb:<name>" when --connection named the pod
 	firmware string
 	cloud    cloudState // known=false when the pod could not say
 }
@@ -223,9 +230,18 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 
 	// 2. Network.
 	step(2, "Network")
-	if p.addr != "" {
+	switch {
+	case p.lanAddr != "":
+		fmt.Fprintf(out, "     Done: the pod is on the network at %s.\n", p.lanAddr)
+	case p.addr != "" && isUSBLinkAddr(p.addr):
+		// Enough for this computer: the whole API runs over the USB cable. Other machines and CI
+		// need Ethernet or Wi-Fi, which setup does not force on a pod that already works.
+		fmt.Fprintf(out, "     Done: this computer reaches the pod over its USB network link (%s).\n", p.addr)
+		fmt.Fprintln(out, "     No Ethernet or Wi-Fi address was found. To use it from other machines or CI, plug in")
+		fmt.Fprintln(out, "     Ethernet (it takes a DHCP lease on its own) or join Wi-Fi with `benchpod set-wifi`.")
+	case p.addr != "":
 		fmt.Fprintf(out, "     Done: the pod is on the network at %s.\n", p.addr)
-	} else {
+	default:
 		if p.device == "" {
 			return errors.New("the pod has no network address and is not on USB; connect it over USB and run setup again")
 		}
@@ -234,6 +250,9 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 			return err
 		}
 		p.addr = addr
+		if !isUSBLinkAddr(addr) {
+			p.lanAddr = addr
+		}
 		fmt.Fprintf(out, "     The pod is on the network at %s.\n", p.addr)
 	}
 
@@ -256,11 +275,22 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 
 	// 5. Save the connection.
 	step(5, "Save the connection")
-	if err := env.save(p.addr); err != nil {
+	target := p.saveAs
+	if target == "" {
+		target = savedConnection(p.addr, p.lanAddr)
+	}
+	if target == "usb" && p.usbConn != "" {
+		target = p.usbConn
+	}
+	if strings.HasPrefix(target, "usb") {
+		fmt.Fprintf(out, "     Saving `%s` rather than %s: that address only works while the pod is plugged into\n", target, p.addr)
+		fmt.Fprintln(out, "     this computer, and `usb` finds the pod again on any USB port.")
+	}
+	if err := env.save(target); err != nil {
 		return err
 	}
 
-	printSetupNextSteps(out, p.addr, name)
+	printSetupNextSteps(out, target, name)
 	return nil
 }
 
@@ -269,9 +299,15 @@ func describeSetupPod(p setupPod) string {
 	if p.device != "" {
 		parts = append(parts, "USB "+p.device)
 	}
-	if p.addr != "" {
+	switch {
+	case p.addr != "" && isUSBLinkAddr(p.addr):
+		parts = append(parts, "USB network "+p.addr)
+		if p.lanAddr != "" {
+			parts = append(parts, "network "+p.lanAddr)
+		}
+	case p.addr != "":
 		parts = append(parts, "network "+p.addr)
-	} else {
+	default:
 		parts = append(parts, "no network address yet")
 	}
 	if p.firmware != "" {
@@ -488,8 +524,9 @@ func setupCloud(env setupEnv, ui *setupUI, o setupOpts, p setupPod, mv int) (str
 	return "", nil
 }
 
-func printSetupNextSteps(out io.Writer, addr, name string) {
-	addr = strings.TrimSuffix(addr, ":8080") // the SDK's default port
+// printSetupNextSteps ends setup; conn is the saved connection (an address or `usb`).
+func printSetupNextSteps(out io.Writer, conn, name string) {
+	addr := strings.TrimSuffix(conn, ":8080") // the SDK's default port
 	fmt.Fprintln(out, "\nThe pod is set up. Next steps:")
 	fmt.Fprintln(out, "  • Wire SWD to your target: SWCLK on LA11, SWDIO on LA12, and GND. The DUT's reset")
 	fmt.Fprintln(out, "    line goes to the pod's reset pin.")
@@ -531,7 +568,11 @@ func (e *realSetupEnv) find() ([]setupPod, error) {
 			if !dp.reachable {
 				return nil, fmt.Errorf("no BenchPod answers at %s: %s", spec.Addr, firstLine(dp.healthErr))
 			}
-			return []setupPod{{addr: spec.Addr, cloud: dp.cloud}}, nil
+			p := setupPod{addr: spec.Addr, cloud: dp.cloud, saveAs: spec.Addr}
+			if !isUSBLinkAddr(spec.Addr) {
+				p.lanAddr = spec.Addr
+			}
+			return []setupPod{p}, nil
 		}
 		serialPods, _, err := serialconsole.ProbeSerial(spec.Device, 2*time.Second)
 		if err != nil {
@@ -540,7 +581,11 @@ func (e *realSetupEnv) find() ([]setupPod, error) {
 		var pods []setupPod
 		for _, sp := range serialPods {
 			if spec.Device == "" || sp.Device == spec.Device {
-				pods = append(pods, setupPodFromSerial(sp))
+				p := setupPodFromSerial(sp)
+				if spec.Pod != "" {
+					p.usbConn = raw
+				}
+				pods = append(pods, p)
 			}
 		}
 		return pods, nil
@@ -568,6 +613,9 @@ func mergeSetupPods(serialPods []serialconsole.SerialPod, netPods []discoveredPo
 		for _, np := range netPods {
 			if np.sameAs == sp.Device && np.reachable {
 				p.addr = np.addr
+				if np.lanAddr != "" {
+					p.lanAddr = np.lanAddr
+				}
 				if np.cloud.known {
 					p.cloud = np.cloud
 				}
@@ -577,7 +625,7 @@ func mergeSetupPods(serialPods []serialconsole.SerialPod, netPods []discoveredPo
 	}
 	for _, np := range netPods {
 		if np.sameAs == "" && np.reachable {
-			pods = append(pods, setupPod{addr: np.addr, cloud: np.cloud})
+			pods = append(pods, setupPod{addr: np.addr, lanAddr: np.lanAddr, cloud: np.cloud})
 		}
 	}
 	return pods
@@ -587,6 +635,9 @@ func setupPodFromSerial(sp serialconsole.SerialPod) setupPod {
 	p := setupPod{device: sp.Device, firmware: sp.Firmware}
 	if sp.Addressed() {
 		p.addr = benchpodconfig.EnsurePort(strings.TrimSpace(sp.IP))
+		if !isUSBLinkAddr(p.addr) {
+			p.lanAddr = p.addr
+		}
 	}
 	if sp.CloudKnown {
 		p.cloud = cloudState{known: true, Configured: sp.Registered, State: sp.CloudState, DeviceID: sp.DeviceID}

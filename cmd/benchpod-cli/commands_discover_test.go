@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -338,5 +339,45 @@ func TestSaveTargetSavesUSBForAPodOnItsUSBLink(t *testing.T) {
 	got := saveTarget([]discoveredPod{{addr: "10.237.8.85:8080"}}, []serialconsole.SerialPod{{Device: "/dev/cu.usbmodem1"}})
 	if got != "usb" {
 		t.Fatalf("saveTarget = %q, want usb for a pod found on its USB network link", got)
+	}
+}
+
+func TestSaveTargetPrefersTheLANAddressOverTheUSBLink(t *testing.T) {
+	// One pod plugged in over USB and on the LAN: mDNS hears it on both, discover drives it over
+	// the link, but the saved default must survive the pod being unplugged and moved.
+	pod := discoveredPod{addr: "10.237.8.85:8080", lanAddr: "192.168.1.220:8080"}
+	if got := saveTarget([]discoveredPod{pod}, nil); got != "192.168.1.220:8080" {
+		t.Fatalf("saveTarget = %q, want the LAN address", got)
+	}
+}
+
+func TestSavedConnection(t *testing.T) {
+	for _, c := range []struct{ addr, lan, want string }{
+		{"10.237.8.85:8080", "192.168.1.220:8080", "192.168.1.220:8080"},
+		{"10.237.8.85:8080", "", "usb"},
+		{"10.237.8.85", "", "usb"},
+		{"192.168.1.220:8080", "", "192.168.1.220:8080"},
+		{"benchpod-baea06.local:8080", "", "benchpod-baea06.local:8080"},
+	} {
+		if got := savedConnection(c.addr, c.lan); got != c.want {
+			t.Errorf("savedConnection(%q, %q) = %q, want %q", c.addr, c.lan, got, c.want)
+		}
+	}
+}
+
+func TestLANPodIPSkipsTheUSBLink(t *testing.T) {
+	lan, usb := net.ParseIP("192.168.1.220"), net.ParseIP("10.237.8.85")
+	if got := lanPodIP([]net.IP{usb, lan}); !got.Equal(lan) {
+		t.Fatalf("got %v, want the LAN address", got)
+	}
+	if got := lanPodIP([]net.IP{usb}); got != nil {
+		t.Fatalf("got %v, want nil for a pod only heard on its USB link", got)
+	}
+}
+
+func TestDescribeHealthShowsTheLANAddress(t *testing.T) {
+	got := describeHealth(discoveredPod{reachable: true, addr: "10.237.8.85:8080", lanAddr: "192.168.1.220:8080"})
+	if !strings.Contains(got, "LAN address 192.168.1.220:8080") {
+		t.Fatalf("got %q", got)
 	}
 }

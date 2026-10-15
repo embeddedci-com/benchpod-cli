@@ -667,6 +667,9 @@ one that is already done:
    none or more than one.
 2. **Network**: a pod with no address gets one. Choose Ethernet (setup waits up to
    two minutes for its DHCP lease) or Wi-Fi (SSID and password, like `set-wifi`).
+   A pod this computer reaches over its USB network link (firmware 3.9.0+) already
+   works from here, so setup goes on and says how to add Ethernet or Wi-Fi for other
+   machines and CI.
 3. **Board I/O voltage**: 1.8 V or 3.3 V, the DUT's logic level (like `la voltage`).
    One already set is kept unless `--la-voltage` is given. The pod forgets it on a
    restart, so when this machine is signed in and the pod is registered to that
@@ -679,7 +682,13 @@ one that is already done:
    voltage. A pod registered to your account is named; one registered to another
    account is explained (sign in with the address your activation email was sent to,
    `benchpod login --force`) and left alone.
-5. **Save the connection**: the pod's address becomes the default (like `discover --save`).
+5. **Save the connection** (like `discover --save`): the pod's Ethernet or Wi-Fi
+   address becomes the default when it has one, so the default keeps working from other
+   machines and after the pod moves to another desk or lab. A pod that only has its USB
+   network link (firmware 3.9.0+, no Ethernet or Wi-Fi) is saved as `usb`, not as its
+   `10.237.x.y` address, which only works while it is plugged into this computer. A
+   `--connection` given to setup is saved as it is. The `pytest` line in the next steps
+   uses the saved connection.
 
 It ends with the next steps: SWD wiring (SWCLK on LA11, SWDIO on LA12, GND), a
 `benchpod flash` line, the `pytest` line and the getting-started guide.
@@ -731,12 +740,15 @@ a registered pod is also checked against that account: discover names it when it
 yours, and says so when it is registered to a different account (usually a second
 account; a pod set up for you is on the account your activation email was sent to).
 A pod advertises itself on each of its interfaces; when this computer hears it on the
-pod's USB network link (firmware 3.9.0+), discover shows and uses that address rather
-than the LAN one, and `--save` stores `usb` for it.
+pod's USB network link (firmware 3.9.0+), discover shows and uses that address and
+lists the LAN one next to it (`LAN address 192.168.1.220:8080`). `--save` stores the
+LAN address when the pod has one, and `usb` when it was only heard on its USB link: a
+`10.237.x.y` address only works while the pod is plugged into this computer, so it is
+never saved; `usb` finds the pod again on any port.
 
 | Flag              | Default | Purpose                                                         |
 |-------------------|---------|-----------------------------------------------------------------|
-| `--save`          | off     | Save the pod as the default connection when exactly one is found (the network address first; `usb` for a pod on its USB link). |
+| `--save`          | off     | Save the pod as the default connection when exactly one is found: its Ethernet or Wi-Fi address first, `usb` for a pod only on its USB link, else its USB console device. |
 | `--no-usb`        | off     | Skip probing USB ports.                                          |
 | `--no-network`    | off     | Skip mDNS browsing of the LAN.                                   |
 | `--wait`          | `3s`    | How long to browse the LAN for mDNS replies.                     |

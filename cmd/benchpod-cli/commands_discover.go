@@ -39,7 +39,11 @@ type discoveredPod struct {
 	instance string // DNS-SD instance, e.g. "BenchPod a1b2c3"
 	hostname string // "benchpod-a1b2c3.local."
 	addr     string // "host:port", a numeric IPv4 when one was resolved
-	id       string // full base64url Ed25519 pubkey (TXT id=)
+	// lanAddr is the pod's "host:port" on Ethernet or Wi-Fi, "" when it was only heard on its USB
+	// network link. addr prefers the link (it is how this computer reaches the pod fastest);
+	// lanAddr is what gets saved, since it works from other machines and after the pod is unplugged.
+	lanAddr string
+	id      string // full base64url Ed25519 pubkey (TXT id=)
 
 	// Filled in by the health check.
 	reachable bool
@@ -78,8 +82,11 @@ func newDiscoverCmd(g *globalFlags) *cobra.Command {
 			"is reachable both ways the two entries are matched up as one physical pod.\n" +
 			"When this machine is signed in (`benchpod login`), a registered pod is also\n" +
 			"checked against that account, so a pod on another account is called out.\n\n" +
-			"With --save and exactly one pod present, its address is stored as the default\n" +
-			"connection (like set-connection), preferring the network address.\n\n" +
+			"With --save and exactly one pod present, it is stored as the default connection\n" +
+			"(like set-connection): its Ethernet or Wi-Fi address when it has one, else `usb`\n" +
+			"for a pod only reached over its USB network link (that 10.237.x.y address only\n" +
+			"works while the pod is plugged into this computer; `usb` finds it again), else\n" +
+			"its USB console device.\n\n" +
 			"mDNS is link-local: it works on a flat bench/office subnet but does not cross\n" +
 			"routers/VLANs and is often blocked on CI runners. USB probing needs no network\n" +
 			"at all, so a pod that is plugged in always shows up even when mDNS is blocked.",
@@ -243,6 +250,9 @@ func discoverPods(wait time.Duration) ([]discoveredPod, error) {
 				host = ip.String()
 			}
 			p.addr = benchpodconfig.EnsurePort(fmt.Sprintf("%s:%d", host, e.Port))
+			if ip := lanPodIP(ips[e.Instance]); ip != nil {
+				p.lanAddr = benchpodconfig.EnsurePort(fmt.Sprintf("%s:%d", ip, e.Port))
+			}
 			byKey[e.Instance] = p
 		}
 	}()
@@ -294,6 +304,46 @@ func preferredPodIP(ips []net.IP) net.IP {
 		return ips[0]
 	}
 	return nil
+}
+
+// lanPodIP is the first address mDNS returned for a pod that is not on its USB link: its
+// Ethernet or Wi-Fi address. nil when the pod was only heard over USB.
+func lanPodIP(ips []net.IP) net.IP {
+	for _, ip := range ips {
+		if !usbLinkNet.Contains(ip) {
+			return ip
+		}
+	}
+	return nil
+}
+
+// isUSBLinkAddr reports whether a "host[:port]" is on a pod's USB network link, which only the
+// computer the pod is plugged into reaches.
+func isUSBLinkAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && usbLinkNet.Contains(ip)
+}
+
+// savedConnection is the connection to store as the default for a pod reached at addr, with
+// lanAddr its Ethernet or Wi-Fi address ("" when none is known). The saved default has to keep
+// working when the pod moves (set up at a desk over USB, then cabled into a lab network), so:
+//   - the pod's LAN address when it has one: it works from any machine on that network and from CI;
+//   - else `usb` for a pod reached on its USB network link (10.237.x.y): that address only works
+//     while the pod is plugged into this computer, and `usb` finds the pod again on any port (and
+//     falls back to its console when Wi-Fi turns USB networking off);
+//   - else addr as it is.
+func savedConnection(addr, lanAddr string) string {
+	switch {
+	case lanAddr != "":
+		return lanAddr
+	case isUSBLinkAddr(addr):
+		return "usb"
+	}
+	return addr
 }
 
 // multicastIfaces lists the interfaces worth browsing for mDNS: up, multicast
@@ -677,6 +727,9 @@ func describeHealth(p discoveredPod) string {
 			parts = append(parts, fmt.Sprintf("registered, cloud %s", strings.ToLower(strings.TrimSpace(p.cloud.State))))
 		}
 	}
+	if p.lanAddr != "" && p.lanAddr != p.addr {
+		parts = append(parts, "LAN address "+p.lanAddr)
+	}
 	if p.sameAs != "" {
 		parts = append(parts, "same pod as "+p.sameAs)
 	}
@@ -711,19 +764,14 @@ func plural(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, many)
 }
 
-// saveTarget is the connection string --save would store: the network address
-// of the single pod found (preferred — it works from other machines and from
-// CI), else the serial device of the single pod found over USB. It returns ""
-// when the choice is ambiguous, so --save never guesses between two pods. A pod
-// heard on its USB network link is saved as `usb`: its link address is only
-// reachable from this computer, and `usb` keeps working (over the console) when
-// Wi-Fi turns the pod's USB networking off.
+// saveTarget is the connection string --save would store: for the single pod found on the
+// network, its LAN address (preferred: it works from other machines and from CI), or `usb` when
+// it was only heard on its USB network link (see savedConnection); else the serial device of the
+// single pod found over USB. It returns "" when the choice is ambiguous, so --save never guesses
+// between two pods.
 func saveTarget(netPods []discoveredPod, serialPods []serialconsole.SerialPod) string {
 	if len(netPods) == 1 {
-		if host, _, err := net.SplitHostPort(netPods[0].addr); err == nil && usbLinkNet.Contains(net.ParseIP(host)) {
-			return "usb"
-		}
-		return netPods[0].addr
+		return savedConnection(netPods[0].addr, netPods[0].lanAddr)
 	}
 	if len(netPods) == 0 && len(serialPods) == 1 {
 		return serialPods[0].Device

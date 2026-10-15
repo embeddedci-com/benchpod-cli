@@ -420,3 +420,81 @@ func TestSetupNudgesAnOutdatedFirmware(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupSavesTheLANAddressOfAPodAlsoOnUSB(t *testing.T) {
+	// The 2026-10-15 onboarding run: firmware 3.9.0 on USB and Ethernet. Setup drove the pod over
+	// its USB network link and saved that address, which breaks once the pod moves to a lab.
+	env := &fakeSetupEnv{
+		pods:  []setupPod{{addr: "10.237.8.85:8080", lanAddr: "192.168.1.220:8080", firmware: "v3.9.0", cloud: registeredMine}},
+		laMV:  3300,
+		cloud: registeredMine, who: "you@example.com", account: map[string]string{"dev-1": "benchpod-baea06"},
+	}
+	out, err := runSetupWith(t, env, "", setupOpts{yes: true})
+	if err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if env.saved != "192.168.1.220:8080" {
+		t.Errorf("saved %q, want the LAN address", env.saved)
+	}
+	for _, want := range []string{"USB network 10.237.8.85:8080, network 192.168.1.220:8080",
+		"on the network at 192.168.1.220:8080", "--benchpod-connection=192.168.1.220`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--benchpod-connection=10.237") {
+		t.Errorf("next steps name the USB link address:\n%s", out)
+	}
+}
+
+func TestSetupSavesUSBForAPodOnlyOnItsUSBLink(t *testing.T) {
+	env := &fakeSetupEnv{pods: []setupPod{{addr: "10.237.8.85:8080", firmware: "v3.9.0"}}, laMV: 3300}
+	out, err := runSetupWith(t, env, "", setupOpts{yes: true, noRegister: true})
+	if err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if env.saved != "usb" {
+		t.Errorf("saved %q, want usb", env.saved)
+	}
+	if env.did("wait") || env.did("wifi") {
+		t.Errorf("setup forced a network on a pod that works over USB\n%s", out)
+	}
+	for _, want := range []string{"over its USB network link (10.237.8.85:8080)", "benchpod set-wifi",
+		"Saving `usb` rather than 10.237.8.85:8080", "--benchpod-connection=usb`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSetupSavesAnExplicitConnectionAsGiven(t *testing.T) {
+	env := &fakeSetupEnv{pods: []setupPod{{addr: "10.237.8.85:8080", saveAs: "10.237.8.85:8080"}}, laMV: 3300}
+	if out, err := runSetupWith(t, env, "", setupOpts{yes: true, noRegister: true}); err != nil || env.saved != "10.237.8.85:8080" {
+		t.Fatalf("saved %q, err %v\n%s", env.saved, err, out)
+	}
+	env = &fakeSetupEnv{pods: []setupPod{{device: "/dev/a", addr: "10.237.8.85:8080", usbConn: "usb:benchpod-baea06"}}, laMV: 3300}
+	if out, err := runSetupWith(t, env, "", setupOpts{yes: true, noRegister: true}); err != nil || env.saved != "usb:benchpod-baea06" {
+		t.Fatalf("saved %q, err %v\n%s", env.saved, err, out)
+	}
+}
+
+func TestMergeSetupPodsKeepsTheLANAddress(t *testing.T) {
+	// USB console reports the Ethernet address; mDNS heard the pod on both its link and the LAN.
+	serialPods := []serialconsole.SerialPod{{Device: "/dev/a", IP: "192.168.1.220"}}
+	netPods := []discoveredPod{{addr: "10.237.8.85:8080", lanAddr: "192.168.1.220:8080", reachable: true, sameAs: "/dev/a"}}
+	pods := mergeSetupPods(serialPods, netPods)
+	if len(pods) != 1 || pods[0].addr != "10.237.8.85:8080" || pods[0].lanAddr != "192.168.1.220:8080" {
+		t.Fatalf("got %+v", pods)
+	}
+	// Only the link heard over mDNS: the console's Ethernet address is still the LAN address.
+	netPods[0].lanAddr = ""
+	pods = mergeSetupPods(serialPods, netPods)
+	if pods[0].lanAddr != "192.168.1.220:8080" {
+		t.Fatalf("got %+v", pods)
+	}
+	// A pod only on mDNS keeps both.
+	pods = mergeSetupPods(nil, []discoveredPod{{addr: "10.237.8.85:8080", lanAddr: "192.168.1.220:8080", reachable: true}})
+	if pods[0].lanAddr != "192.168.1.220:8080" {
+		t.Fatalf("got %+v", pods)
+	}
+}
