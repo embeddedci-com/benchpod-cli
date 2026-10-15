@@ -793,12 +793,27 @@ BenchPod at 192.168.1.220:8080
 
 Start DAC waveform output (network or embeddedci.com).
 
+Give the waveform in volts with `--path`, `--amplitude-v` and `--offset-v` (or in mA on the 4-20 mA
+output with `--amplitude-ma` and `--offset-ma`): firmware 3.9.1 and later calibrates it and plays it
+at the DAC's full 16 bits, about 50 µV a step on the 3.3 V output. The CLI checks the pod has it
+first and refuses on older firmware. `--amplitude` and `--offset` are the older 8-bit levels: 256
+steps over the output, no calibration.
+
+```bash
+benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1.48 --offset-v 1.65
+```
+
 | Flag                | Default | Purpose                                                   |
 |---------------------|---------|-----------------------------------------------------------|
 | `--waveform`        | (required) | `sine`, `square` or `sawtooth`.                        |
 | `--freq`            | `1kHz`  | Output frequency with its unit, e.g. `2kHz`; a bare number is Hz. |
-| `--amplitude`       | `127`   | Half-scale amplitude code, 0-127.                         |
-| `--offset`          | `128`   | DC offset code, 0-255.                                    |
+| `--path`            |         | DAC output for the volts: `3v3`, `5v` or `12v` (firmware 3.9.1+). |
+| `--amplitude-v`     |         | Peak in volts on `--path`, 16-bit and calibrated (firmware 3.9.1+). |
+| `--offset-v`        |         | Centre in volts on `--path`, with `--amplitude-v`.        |
+| `--amplitude-ma`    |         | Peak in mA on the 4-20 mA output (J9), 16-bit (firmware 3.9.1+). |
+| `--offset-ma`       |         | Centre in mA on the 4-20 mA output, with `--amplitude-ma`. |
+| `--amplitude`       | `127`   | Half-scale amplitude in 8-bit levels, 0-127.              |
+| `--offset`          | `128`   | DC offset in 8-bit levels, 0-255.                         |
 | `--duration`        | `0`     | How long to play, e.g. `2s` or `500ms`; `0` runs until the next command. |
 | `--duration-ms`     | `0`     | The same in ms (older form of `--duration`).              |
 | `--sample-rate`     | auto    | FPGA sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
