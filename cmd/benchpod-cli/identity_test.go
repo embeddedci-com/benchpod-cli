@@ -49,7 +49,9 @@ func withFakeIdentityConsole(t *testing.T, fc *fakeIdentityConsole, tty bool) {
 func TestIdentityWipeOnlyOverUSB(t *testing.T) {
 	fc := &fakeIdentityConsole{}
 	withFakeIdentityConsole(t, fc, true)
-	for _, conn := range []string{"192.168.1.220", "192.168.1.220:8080", "benchpod-a1b2c3.local"} {
+	// A pod name that answers on the LAN is a network connection too.
+	withPodNames(t, map[string]*namedPod{"a1b2c3": {addr: "192.168.1.221:8080", lanAddr: "192.168.1.221:8080"}})
+	for _, conn := range []string{"192.168.1.220", "192.168.1.220:8080", "benchpod-a1b2c3.local", "benchpod-a1b2c3"} {
 		err := runIdentityWipe(&globalFlags{connection: conn}, true, strings.NewReader(""), &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "--connection usb") {
 			t.Fatalf("connection %q: err = %v", conn, err)

@@ -85,7 +85,7 @@ func newRootCmd() *cobra.Command {
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&g.connection, "connection", "",
-		`how to reach the pod: its network address (192.168.1.5[:8080]), a device path (/dev/tty..., COM3), "usb" to auto-detect the pod over USB (its console, and its USB network adapter for the network commands), usb:<name> for one of several pods on USB, or embeddedci:<name> to go through embeddedci.com (default: the saved set-connection target)`)
+		`how to reach the pod: its network address (192.168.1.5[:8080]), its name (benchpod-a1b2c3 or a1b2c3, found on the LAN over mDNS, else on USB), a device path (/dev/tty..., COM3), "usb" to auto-detect the pod over USB (its console, and its USB network adapter for the network commands), usb:<name> for one of several pods on USB, or embeddedci:<name> to go through embeddedci.com (default: the saved set-connection target)`)
 	pf.StringVar(&g.configFile, "config-file", "", "path to config file")
 	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")

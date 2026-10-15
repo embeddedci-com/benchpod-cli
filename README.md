@@ -123,11 +123,20 @@ reach the pod; the transport is inferred from its value:
 | `--connection` value             | Transport                                              |
 |----------------------------------|--------------------------------------------------------|
 | `192.168.1.5[:8080]`             | The pod's network TCP/JSON API (Ethernet or Wi-Fi).    |
+| `benchpod-a1b2c3`, `a1b2c3`      | The pod with that name (as on its label and in `discover`): its address found on the LAN over mDNS, else `usb:benchpod-a1b2c3`. See below. |
 | `/dev/tty...`, `COM3`            | USB, explicit console device path.                     |
 | `usb`                            | USB, the console auto-detected by probing the ports.   |
 | `usb:<name>`                     | USB, the pod with that name (`usb:benchpod-a1b2c3`) when several are plugged in; plain `usb` then lists them (not yet tested with two physical pods). |
 | `embeddedci:<name>`              | Through embeddedci.com to the pod with that name on your account (see below). |
 | *(omitted)*                      | the default saved by `benchpod discover --save`, `benchpod setup` or `benchpod set-connection`. |
+
+**Pod names.** A value shaped like a pod's name, `benchpod-a1b2c3` or just
+`a1b2c3` (optionally with `.local`), is looked up the way `discover` finds pods: an
+mDNS browse of the LAN for up to 3 seconds, which ends as soon as the pod answers.
+The CLI does this itself because the system resolver it is built with does not
+resolve `.local` names. A pod that does not answer on the LAN is looked for on USB,
+as `usb:benchpod-a1b2c3`. Any other hostname (`lab-pod.example.com`) goes to the
+system resolver as before.
 
 The global flags are also settable via a `BENCHPOD_*` environment variable
 (`BENCHPOD_CONNECTION=usb`, `BENCHPOD_TIMEOUT=2m`, `BENCHPOD_CONFIG_FILE`,
@@ -270,6 +279,7 @@ benchpod setup --la-voltage 3.3V --yes      # non-interactive
 
 # Save a default connection so later commands can omit --connection:
 benchpod set-connection 192.168.1.5
+benchpod set-connection benchpod-a1b2c3     # by name: saves its LAN address, or usb:benchpod-a1b2c3
 benchpod set-connection usb
 
 # Find every pod on this machine and this LAN, and check each one works:
@@ -614,7 +624,7 @@ and `token.json` for the embeddedci.com session.
 
 | Flag                | Default                          | Purpose                                                           |
 |---------------------|----------------------------------|-------------------------------------------------------------------|
-| `--connection`      | (saved `set-connection` target)  | Network address, device path, `usb`, or `embeddedci:<name>` (through embeddedci.com); see [Connection](#connection). |
+| `--connection`      | (saved `set-connection` target)  | Network address, pod name (`benchpod-a1b2c3`), device path, `usb`, or `embeddedci:<name>` (through embeddedci.com); see [Connection](#connection). |
 | `--config-file`     | `~/.config/benchpod-cli/config.json` | The CLI's config file, where `set-connection` saves the default. |
 | `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.              |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
@@ -725,11 +735,14 @@ command (`benchpod flash-self --enter-dfu`, then replug USB-C); setup does not f
 | `--no-register`    | off     | Do not register the pod with embeddedci.com (it works over the LAN without an account). |
 | `--yes`            | off     | Never prompt: register without asking, and fail with a message naming the flag to pass when an answer is needed. |
 
-### `benchpod set-connection <address|device|usb|embeddedci:name>`
+### `benchpod set-connection <address|name|device|usb|embeddedci:name>`
 
 Save the default connection (a network address, a device path, `usb` or
 `embeddedci:<name>`) in the config file, so later commands can leave out
-`--connection`. The Python SDK and the MCP server read the same value (see
+`--connection`. A pod name (`benchpod-a1b2c3` or `a1b2c3`) is looked up on the LAN
+over mDNS and saved as the pod's Ethernet or Wi-Fi address, so later commands do not
+look it up again; a pod heard only on USB (or on its USB network link) is saved as
+`usb:benchpod-a1b2c3`. The Python SDK and the MCP server read the same value (see
 [Shared config](#shared-config)). No flags.
 
 ### `benchpod discover`
