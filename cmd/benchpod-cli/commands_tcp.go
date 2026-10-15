@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/spiflash"
 	"github.com/spf13/cobra"
 )
 
@@ -53,9 +55,10 @@ func newPingCmd(g *globalFlags) *cobra.Command {
 // ── generate ─────────────────────────────────────────────────────────────────
 
 func newGenerateCmd(g *globalFlags) *cobra.Command {
-	var waveform string
+	var waveform, path string
 	var freq, sampleRate, sampleRateHz float64
 	var amplitude, offset, durationMS int
+	var amplitudeV, offsetV, amplitudeMA, offsetMA float64
 	var duration time.Duration
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -73,6 +76,10 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			calibrated, err := generateCalibrated(cmd, path, amplitudeV, offsetV, amplitudeMA, offsetMA)
+			if err != nil {
+				return err
+			}
 			ctx, cancel, pod, err := g.podClient("generate", 30*time.Second)
 			if err != nil {
 				return err
@@ -86,6 +93,27 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 				"amplitude":   amplitude,
 				"offset":      offset,
 				"duration_ms": durationMS,
+			}
+			if calibrated != nil {
+				// Firmware before 3.9.1 ignores the volts and would play its default
+				// full-scale 8-bit waveform instead: check before sending.
+				status, err := pod.client.Command(ctx, map[string]any{"cmd": "status"})
+				if err != nil {
+					return fmt.Errorf("generate: status: %w", err)
+				}
+				ok, err := spiflash.HasCap(status, "generate16")
+				if err != nil {
+					return fmt.Errorf("generate: %w", err)
+				}
+				if !ok {
+					return fmt.Errorf("generate: --amplitude-v/--amplitude-ma need firmware 3.9.1 or newer " +
+						"(the pod does not list generate16); update it with `benchpod flash-self`, or use --amplitude/--offset levels")
+				}
+				delete(req, "amplitude")
+				delete(req, "offset")
+				for k, v := range calibrated {
+					req[k] = v
+				}
 			}
 			if sampleRate > 0 {
 				req["sample_rate_mhz"] = sampleRate
@@ -109,13 +137,55 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&waveform, "waveform", "", "waveform: sine|square|sawtooth (required)")
 	cmd.Flags().Var(newFrequencyValue(1000, &freq), "freq", "output frequency, e.g. 1kHz (a bare number is Hz)")
-	cmd.Flags().IntVar(&amplitude, "amplitude", 127, "half-scale amplitude 0-127")
-	cmd.Flags().IntVar(&offset, "offset", 128, "DC offset 0-255")
+	cmd.Flags().IntVar(&amplitude, "amplitude", 127, "half-scale amplitude in 8-bit levels 0-127")
+	cmd.Flags().IntVar(&offset, "offset", 128, "DC offset in 8-bit levels 0-255")
+	cmd.Flags().StringVar(&path, "path", "", "DAC output for --amplitude-v/--offset-v: 3v3|5v|12v (firmware 3.9.1+)")
+	cmd.Flags().Float64Var(&amplitudeV, "amplitude-v", 0, "peak in volts on --path, played calibrated at 16 bits (firmware 3.9.1+)")
+	cmd.Flags().Float64Var(&offsetV, "offset-v", 0, "centre in volts on --path (with --amplitude-v)")
+	cmd.Flags().Float64Var(&amplitudeMA, "amplitude-ma", 0, "peak in mA on the 4-20 mA output, 16-bit (firmware 3.9.1+)")
+	cmd.Flags().Float64Var(&offsetMA, "offset-ma", 0, "centre in mA on the 4-20 mA output (with --amplitude-ma)")
 	cmd.Flags().DurationVar(&duration, "duration", 0, "how long to output, e.g. 2s or 500ms (0 = run until next command)")
 	cmd.Flags().IntVar(&durationMS, "duration-ms", 0, "duration in ms (0 = run until next command); same as --duration")
 	cmd.Flags().Var(newFrequencyValue(0, &sampleRateHz), "sample-rate", "FPGA sample-clock rate, e.g. 10MHz (omit to auto-pick)")
 	cmd.Flags().Float64Var(&sampleRate, "sample-rate-mhz", 0, "FPGA sample-clock rate in MHz (omit to auto-pick); same as --sample-rate")
 	return cmd
+}
+
+// generateCalibrated turns the volts / milliamp flags into the calibrated generate fields
+// (firmware 3.9.1+), or nil when none of them is set. The 8-bit --amplitude/--offset cannot be
+// mixed in.
+func generateCalibrated(cmd *cobra.Command, path string, ampV, offV, ampMA, offMA float64) (map[string]any, error) {
+	f := cmd.Flags()
+	volts := f.Changed("amplitude-v") || f.Changed("offset-v") || f.Changed("path")
+	amps := f.Changed("amplitude-ma") || f.Changed("offset-ma")
+	if !volts && !amps {
+		return nil, nil
+	}
+	if f.Changed("amplitude") || f.Changed("offset") {
+		return nil, fmt.Errorf("--amplitude/--offset are 8-bit levels: use them or the volts/mA flags, not both")
+	}
+	if volts && amps {
+		return nil, fmt.Errorf("give volts (--path, --amplitude-v, --offset-v) or mA (--amplitude-ma, --offset-ma), not both")
+	}
+	if amps {
+		if !f.Changed("amplitude-ma") || !f.Changed("offset-ma") {
+			return nil, fmt.Errorf("--amplitude-ma and --offset-ma go together")
+		}
+		if !(ampMA > 0) {
+			return nil, fmt.Errorf("--amplitude-ma must be above 0")
+		}
+		return map[string]any{"amplitude_ua": math.Round(ampMA * 1000), "offset_ua": math.Round(offMA * 1000)}, nil
+	}
+	if path != "3v3" && path != "5v" && path != "12v" {
+		return nil, fmt.Errorf("--path must be 3v3, 5v or 12v with --amplitude-v")
+	}
+	if !f.Changed("amplitude-v") || !f.Changed("offset-v") {
+		return nil, fmt.Errorf("--amplitude-v and --offset-v go together with --path")
+	}
+	if !(ampV > 0) {
+		return nil, fmt.Errorf("--amplitude-v must be above 0")
+	}
+	return map[string]any{"path": path, "amplitude_v": ampV, "offset_v": offV}, nil
 }
 
 // ── capture / stream ─────────────────────────────────────────────────────────
