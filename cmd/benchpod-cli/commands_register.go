@@ -204,8 +204,12 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 		return ctx.Err()
 	}
 	fmt.Fprint(os.Stderr, describeNotConnected(device.Name, host, opts.wait, status, pollErr))
-	return fmt.Errorf("pod did not connect within %s", opts.wait)
+	return fmt.Errorf("%w within %s", errRegisteredNotConnected, opts.wait)
 }
+
+// errRegisteredNotConnected: the registration stands and the pod keeps retrying on its own, it
+// only did not reach the server in time (no cable yet, say). Setup carries on after it.
+var errRegisteredNotConnected = errors.New("pod did not connect")
 
 // cloudStatus is the part of the firmware's `cloud_status` reply that register reads.
 // LastError is nil on firmware that predates the field.

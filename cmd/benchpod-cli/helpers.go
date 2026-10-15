@@ -46,8 +46,15 @@ func (g *globalFlags) rawConnection() (string, error) {
 		}
 		return "", fmt.Errorf("load config: %w", err)
 	}
-	return strings.TrimSpace(cfg.Connection), nil
+	savedConnectionUsed = strings.TrimSpace(cfg.Connection)
+	return savedConnectionUsed, nil
 }
+
+// savedConnectionUsed is the saved default this run fell back to ("" = none, or --connection /
+// BENCHPOD_CONNECTION named the pod). An unreachable pod then gets a hint that the address came
+// from the saved default: after a pod is swapped or moved it is a stale address, and the bare
+// dial timeout does not say where it came from.
+var savedConnectionUsed string
 
 // resolveConnection classifies the effective connection (flag or stored default)
 // into a ConnSpec for a command that only works over the network or USB; errors when
