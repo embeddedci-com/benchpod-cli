@@ -67,9 +67,9 @@ func TestGenerateCalibratedNeedsFirmware391(t *testing.T) {
 func TestGenerateCalibratedFlagErrors(t *testing.T) {
 	t.Setenv("BENCHPOD_CONNECTION", "")
 	for _, args := range [][]string{
-		{"--path", "3v3", "--amplitude-v", "1"},                                       // no offset
-		{"--path", "ext", "--amplitude-v", "1", "--offset-v", "1"},                    // bad path
-		{"--amplitude-v", "1", "--offset-v", "1"},                                     // no path
+		{"--path", "3v3", "--amplitude-v", "1"},                                        // no offset
+		{"--path", "ext", "--amplitude-v", "1", "--offset-v", "1"},                     // bad path
+		{"--amplitude-v", "1", "--offset-v", "1"},                                      // no path
 		{"--path", "3v3", "--amplitude-v", "1", "--offset-v", "1", "--amplitude", "5"}, // mixed with levels
 		{"--path", "3v3", "--amplitude-v", "1", "--offset-v", "1", "--amplitude-ma", "4", "--offset-ma", "12"},
 		{"--amplitude-ma", "0", "--offset-ma", "12"},
