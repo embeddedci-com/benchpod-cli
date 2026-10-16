@@ -3,6 +3,7 @@ package tcpclient
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -102,6 +103,12 @@ func (s *Session) Broken() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.broken != nil
+}
+
+// TLS reports whether the session's connection is a TLS one.
+func (s *Session) TLS() bool {
+	_, ok := s.conn.(*tls.Conn)
+	return ok
 }
 
 // Close closes the connection.
