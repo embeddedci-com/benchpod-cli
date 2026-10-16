@@ -196,6 +196,10 @@ func newShowNetworkCmd(g *globalFlags) *cobra.Command {
 
 // ── clear-wifi ───────────────────────────────────────────────────────────────
 
+// clearWifiTimeout covers the C3 NVS erase that wifi-clear runs before it answers. 10 s was too
+// short: the CLI gave up on pods that were still erasing (2026-10-15).
+const clearWifiTimeout = 60 * time.Second
+
 func newClearWifiCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "clear-wifi",
@@ -206,7 +210,9 @@ func newClearWifiCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(10*time.Second))
+			// The pod answers once it has also erased the ESP32-C3's NVS over the C3's ROM
+			// loader: about 3 s, and up to half a minute when the C3 is slow to answer.
+			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(clearWifiTimeout))
 			if err != nil {
 				return err
 			}
