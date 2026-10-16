@@ -186,13 +186,17 @@ func (c *Client) handshake(ctx context.Context, raw net.Conn, addr string) (net.
 // LastDialTLS reports whether the Client's most recent connection used TLS.
 func (c *Client) LastDialTLS() bool { return c.lastTLS }
 
+var sessionCache = tls.NewLRUClientSessionCache(32)
+
 // tlsConfig is the client configuration for addr (host:8443). pin: check (and on first use
 // record) the pin; false accepts any certificate (PeerCertificate, for showing and trusting).
 func tlsConfig(addr string, pin bool) (*tls.Config, error) {
 	host, _, _ := net.SplitHostPort(addr)
-	// No session cache: the pod does not resume sessions, and a resumed one would skip the
-	// certificate the pin checks.
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	// Resume sessions (the pod issues TLS 1.2 tickets): a full handshake costs the pod ~460 ms of
+	// ECDHE + ECDSA, a resumed one ~20 ms, and every command opens a connection. A resumed
+	// session proves the same server as the full handshake whose certificate was pinned;
+	// VerifyConnection still runs on it with that certificate.
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ClientSessionCache: sessionCache}
 	if net.ParseIP(host) == nil {
 		cfg.ServerName = host
 	}

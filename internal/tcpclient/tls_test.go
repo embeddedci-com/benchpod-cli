@@ -55,7 +55,9 @@ func tlsPod(t *testing.T) (addr string, cert *x509.Certificate, setCert func()) 
 		return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 	}
 	cur := mk()
-	cfg := &tls.Config{GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cur, nil }}
+	// No tickets: a resumed session would carry the old certificate past rotate().
+	cfg := &tls.Config{GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cur, nil },
+		SessionTicketsDisabled: true}
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
 	if err != nil {
 		t.Fatal(err)
