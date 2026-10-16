@@ -3,6 +3,7 @@ package tcpclient
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -38,7 +39,7 @@ func (c *Client) Open(ctx context.Context) (*Session, error) {
 	if budget <= 0 {
 		budget = DefaultDialTimeout
 	}
-	conn, err := dialWithRetry(ctx, "tcp", addr, budget, dialAttemptTimeout, dialRetryBackoff)
+	conn, err := c.dial(ctx, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +103,12 @@ func (s *Session) Broken() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.broken != nil
+}
+
+// TLS reports whether the session's connection is a TLS one.
+func (s *Session) TLS() bool {
+	_, ok := s.conn.(*tls.Conn)
+	return ok
 }
 
 // Close closes the connection.

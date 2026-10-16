@@ -1,7 +1,7 @@
 // Package tcpclient is a thin client for the bench pod firmware's TCP/JSON API.
 //
 // The firmware speaks newline-delimited JSON over a TCP socket (default port
-// 8080), one client at a time. Each request is a flat JSON object
+// 8080, or 8443 with TLS: tls.go), one client at a time. Each request is a flat JSON object
 // ({"cmd":"<command>", ...top-level params...}) and each response line is a JSON
 // object of the form {"status":"ok","data":<value>} or
 // {"status":"error","message":"..."}. Commands that return large arrays
@@ -50,6 +50,9 @@ const (
 type Client struct {
 	Addr        string        // host:port; callers should port-normalise first
 	DialTimeout time.Duration // total connect budget across retries; defaults to DefaultDialTimeout when zero
+	TLS         TLSMode       // TLSDefault: DefaultTLSMode (tls.go)
+
+	lastTLS bool // the last connection used TLS
 }
 
 // reply is one decoded response line from the firmware.
@@ -169,7 +172,7 @@ func (c *Client) dialAndSend(ctx context.Context, req map[string]any) (net.Conn,
 	if budget <= 0 {
 		budget = DefaultDialTimeout
 	}
-	conn, err := dialWithRetry(ctx, "tcp", addr, budget, dialAttemptTimeout, dialRetryBackoff)
+	conn, err := c.dial(ctx, budget)
 	if err != nil {
 		return nil, nil, err
 	}

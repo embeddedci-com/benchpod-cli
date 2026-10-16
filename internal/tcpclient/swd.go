@@ -39,7 +39,7 @@ func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int,
 	if budget <= 0 {
 		budget = DefaultDialTimeout
 	}
-	conn, err := dialWithRetry(ctx, "tcp", addr, budget, dialAttemptTimeout, dialRetryBackoff)
+	conn, err := c.dial(ctx, budget)
 	if err != nil {
 		return nil, err
 	}

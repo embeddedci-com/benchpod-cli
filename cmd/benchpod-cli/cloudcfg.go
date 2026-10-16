@@ -597,9 +597,15 @@ func cloudCALAN(g *globalFlags, addr, action string, upload []byte, warn io.Writ
 
 // uploadCALAN stages the PEM as OTA target "ca", has the pod verify it, and commits it.
 func uploadCALAN(ctx context.Context, lan lanSession, data []byte) error {
+	return uploadOTALAN(ctx, lan, data, "ca")
+}
+
+// uploadOTALAN stages a configuration upload as an OTA target ("ca", "tls"), has the pod verify
+// it, and commits it.
+func uploadOTALAN(ctx context.Context, lan lanSession, data []byte, target string) error {
 	sum := sha256.Sum256(data)
 	if err := lan.cmd(ctx, map[string]any{"cmd": "ota_begin", "size": len(data),
-		"sha256": hex.EncodeToString(sum[:]), "target": "ca"}, nil); err != nil {
+		"sha256": hex.EncodeToString(sum[:]), "target": target}, nil); err != nil {
 		return err
 	}
 	for off := 0; off < len(data); off += caLANChunk {

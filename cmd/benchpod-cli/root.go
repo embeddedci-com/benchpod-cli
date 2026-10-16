@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -18,6 +19,8 @@ type globalFlags struct {
 	configFile     string
 	outputFilename string
 	timeout        time.Duration
+	tls            string // --tls: auto | on | off (tcpclient.DefaultTLSMode)
+	tlsCA          string // --tls-ca: verify the pod's certificate against these roots
 
 	noFirmwareReport bool // --no-firmware-report: do not tell embeddedci.com about firmware updates (fwreport.go)
 
@@ -79,6 +82,14 @@ func newRootCmd() *cobra.Command {
 			g.configFile = viper.GetString("config-file")
 			g.outputFilename = viper.GetString("output-filename")
 			g.timeout = viper.GetDuration("timeout")
+			g.tls = viper.GetString("tls")
+			g.tlsCA = viper.GetString("tls-ca")
+			mode, err := tcpclient.ParseTLSMode(g.tls)
+			if err != nil {
+				return usageErrorf("%v", err)
+			}
+			tcpclient.DefaultTLSMode = mode
+			tcpclient.TLSCAFile = g.tlsCA
 			return nil
 		},
 	}
@@ -89,13 +100,16 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.configFile, "config-file", "", "path to config file")
 	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")
+	pf.StringVar(&g.tls, "tls", "auto",
+		"TLS to the pod's LAN API: auto (TLS on 8443 when the pod has it, pinned on first use), on (TLS only) or off (plaintext 8080)")
+	pf.StringVar(&g.tlsCA, "tls-ca", "", "PEM file of CA certificates: verify the pod's TLS certificate and name against them instead of pinning")
 	pf.BoolVar(&g.noFirmwareReport, "no-firmware-report", false,
 		"do not report firmware and blob updates to embeddedci.com (also BENCHPOD_NO_FIRMWARE_REPORT=1)")
 
 	viper.SetEnvPrefix("BENCHPOD")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
-	for _, name := range []string{"connection", "config-file", "output-filename", "timeout"} {
+	for _, name := range []string{"connection", "config-file", "output-filename", "timeout", "tls", "tls-ca"} {
 		_ = viper.BindPFlag(name, pf.Lookup(name))
 	}
 
@@ -112,7 +126,7 @@ func newRootCmd() *cobra.Command {
 		{"pod", "The pod:", []*cobra.Command{
 			newStatusCmd(g), newPingCmd(g), newLACmd(g), newIdentityCmd(g),
 			newFlashSelfCmd(g), newInstallBlobsCmd(g), newBootselCmd(g), newDfuCmd(g),
-			newLanPolicyCmd(g), newSigPolicyCmd(g), newUSBNetworkCmd(g),
+			newLanPolicyCmd(g), newSigPolicyCmd(g), newUSBNetworkCmd(g), newLanTLSCmd(g),
 		}},
 		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{
 			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),
