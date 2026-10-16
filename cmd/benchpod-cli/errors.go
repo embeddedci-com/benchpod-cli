@@ -150,7 +150,9 @@ func withRefusalHint(err error) error {
 // saved default (saved, "" when the run did not use it): after a pod is unplugged or another pod
 // takes its place, that default is stale and only `discover` / `set-connection` fix it.
 func withSavedConnectionHint(err error, saved string) error {
-	if saved == "" || !errors.Is(err, tcpclient.ErrUnreachable) {
+	// Only when it is the saved address that did not answer: a command that read the default and
+	// then went another way (flash-self over USB DFU, say) fails for its own reasons.
+	if saved == "" || !errors.Is(err, tcpclient.ErrUnreachable) || !strings.Contains(err.Error(), saved) {
 		return err
 	}
 	return fmt.Errorf("%w\n%s is the saved default connection. If that pod is unplugged or you use another one, "+
