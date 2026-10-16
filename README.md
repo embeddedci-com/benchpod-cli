@@ -449,6 +449,9 @@ LAN TLS of 192.168.1.220:8080 (connected over TLS)
   (`--sha256` makes it check the value first); `forget` drops the pin.
 - `--tls-ca ca.pem` verifies a certificate signed by your own CA (and the host
   name) instead of pinning.
+- A TLS handshake costs the pod about 0.5 s; `benchpod` keeps the pod's session
+  ticket for an hour in `tls_sessions.json` (mode 0600, next to the pins), so later
+  runs resume in about 40 ms.
 - The pod refuses `https-only off`, `regenerate` and `set-cert` over plaintext
   Ethernet or Wi-Fi: use TLS (the default), `--connection usb` or
   `--connection embeddedci:<name>`.

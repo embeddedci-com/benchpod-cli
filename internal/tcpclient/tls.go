@@ -186,8 +186,6 @@ func (c *Client) handshake(ctx context.Context, raw net.Conn, addr string) (net.
 // LastDialTLS reports whether the Client's most recent connection used TLS.
 func (c *Client) LastDialTLS() bool { return c.lastTLS }
 
-var sessionCache = tls.NewLRUClientSessionCache(32)
-
 // tlsConfig is the client configuration for addr (host:8443). pin: check (and on first use
 // record) the pin; false accepts any certificate (PeerCertificate, for showing and trusting).
 func tlsConfig(addr string, pin bool) (*tls.Config, error) {
@@ -394,6 +392,7 @@ func SetPinFingerprint(addr, sha, subject string) error {
 		return err
 	}
 	f.Pods[TLSAddr(addr)] = Pin{SHA256: strings.ToLower(sha), Subject: subject, Added: time.Now().UTC().Format(time.RFC3339)}
+	forgetSessions()
 	return savePins(f, path)
 }
 
@@ -410,6 +409,7 @@ func DeletePin(addr string) (bool, error) {
 		return false, nil
 	}
 	delete(f.Pods, key)
+	forgetSessions()
 	return true, savePins(f, path)
 }
 
