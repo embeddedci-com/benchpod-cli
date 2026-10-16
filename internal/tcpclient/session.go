@@ -38,7 +38,7 @@ func (c *Client) Open(ctx context.Context) (*Session, error) {
 	if budget <= 0 {
 		budget = DefaultDialTimeout
 	}
-	conn, err := dialWithRetry(ctx, "tcp", addr, budget, dialAttemptTimeout, dialRetryBackoff)
+	conn, err := c.dial(ctx, budget)
 	if err != nil {
 		return nil, err
 	}
