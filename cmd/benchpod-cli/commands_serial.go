@@ -43,7 +43,7 @@ func newSetWifiCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&ssid, "ssid", "", "WiFi SSID (required)")
 	cmd.Flags().StringVar(&password, "password", "", "WiFi password (insecure: visible in shell history); omit to be prompted")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the WiFi password from the first line of stdin")
-	cmd.Flags().BoolVar(&skipBlobs, "skip-blobs", false, "do not install a missing ESP32-C3 image first")
+	cmd.Flags().BoolVar(&skipBlobs, "skip-blobs", false, "do not install a missing ESP32-C3 image first (not needed through a Wi-Fi bridge)")
 	return cmd
 }
 
@@ -65,6 +65,13 @@ func runSetWifi(g *globalFlags, ssid, pw string, skipBlobs bool) (string, error)
 	}
 	defer cancel()
 	defer console.Close()
+
+	// A Wi-Fi bridge on the pod's Ethernet port carries Wi-Fi instead of the ESP32-C3: it keeps
+	// the credentials itself and joins in the background.
+	before, _ := console.WifiShow(ctx)
+	if before.ViaBridge() {
+		return setWifiThroughBridge(ctx, console, path, ssid, pw)
+	}
 
 	// Wi-Fi runs on the ESP32-C3, whose image the pod keeps in its W25Q: a pod without
 	// it (fresh board, no network) can only get it over this cable.
@@ -106,6 +113,45 @@ func runSetWifi(g *globalFlags, ssid, pw string, skipBlobs bool) (string, error)
 		ip = ""
 	}
 	return ip, nil
+}
+
+// bridgeJoinWait bounds how long set-wifi watches a Wi-Fi bridge join: it reports its state
+// every few seconds and a WPA2/WPA3 join takes a few seconds more.
+var bridgeJoinWait = 45 * time.Second
+
+// setWifiThroughBridge saves the credentials on the pod's Wi-Fi bridge (the pod seals the
+// password for it) and waits for the bridge to join or fail. The pod's address does not change:
+// the bridge carries its Ethernet traffic, so the IP is the one it already has.
+func setWifiThroughBridge(ctx context.Context, console *serialconsole.Console, path, ssid, pw string) (string, error) {
+	if _, err := console.WifiSet(ctx, ssid, pw); err != nil {
+		return "", fmt.Errorf("set-wifi: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Saved Wi-Fi credentials for SSID %q on the pod's Wi-Fi bridge via %s; waiting for it to join...\n", ssid, path)
+	deadline := time.Now().Add(bridgeJoinWait)
+	var st serialconsole.WifiStatus
+	for {
+		st, _ = console.WifiShow(ctx)
+		if st.BridgeJoined() {
+			ip := st.IP
+			if ip == "(none)" || ip == "0.0.0.0" {
+				ip = ""
+			}
+			fmt.Fprintf(os.Stderr, "The Wi-Fi bridge joined %q (rssi %s), pod ip=%s\n", ssid, valueOrDash(st.RSSI), valueOrDash(ip))
+			return ip, nil
+		}
+		if why := st.BridgeJoinFailure(); why != "" {
+			return "", fmt.Errorf("set-wifi: %s (the credentials are saved on the bridge; run set-wifi again to change them)", why)
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(3 * time.Second):
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Credentials saved; the Wi-Fi bridge has not joined yet (state %s; run `benchpod show-network`).\n", valueOrDash(st.State))
+	return "", nil
 }
 
 // ensureEspBlob installs the blobs from the pod's firmware release when its ESP32-C3 slot is
@@ -189,6 +235,58 @@ func newShowNetworkCmd(g *globalFlags) *cobra.Command {
 			fmt.Fprintf(out, "SSID:  %s\n", valueOrDash(st.SSID))
 			fmt.Fprintf(out, "State: %s\n", valueOrDash(st.State))
 			fmt.Fprintf(out, "RSSI:  %s\n", valueOrDash(st.RSSI))
+			if st.Via != "" {
+				fmt.Fprintf(out, "Via:   %s\n", st.Via)
+			}
+			if st.Problem != "" {
+				fmt.Fprintf(out, "Problem: %s\n", st.Problem)
+			}
+			return nil
+		},
+	}
+}
+
+// ── scan-wifi ────────────────────────────────────────────────────────────────
+
+// newScanWifiCmd lists the networks the pod's Wi-Fi bridge sees, to pick the SSID for set-wifi.
+func newScanWifiCmd(g *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "scan-wifi",
+		Short: "List the Wi-Fi networks the pod's Wi-Fi bridge sees (over the pod's USB console)",
+		Long: "List the Wi-Fi networks the pod's Wi-Fi bridge sees, strongest first, to pick the SSID\n" +
+			"for set-wifi. Scanning needs a Wi-Fi bridge on the pod's Ethernet port and firmware\n" +
+			"that supports one; the pod's own ESP32-C3 Wi-Fi does not scan.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			device, err := g.usbDevice("scan-wifi")
+			if err != nil {
+				return err
+			}
+			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(20*time.Second))
+			if err != nil {
+				return err
+			}
+			defer cancel()
+			defer console.Close()
+
+			nets, err := console.WifiScan(ctx)
+			if err != nil {
+				return fmt.Errorf("scan-wifi: %w", err)
+			}
+			out, closeOut, err := resolveOutput(g.outputFilename)
+			if err != nil {
+				return fmt.Errorf("scan-wifi: open output: %w", err)
+			}
+			defer closeOut()
+			fmt.Fprintf(out, "%-6s %-4s %-10s %s\n", "RSSI", "CH", "SECURITY", "SSID")
+			for _, n := range nets {
+				ssid := n.SSID
+				if ssid == "" {
+					ssid = "(hidden)"
+				}
+				fmt.Fprintf(out, "%-6d %-4d %-10s %s\n", n.RSSI, n.Channel, n.Auth, ssid)
+			}
+			fmt.Fprintf(os.Stderr, "%d networks\n", len(nets))
 			return nil
 		},
 	}

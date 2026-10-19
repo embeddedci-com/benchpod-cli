@@ -272,7 +272,7 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "take the blobs from this directory (holding blobs-manifest.json)")
 	cmd.Flags().StringVar(&release, "release", "", "take the blobs from this firmware release tag (default: the one the pod runs)")
-	cmd.Flags().StringVar(&only, "only", "", "comma-separated slots to install (gw0, gw1, esp)")
+	cmd.Flags().StringVar(&only, "only", "", "comma-separated slots to install (gw0, gw1, esp; bridge on pods with Wi-Fi bridge support)")
 	cmd.Flags().BoolVar(&force, "force", false, "install even blobs the pod already holds")
 	return cmd
 }

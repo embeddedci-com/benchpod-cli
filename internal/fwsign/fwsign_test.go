@@ -150,3 +150,13 @@ func TestCheckWithoutSig(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestTargetNames(t *testing.T) {
+	if n, ok := TargetByName("bridge"); !ok || n != TargetBridge || TargetName(TargetBridge) != "bridge" {
+		t.Fatalf("bridge: %d %v", n, ok)
+	}
+	// 4 and 5 (ca, tls) are not signed targets: no name, and "" maps to nothing.
+	if _, ok := TargetByName(""); ok || TargetName(4) != "" || TargetName(7) != "" {
+		t.Fatal("unsigned targets must not resolve")
+	}
+}
