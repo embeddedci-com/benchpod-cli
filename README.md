@@ -314,7 +314,7 @@ benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 # Network (always over the USB console):
 benchpod set-wifi
 benchpod show-network     # the pod's IP (wired lease included), SSID, state, RSSI
-benchpod scan-wifi        # networks a Wi-Fi bridge sees (pods with a Wi-Fi bridge)
+benchpod scan-wifi        # networks the pod's Wi-Fi sees (firmware 3.9.4+)
 benchpod clear-wifi
 
 # One USB cable (firmware 3.9.0+, no Wi-Fi configured):
@@ -1149,9 +1149,15 @@ what the pod sees wrong with it. No flags.
 
 ### `benchpod scan-wifi`
 
-List the Wi-Fi networks the pod's Wi-Fi bridge sees, strongest first: RSSI, channel,
-security and SSID, to pick one for `set-wifi` (USB). Needs a Wi-Fi bridge on the pod's
-Ethernet port and firmware that supports one; the ESP32-C3 Wi-Fi does not scan. No flags.
+List the Wi-Fi networks the pod sees, strongest first: RSSI, channel, security and SSID,
+to pick one for `set-wifi` (USB). The pod scans with its built-in Wi-Fi (firmware 3.9.4 or
+later), or with a Wi-Fi bridge on its Ethernet port when one is plugged in. A scan takes a few
+seconds; a pod that is joined to a network stays joined, and a pod that is joining finishes
+that first (up to 30 seconds). No flags.
+
+On older firmware the pod cannot scan, but it can still join a network: the command says so,
+suggests `benchpod flash-self` and `benchpod set-wifi --ssid <network name>`, and exits 0.
+It fails only on a pod with no Wi-Fi at all.
 
 ### `benchpod clear-wifi`
 

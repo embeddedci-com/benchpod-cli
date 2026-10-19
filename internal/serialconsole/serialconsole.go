@@ -472,6 +472,14 @@ const replyGrace = 500 * time.Millisecond
 // when complete is non-nil, a prompt only ends the read once complete(acc)
 // reports the whole reply is there, or replyGrace after the first prompt.
 func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret string, complete func(string) bool) (string, error) {
+	return c.sendCommandWait(ctx, line, display, secret, complete, replyGrace)
+}
+
+// sendCommandWait is sendCommandUntil with the grace after an early prompt as a parameter. A
+// grace of 0 waits for complete(acc) (or ctx) however many prompts come first: for a command
+// whose result follows its prompt (the built-in Wi-Fi's wifi-scan prints the networks when the
+// scan ends, a few seconds after the prompt).
+func (c *Console) sendCommandWait(ctx context.Context, line, display, secret string, complete func(string) bool, grace time.Duration) (string, error) {
 	c.logln("> %s", display)
 	// Drop what is still unread (a prompt or the tail of an earlier reply), so it cannot
 	// end this command's read before the reply has arrived.
@@ -529,8 +537,8 @@ func (c *Console) sendCommandUntil(ctx context.Context, line, display, secret st
 					c.logln("< got prompt after %q (%d bytes)", display, len(acc))
 					return string(acc), nil
 				}
-				if graceEnd.IsZero() {
-					graceEnd = time.Now().Add(replyGrace)
+				if graceEnd.IsZero() && grace > 0 {
+					graceEnd = time.Now().Add(grace)
 				}
 			}
 		}

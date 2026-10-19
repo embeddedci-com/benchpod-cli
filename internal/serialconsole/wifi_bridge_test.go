@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // wifi-show through a Wi-Fi bridge (firmware with bridge support): the state is the bridge's,
@@ -70,9 +71,35 @@ func TestWifiScan(t *testing.T) {
 	}
 }
 
+// The built-in Wi-Fi (firmware 3.9.4+) prints the list after the prompt, when the scan ends:
+// the read must wait past that first prompt (and the 500 ms reply grace) for "scan done".
+func TestWifiScanListAfterPrompt(t *testing.T) {
+	var fc *fakeConsole
+	fc = &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
+		out.WriteString("wifi-scan\r\n  Wi-Fi scan running (a few seconds); the networks follow\r\n> ")
+		time.AfterFunc(1200*time.Millisecond, func() {
+			fc.mu.Lock()
+			defer fc.mu.Unlock()
+			fc.toRead.WriteString("[wifi] scan: 2 networks (3 access points)\r\n\r\n")
+			fc.toRead.WriteString("scan -50 1 wpa2 Lab \r\nscan -80 6 open guest\r\nscan done 2\r\n> ")
+		})
+	}}
+	nets, err := newConsole(fc).WifiScan(testContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nets) != 2 || nets[0].SSID != "Lab " || nets[1] != (WifiNetwork{SSID: "guest", RSSI: -80, Channel: 6, Auth: "open"}) {
+		t.Fatalf("got %+v", nets)
+	}
+}
+
 func TestWifiScanErrors(t *testing.T) {
-	if _, err := parseWifiScan("wifi-scan\r\nwifi-scan error no Wi-Fi bridge on the Ethernet port\r\n> "); err == nil ||
-		!strings.Contains(err.Error(), "no Wi-Fi bridge") {
+	// A development build from before 3.9.4 scans only through a bridge: no scan for this pod.
+	if _, err := parseWifiScan("wifi-scan\r\nwifi-scan error no Wi-Fi bridge on the Ethernet port (scanning needs one)\r\n> "); !errors.Is(err, ErrNoWifiScan) {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := parseWifiScan("wifi-scan\r\nwifi-scan error Wi-Fi is still connecting; try the scan again in a moment\r\n> "); err == nil ||
+		errors.Is(err, ErrNoWifiScan) || !strings.Contains(err.Error(), "still connecting") {
 		t.Fatalf("err=%v", err)
 	}
 	if _, err := parseWifiScan("wifi-scan\r\n  unknown command 'wifi-scan' (try 'help')\r\n> "); !errors.Is(err, ErrNoWifiScan) {

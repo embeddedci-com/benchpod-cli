@@ -228,14 +228,18 @@ type WifiNetwork struct {
 	Auth    string // "open", "wpa2", "wpa2/wpa3", ...
 }
 
-// ErrNoWifiScan is what WifiScan returns for firmware without wifi-scan: scanning needs a Wi-Fi
-// bridge and firmware that supports one.
-var ErrNoWifiScan = errors.New("this pod cannot scan for Wi-Fi networks (scanning needs a Wi-Fi bridge and firmware that supports one)")
+// ErrNoWifiScan is what WifiScan returns for firmware that cannot scan with the Wi-Fi this pod
+// has: firmware before 3.9.4 (no wifi-scan, or a development build that scans only through a
+// Wi-Fi bridge). Whether the pod has Wi-Fi at all is a separate question (WifiShow).
+var ErrNoWifiScan = errors.New("this pod's firmware cannot scan for Wi-Fi networks (scanning needs firmware 3.9.4 or later)")
 
-// WifiScan lists the networks the pod's Wi-Fi bridge sees, strongest first (firmware: wifi-scan,
-// "scan <rssi> <channel> <auth> <ssid>" lines, then "scan done <n>").
+// WifiScan lists the networks the pod's Wi-Fi sees, strongest first: its built-in Wi-Fi
+// (firmware 3.9.4+), or a Wi-Fi bridge on its Ethernet port (development builds). Firmware
+// wifi-scan answers "scan <rssi> <channel> <auth> <ssid>" lines, then "scan done <n>"; the
+// built-in Wi-Fi prints them a few seconds after the prompt, when the scan ends, so this waits
+// for "scan done" (or an error) rather than the first prompt.
 func (c *Console) WifiScan(ctx context.Context) ([]WifiNetwork, error) {
-	out, err := c.sendCommandUntil(ctx, "wifi-scan", "wifi-scan", "", wifiScanComplete)
+	out, err := c.sendCommandWait(ctx, "wifi-scan", "wifi-scan", "", wifiScanComplete, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -243,9 +247,11 @@ func (c *Console) WifiScan(ctx context.Context) ([]WifiNetwork, error) {
 }
 
 func wifiScanComplete(acc string) bool {
-	i := strings.LastIndex(acc, "scan done")
-	if j := strings.LastIndex(acc, "wifi-scan error"); j > i {
-		i = j
+	i := -1
+	for _, mark := range []string{"scan done", "wifi-scan error", "unknown command 'wifi-scan'"} {
+		if j := strings.LastIndex(acc, mark); j > i {
+			i = j
+		}
 	}
 	return i >= 0 && promptSeen(acc[i:], defaultPrompt)
 }
@@ -254,10 +260,13 @@ func parseWifiScan(out string) ([]WifiNetwork, error) {
 	nets := []WifiNetwork{}
 	done := false
 	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", "\n"), "\n") {
-		t := strings.TrimSpace(ln)
+		t := strings.TrimLeft(ln, " \t") // not the right: an SSID may end in a space
 		switch {
+		case strings.HasPrefix(t, "wifi-scan error ") && strings.Contains(t, "no Wi-Fi bridge"):
+			// A development build from before 3.9.4: it scans only through a bridge.
+			return nil, ErrNoWifiScan
 		case strings.HasPrefix(t, "wifi-scan error "):
-			return nil, fmt.Errorf("wifi-scan: %s", strings.TrimPrefix(t, "wifi-scan error "))
+			return nil, fmt.Errorf("wifi-scan: %s", strings.TrimSpace(strings.TrimPrefix(t, "wifi-scan error ")))
 		case strings.Contains(t, "unknown command 'wifi-scan'"):
 			return nil, ErrNoWifiScan
 		case strings.HasPrefix(t, "scan done"):

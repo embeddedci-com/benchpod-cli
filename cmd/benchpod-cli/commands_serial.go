@@ -248,21 +248,23 @@ func newShowNetworkCmd(g *globalFlags) *cobra.Command {
 
 // ── scan-wifi ────────────────────────────────────────────────────────────────
 
-// newScanWifiCmd lists the networks the pod's Wi-Fi bridge sees, to pick the SSID for set-wifi.
+// newScanWifiCmd lists the networks the pod's Wi-Fi sees, to pick the SSID for set-wifi.
 func newScanWifiCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "scan-wifi",
-		Short: "List the Wi-Fi networks the pod's Wi-Fi bridge sees (over the pod's USB console)",
-		Long: "List the Wi-Fi networks the pod's Wi-Fi bridge sees, strongest first, to pick the SSID\n" +
-			"for set-wifi. Scanning needs a Wi-Fi bridge on the pod's Ethernet port and firmware\n" +
-			"that supports one; the pod's own ESP32-C3 Wi-Fi does not scan.",
+		Short: "List the Wi-Fi networks the pod sees (over the pod's USB console)",
+		Long: "List the Wi-Fi networks the pod sees, strongest first, to pick the SSID for set-wifi.\n" +
+			"The pod scans with its built-in Wi-Fi (firmware 3.9.4 or later), or with a Wi-Fi bridge on\n" +
+			"its Ethernet port when one is plugged in. A scan takes a few seconds; a joined pod stays\n" +
+			"joined. On older firmware the command says so and how to join a network anyway (exit 0).",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			device, err := g.usbDevice("scan-wifi")
 			if err != nil {
 				return err
 			}
-			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(20*time.Second))
+			// 45 s: a pod that is joining waits for the join to finish (up to 30 s) before it scans.
+			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(45*time.Second))
 			if err != nil {
 				return err
 			}
@@ -270,6 +272,9 @@ func newScanWifiCmd(g *globalFlags) *cobra.Command {
 			defer console.Close()
 
 			nets, err := console.WifiScan(ctx)
+			if errors.Is(err, serialconsole.ErrNoWifiScan) {
+				return scanWifiUnsupported(ctx, console)
+			}
 			if err != nil {
 				return fmt.Errorf("scan-wifi: %w", err)
 			}
@@ -290,6 +295,19 @@ func newScanWifiCmd(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// scanWifiUnsupported answers scan-wifi on firmware that cannot scan: not an error when the pod
+// has built-in Wi-Fi (it can still join a network), an error when it has no Wi-Fi at all.
+func scanWifiUnsupported(ctx context.Context, console *serialconsole.Console) error {
+	st, err := console.WifiShow(ctx)
+	if err != nil || st.State == "" {
+		return errors.New("scan-wifi: this pod has no Wi-Fi")
+	}
+	fmt.Println("This pod has built-in Wi-Fi, but its firmware cannot scan for networks:" +
+		" scanning needs firmware 3.9.4 or later (update with `benchpod flash-self`).")
+	fmt.Println("To join a network now: benchpod set-wifi --ssid <network name>")
+	return nil
 }
 
 // ── clear-wifi ───────────────────────────────────────────────────────────────
