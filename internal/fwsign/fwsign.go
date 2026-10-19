@@ -64,14 +64,15 @@ const (
 	TargetGW0      uint8 = 1
 	TargetGW1      uint8 = 2
 	TargetESP      uint8 = 3
+	TargetBridge   uint8 = 6 // the Wi-Fi bridge's firmware (4 and 5, ca and tls, are not signed)
 )
 
-var targetNames = []string{"firmware", "gw0", "gw1", "esp"}
+var targetNames = []string{"firmware", "gw0", "gw1", "esp", "", "", "bridge"}
 
-// TargetByName maps "firmware", "gw0", "gw1", "esp" to its number.
+// TargetByName maps "firmware", "gw0", "gw1", "esp", "bridge" to its number.
 func TargetByName(name string) (uint8, bool) {
 	for i, n := range targetNames {
-		if n == name {
+		if n != "" && n == name {
 			return uint8(i), true
 		}
 	}

@@ -196,7 +196,7 @@ Which command works over which connection:
 | Network address     | Every pod command except the USB-only ones below. |
 | USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD), `install-blobs`, `cloud ca` and `cloud proxy`; without it the pod's Ethernet or Wi-Fi address, and the console where it still has the command. Firmware before 3.9.0: the console, as before. `lan-policy`, `sig-policy` and `identity` always use the console (physical presence). |
 | `embeddedci:<name>` | `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
-| USB only            | `set-wifi`, `show-network`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU. These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
+| USB only            | `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU. These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
 A command that cannot use the connection it is given says so and names what to use
 instead.
@@ -314,6 +314,7 @@ benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 # Network (always over the USB console):
 benchpod set-wifi
 benchpod show-network     # the pod's IP (wired lease included), SSID, state, RSSI
+benchpod scan-wifi        # networks a Wi-Fi bridge sees (pods with a Wi-Fi bridge)
 benchpod clear-wifi
 
 # One USB cable (firmware 3.9.0+, no Wi-Fi configured):
@@ -1127,17 +1128,30 @@ Save Wi-Fi credentials and join (USB). With firmware 3.9.0+ this turns the pod's
 pod lacks it; if the pod's image slots cannot be read, it stops and says so
 (`--skip-blobs` sets Wi-Fi without the check).
 
+With a Wi-Fi bridge on the pod's Ethernet port (firmware with bridge support), the
+credentials go to the bridge instead (the pod sends the password sealed), no ESP32-C3
+image is needed, and set-wifi waits up to 45 s for the bridge to join: it reports a
+wrong password or a network the bridge cannot see. The pod keeps its Ethernet address.
+
 | Flag               | Default    | Purpose                                                   |
 |--------------------|------------|-----------------------------------------------------------|
 | `--ssid`           | (required) | Wi-Fi SSID.                                               |
 | `--password`       | (prompt)   | Wi-Fi password (visible in shell history; prefer the prompt or `--password-stdin`). |
 | `--password-stdin` | off        | Read the password from the first line of stdin.           |
-| `--skip-blobs`     | off        | Do not install a missing ESP32-C3 image first.            |
+| `--skip-blobs`     | off        | Do not install a missing ESP32-C3 image first (not needed through a Wi-Fi bridge). |
 
 ### `benchpod show-network`
 
 The pod's IP (the wired lease first) plus the stored Wi-Fi SSID, state and RSSI
-(USB). No flags.
+(USB). With a Wi-Fi bridge, `Via:` names it (MAC, firmware, paired or not), State is
+the bridge's (`joining`, `connected`, `auth-failed`, `no-ap`, ...) and `Problem:` says
+what the pod sees wrong with it. No flags.
+
+### `benchpod scan-wifi`
+
+List the Wi-Fi networks the pod's Wi-Fi bridge sees, strongest first: RSSI, channel,
+security and SSID, to pick one for `set-wifi` (USB). Needs a Wi-Fi bridge on the pod's
+Ethernet port and firmware that supports one; the ESP32-C3 Wi-Fi does not scan. No flags.
 
 ### `benchpod clear-wifi`
 

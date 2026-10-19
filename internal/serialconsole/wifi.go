@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -53,12 +54,29 @@ func (c *Console) WifiSet(ctx context.Context, ssid, password string) (WifiSetRe
 	if err != nil {
 		return res, err // already masked by sendCommandRedacted (secret = password)
 	}
+	// "  wifi-set: <why>": nothing was saved (too long, config save failed, or the Wi-Fi bridge
+	// refused or did not answer).
+	if !res.Persisted {
+		if why := wifiSetError(out); why != "" {
+			return res, fmt.Errorf("wifi-set: %s (nothing was saved)", why)
+		}
+	}
 	if !res.Joined && (strings.Contains(out, "[wifi] connect failed") ||
 		strings.Contains(out, "[wifi] join failed") ||
 		strings.Contains(out, "ESP32 still unreachable")) {
 		return res, errors.New("wifi join failed (credentials were saved; check the password/SSID and signal)")
 	}
 	return res, nil
+}
+
+// wifiSetError is the reason in a "wifi-set: <why>" reply line, "" when there is none.
+func wifiSetError(out string) string {
+	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", "\n"), "\n") {
+		if t := strings.TrimSpace(ln); strings.HasPrefix(t, "wifi-set: ") {
+			return strings.TrimPrefix(t, "wifi-set: ")
+		}
+	}
+	return ""
 }
 
 // BringupLines returns the WiFi / TCP / ESP32 bring-up log lines from captured
@@ -82,7 +100,33 @@ type WifiStatus struct {
 	State string
 	IP    string
 	RSSI  string
-	Raw   string
+	// Via is set when a Wi-Fi bridge on the pod's Ethernet port carries Wi-Fi (firmware with
+	// bridge support): "wifi-bridge <mac> fw <ver> hw <rev>, paired". State is then the bridge's
+	// ("unconfigured", "wait-pod", "joining", "connected", "auth-failed", "no-ap") and IP the
+	// pod's Ethernet lease, which it has whether or not the bridge has joined.
+	Via     string
+	Problem string // what the pod sees wrong with the bridge, "" if nothing
+	Raw     string
+}
+
+// ViaBridge reports whether a Wi-Fi bridge carries the pod's Wi-Fi.
+func (s WifiStatus) ViaBridge() bool { return strings.HasPrefix(s.Via, "wifi-bridge") }
+
+// BridgeJoined reports whether the bridge has joined its network.
+func (s WifiStatus) BridgeJoined() bool { return s.ViaBridge() && s.State == "connected" }
+
+// BridgeJoinFailure is why the bridge cannot join, "" while it is joining or has joined.
+func (s WifiStatus) BridgeJoinFailure() string {
+	if !s.ViaBridge() {
+		return ""
+	}
+	switch s.State {
+	case "auth-failed":
+		return "the Wi-Fi bridge could not join: wrong password (or the network refused it)"
+	case "no-ap":
+		return "the Wi-Fi bridge could not join: it does not see that network"
+	}
+	return ""
 }
 
 // WifiShow reports stored SSID, WiFi state, IP, and RSSI. Missing fields are
@@ -105,11 +149,13 @@ func (c *Console) WifiShow(ctx context.Context) (WifiStatus, error) {
 // parseWifiShow extracts the wifi-show fields from a captured reply.
 func parseWifiShow(out string) WifiStatus {
 	return WifiStatus{
-		SSID:  wifiField(out, "ssid"),
-		State: wifiField(out, "state"),
-		IP:    wifiField(out, "ip"),
-		RSSI:  wifiField(out, "rssi"),
-		Raw:   out,
+		SSID:    wifiField(out, "ssid"),
+		State:   wifiField(out, "state"),
+		IP:      wifiField(out, "ip"),
+		RSSI:    wifiField(out, "rssi"),
+		Via:     wifiField(out, "via"),
+		Problem: wifiField(out, "problem"),
+		Raw:     out,
 	}
 }
 
@@ -172,4 +218,70 @@ func lastFieldValue(s, label string) (string, bool) {
 func (c *Console) WifiClear(ctx context.Context) error {
 	_, err := c.sendCommand(ctx, "wifi-clear")
 	return err
+}
+
+// WifiNetwork is one network from WifiScan.
+type WifiNetwork struct {
+	SSID    string
+	RSSI    int // dBm
+	Channel int
+	Auth    string // "open", "wpa2", "wpa2/wpa3", ...
+}
+
+// ErrNoWifiScan is what WifiScan returns for firmware without wifi-scan: scanning needs a Wi-Fi
+// bridge and firmware that supports one.
+var ErrNoWifiScan = errors.New("this pod cannot scan for Wi-Fi networks (scanning needs a Wi-Fi bridge and firmware that supports one)")
+
+// WifiScan lists the networks the pod's Wi-Fi bridge sees, strongest first (firmware: wifi-scan,
+// "scan <rssi> <channel> <auth> <ssid>" lines, then "scan done <n>").
+func (c *Console) WifiScan(ctx context.Context) ([]WifiNetwork, error) {
+	out, err := c.sendCommandUntil(ctx, "wifi-scan", "wifi-scan", "", wifiScanComplete)
+	if err != nil {
+		return nil, err
+	}
+	return parseWifiScan(out)
+}
+
+func wifiScanComplete(acc string) bool {
+	i := strings.LastIndex(acc, "scan done")
+	if j := strings.LastIndex(acc, "wifi-scan error"); j > i {
+		i = j
+	}
+	return i >= 0 && promptSeen(acc[i:], defaultPrompt)
+}
+
+func parseWifiScan(out string) ([]WifiNetwork, error) {
+	nets := []WifiNetwork{}
+	done := false
+	for _, ln := range strings.Split(strings.ReplaceAll(out, "\r", "\n"), "\n") {
+		t := strings.TrimSpace(ln)
+		switch {
+		case strings.HasPrefix(t, "wifi-scan error "):
+			return nil, fmt.Errorf("wifi-scan: %s", strings.TrimPrefix(t, "wifi-scan error "))
+		case strings.Contains(t, "unknown command 'wifi-scan'"):
+			return nil, ErrNoWifiScan
+		case strings.HasPrefix(t, "scan done"):
+			done = true
+		case strings.HasPrefix(t, "scan "):
+			// The SSID is last and may hold spaces.
+			f := strings.SplitN(strings.TrimPrefix(t, "scan "), " ", 4)
+			if len(f) < 3 {
+				continue
+			}
+			rssi, err1 := strconv.Atoi(f[0])
+			ch, err2 := strconv.Atoi(f[1])
+			if err1 != nil || err2 != nil {
+				continue
+			}
+			n := WifiNetwork{RSSI: rssi, Channel: ch, Auth: f[2]}
+			if len(f) == 4 {
+				n.SSID = f[3]
+			}
+			nets = append(nets, n)
+		}
+	}
+	if !done {
+		return nil, fmt.Errorf("wifi-scan: the pod did not finish the list (got %q)", tail([]byte(out), 200))
+	}
+	return nets, nil
 }

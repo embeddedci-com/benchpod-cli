@@ -50,7 +50,7 @@ const uploadChunkAttempts = 5
 
 // BlobSlot is one line of the firmware's `blobs` command.
 type BlobSlot struct {
-	Name    string // "gw0", "gw1", "esp"
+	Name    string // "gw0", "gw1", "esp", "bridge" (the Wi-Fi bridge's firmware, on pods that support one)
 	State   string // "ok", "outdated", "missing", "unknown" (against the blobs the firmware was built with)
 	Size    int
 	Version int
