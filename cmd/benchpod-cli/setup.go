@@ -220,11 +220,10 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 	p := pods[0]
 	fmt.Fprintf(out, "     Found %s.\n", describeSetupPod(p))
 	if latest := env.latestFirmware(); latest != "" && p.firmware != "" && versionLess(p.firmware, latest) {
-		// A nudge, not a step: flashing over USB DFU needs the pod replugged afterwards, so the
-		// user runs it when it suits them.
+		// A nudge, not a step: the update reboots the pod, so the user runs it when it suits them.
 		fmt.Fprintf(out, "     Firmware %s is out of date: %s is the latest. Update it with the pod on USB:\n"+
 			"       benchpod flash-self --enter-dfu\n"+
-			"     (unplug and replug USB-C when it finishes), or later from the web app's BenchPod page.\n",
+			"     or later from the web app's BenchPod page.\n",
 			strings.TrimPrefix(p.firmware, "v"), strings.TrimPrefix(latest, "v"))
 	}
 

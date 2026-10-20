@@ -187,22 +187,32 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			}
 			if f.noLeave {
 				fmt.Fprintln(os.Stderr, "flash-self: success — firmware written (device left in DFU mode)")
-			} else {
-				fmt.Fprintln(os.Stderr, "flash-self: success, the pod is rebooting into the new firmware.")
-				if !f.skipBlobs {
-					// 5. The gateware and ESP32-C3 images live in the pod's W25Q, not in the
-					//    firmware: install the ones that go with it over the same cable.
-					src := blobSourceForFirmware(arg, f.firmwareURL, f.firmwareVer)
-					if strings.TrimSpace(f.blobsDir) != "" {
-						src = blobSource{base: f.blobsDir}
-					}
-					after, installed, err := installBlobsAfterFlash(g, src)
-					g.reportFirmware(firmwareEvent(before, after, f.firmwareVer, installed))
-					return err
-				}
-				g.reportFirmware(firmwareEvent(before, podVersions{}, f.firmwareVer, nil))
-				fmt.Fprintln(os.Stderr, "  If `benchpod discover` does not find it within 30 s, unplug USB-C and plug it back in (without BOOT0).")
+				return nil
 			}
+			if f.enterDfu {
+				fmt.Fprintln(os.Stderr, "flash-self: success, the pod is rebooting into the new firmware.")
+			} else {
+				// Measured on v3 pods (STM32H563): when DFU was entered with the BOOT button, the ROM
+				// bootloader's leave never starts the new firmware (the app's reset handler is not
+				// entered) and the pod stays off USB until it is reset. A RESET press is enough. When
+				// the firmware itself entered DFU (`--enter-dfu`, `benchpod dfu`), the leave resets the
+				// chip and the pod comes back by itself.
+				fmt.Fprintln(os.Stderr, "flash-self: success, the firmware is written.")
+				fmt.Fprintln(os.Stderr, resetAfterButtonDfuHint)
+			}
+			if !f.skipBlobs {
+				// 5. The gateware and ESP32-C3 images live in the pod's W25Q, not in the
+				//    firmware: install the ones that go with it over the same cable.
+				src := blobSourceForFirmware(arg, f.firmwareURL, f.firmwareVer)
+				if strings.TrimSpace(f.blobsDir) != "" {
+					src = blobSource{base: f.blobsDir}
+				}
+				after, installed, err := installBlobsAfterFlash(g, src)
+				g.reportFirmware(firmwareEvent(before, after, f.firmwareVer, installed))
+				return err
+			}
+			g.reportFirmware(firmwareEvent(before, podVersions{}, f.firmwareVer, nil))
+			fmt.Fprintln(os.Stderr, "  If `benchpod discover` does not find it within 30 s, tap RESET on the pod (or unplug USB-C and plug it back in, without BOOT).")
 			return nil
 		},
 	}
@@ -526,6 +536,11 @@ var (
 	}
 )
 
+// resetAfterButtonDfuHint is shown after a flash through a DFU mode the user entered with the
+// pod's buttons: the ST ROM bootloader does not start the new firmware by itself then.
+const resetAfterButtonDfuHint = "  If you put the pod in DFU with its BOOT button, tap RESET on the pod now (no need to unplug it):\n" +
+	"  the ST bootloader does not start the new firmware by itself in that case."
+
 // installBlobsAfterFlash waits for the freshly flashed pod's USB console, then installs the
 // blobs that go with its firmware. A pod whose firmware still embeds its blobs (older releases)
 // has no slots to fill and is left alone. Anything else that keeps the blobs from being
@@ -544,7 +559,7 @@ func installBlobsAfterFlash(g *globalFlags, src blobSource) (after podVersions, 
 			break
 		}
 		if time.Now().After(deadline) {
-			return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but the pod's USB console did not come back, so its blobs are not installed: unplug USB-C and plug it back in (without BOOT0), then run `benchpod install-blobs` (%w)", err)
+			return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but the pod's USB console did not come back, so its blobs are not installed: tap RESET on the pod (or unplug USB-C and plug it back in, without BOOT), then run `benchpod install-blobs` (%w)", err)
 		}
 		time.Sleep(flashedConsoleRetry)
 	}

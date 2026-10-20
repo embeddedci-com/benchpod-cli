@@ -618,6 +618,10 @@ firmware** there are two paths, mirroring how the two pod MCUs boot:
   `--wait`, default 60s) and tells you how to get there:
   - **first flash / blank board:** hold **BOOT0 high at reset** (hardware only —
     a board with no firmware can't be driven over USB yet), then run the command.
+    When it has written the firmware, **tap RESET** on the pod: after a DFU entered
+    with the BOOT button, the ST bootloader does not start the new firmware by
+    itself (no need to unplug the cable). `flash-self` says so and waits for the
+    pod to come back before it installs the blobs.
   - **re-flash a running pod:** add `--enter-dfu` to reboot it into DFU for you
     (equivalent to `benchpod dfu` first):
     ```
@@ -650,7 +654,9 @@ The prebuilt firmware is fetched from the public
 releases (the firmware source repo is private); a published `.sha256` is
 verified when present. Under the hood `flash-self` runs
 `dfu-util -a 0 --dfuse-address 0x08000000:leave -D <firmware.bin>`; `:leave`
-starts the new firmware once the write verifies. The firmware side is the `dfu`
+starts the new firmware once the write verifies when the firmware entered DFU
+(`--enter-dfu`, `benchpod dfu`). After a DFU entered with the BOOT button, the pod
+needs a RESET press instead. The firmware side is the `dfu`
 console command, which jumps to the STM32 system-memory bootloader (the same
 flow the firmware `make flash-dfu` target uses).
 
@@ -773,7 +779,7 @@ Default connection set to network/TCP 192.168.1.221:8080 (saved to ~/.config/ben
 ```
 
 When the pod runs firmware older than the latest release, step 1 also prints the update
-command (`benchpod flash-self --enter-dfu`, then replug USB-C); setup does not flash on its own.
+command (`benchpod flash-self --enter-dfu`); setup does not flash on its own.
 
 
 | Flag               | Default | Purpose                                                                 |
