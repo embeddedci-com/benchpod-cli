@@ -536,17 +536,17 @@ var (
 	}
 )
 
+// resetAfterButtonDfuHint is shown after a flash through a DFU mode the user entered with the
+// pod's buttons: the ST ROM bootloader does not start the new firmware by itself then.
+const resetAfterButtonDfuHint = "  If you put the pod in DFU with its BOOT button, tap RESET on the pod now (no need to unplug it):\n" +
+	"  the ST bootloader does not start the new firmware by itself in that case."
+
 // installBlobsAfterFlash waits for the freshly flashed pod's USB console, then installs the
 // blobs that go with its firmware. A pod whose firmware still embeds its blobs (older releases)
 // has no slots to fill and is left alone. Anything else that keeps the blobs from being
 // installed is an error, so flash-self does not report success for a pod that is missing them.
 // installBlobsAfterFlash waits for the flashed pod, installs its blobs, and returns the pod's
 // versions as it came back and the blobs it installed (for the firmware report).
-// resetAfterButtonDfuHint is shown after a flash through a DFU mode the user entered with the
-// pod's buttons: the ST ROM bootloader does not start the new firmware by itself then.
-const resetAfterButtonDfuHint = "  If you put the pod in DFU with its BOOT button, tap RESET on the pod now (no need to unplug it):\n" +
-	"  the ST bootloader does not start the new firmware by itself in that case."
-
 func installBlobsAfterFlash(g *globalFlags, src blobSource) (after podVersions, installed []blobEntry, err error) {
 	fmt.Fprintln(os.Stderr, "flash-self: waiting for the pod's USB console to install its blobs (after an update to 3.9.0 "+
 		"Windows may install drivers for its new network adapter and give it a new COM port first)...")
