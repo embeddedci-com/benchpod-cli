@@ -935,6 +935,30 @@ A diagnostic sample pattern made by the pod's MCU, without the FPGA (network).
 | `--samples` | `256`   | Number of samples, 1-4096.                                               |
 | `--output`  | `json`  | Output format: `json`, `csv` or `ndjson`.                                |
 
+### `benchpod adc-range [show|normal|low|test]`
+
+Show the ADC input range, switch it, or self-test it (firmware 3.9.5 and later; the
+low range needs analog module v3r4 or later). Over the network and through
+embeddedci.com. No flags.
+
+| Range    | Full scale | Resolution        | Input impedance |
+|----------|------------|-------------------|-----------------|
+| `normal` | ±32.8 V    | about 1 mV/count  | about 1 MΩ      |
+| `low`    | ±5.46 V    | about 167 µV/count | 1.82 MΩ: use 1x leads, not 10x probes |
+
+The range applies to the `ext`, `cal1` and `current_in` inputs. It stays until it is
+changed, the analog path goes `off` or to `cal2`, or the pod restarts; captures taken
+meanwhile are scaled for it. On a board without the low range, `low` is refused.
+
+`test` drives the 5 V output into the `cal1` loopback at 1 V and 3.5 V and reads each
+point in both ranges. Disconnect anything on the 5 V output first. It prints each
+point and exits non-zero when the ranges disagree by more than 5 % + 30 mV.
+
+```bash
+benchpod adc-range low
+benchpod adc-range test
+```
+
 ### `benchpod la`
 
 Logic-analyzer pin control: the bank voltage, pull-ups and step pulses. Pins are
