@@ -112,3 +112,16 @@ func TestWifiScanErrors(t *testing.T) {
 		t.Fatalf("empty: %v %v", nets, err)
 	}
 }
+
+// Right after set-wifi the pod can still show the previous network as connected: that says
+// nothing about the network just set.
+func TestBridgeReportsOnlyTheNetworkSet(t *testing.T) {
+	st := parseWifiShow("wifi-show\r\n  ssid: Home\r\n  state: connected\r\n  ip: 192.168.1.50\r\n" +
+		"  rssi: -59 dBm\r\n  via: wifi-bridge 24:0a:c4:00:11:22 fw 0.1.0, paired\r\n> ")
+	if !st.BridgeJoined() || !st.BridgeReports("Home") {
+		t.Fatalf("ssid=%q state=%q", st.SSID, st.State)
+	}
+	if st.BridgeReports("Other") {
+		t.Fatal("a status for Home reported as one for Other")
+	}
+}
