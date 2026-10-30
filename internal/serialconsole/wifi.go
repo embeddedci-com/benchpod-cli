@@ -115,6 +115,12 @@ func (s WifiStatus) ViaBridge() bool { return strings.HasPrefix(s.Via, "wifi-bri
 // BridgeJoined reports whether the bridge has joined its network.
 func (s WifiStatus) BridgeJoined() bool { return s.ViaBridge() && s.State == "connected" }
 
+// BridgeReports says whether this status is about ssid: right after set-wifi the pod can still
+// show the previous network, and an older pod firmware keeps showing it until the next STATUS.
+func (s WifiStatus) BridgeReports(ssid string) bool {
+	return strings.TrimSpace(s.SSID) == strings.TrimSpace(ssid)
+}
+
 // BridgeJoinFailure is why the bridge cannot join, "" while it is joining or has joined.
 func (s WifiStatus) BridgeJoinFailure() string {
 	if !s.ViaBridge() {

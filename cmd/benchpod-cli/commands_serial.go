@@ -131,7 +131,8 @@ func setWifiThroughBridge(ctx context.Context, console *serialconsole.Console, p
 	var st serialconsole.WifiStatus
 	for {
 		st, _ = console.WifiShow(ctx)
-		if st.BridgeJoined() {
+		current := st.BridgeReports(ssid)
+		if current && st.BridgeJoined() {
 			ip := st.IP
 			if ip == "(none)" || ip == "0.0.0.0" {
 				ip = ""
@@ -139,7 +140,7 @@ func setWifiThroughBridge(ctx context.Context, console *serialconsole.Console, p
 			fmt.Fprintf(os.Stderr, "The Wi-Fi bridge joined %q (rssi %s), pod ip=%s\n", ssid, valueOrDash(st.RSSI), valueOrDash(ip))
 			return ip, nil
 		}
-		if why := st.BridgeJoinFailure(); why != "" {
+		if why := st.BridgeJoinFailure(); current && why != "" {
 			return "", fmt.Errorf("set-wifi: %s (the credentials are saved on the bridge; run set-wifi again to change them)", why)
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
