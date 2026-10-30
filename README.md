@@ -21,8 +21,11 @@ to every [GitHub release](https://github.com/embeddedci-com/benchpod-cli/release
 ### Homebrew (macOS / Linux)
 
 ```sh
+brew trust embeddedci-com/tap
 brew install --cask embeddedci-com/tap/benchpod
 ```
+
+Recent versions of Homebrew ask you to trust a tap before they load anything from it.
 
 This taps `embeddedci-com/homebrew-tap` and installs the `benchpod` binary;
 `brew upgrade --cask benchpod` later picks up new releases. The macOS binary is
