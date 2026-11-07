@@ -1306,6 +1306,72 @@ the `benchpod login` session; the policy commands do the same.
 | `--server-url`      | `https://www.embeddedci.com` | embeddedci-server base URL.                                   |
 | `--token-file`      | `~/.config/benchpod-cli/token.json` | Token cache.                                           |
 
+### `benchpod vision`
+
+AI Vision boards (BenchPod AI Vision): a camera on the device's screen that reads it and presses
+it through an actuator. These commands register a board on embeddedci.com, the way `register`
+does for a pod. `<board>` is the board's LAN address (host, `host:port` or URL). They sign in with
+`BENCHPOD_API_KEY` (a key with the Control AI Vision scope) when that is set and `--token-file`
+is not given, else with the `benchpod login` session.
+
+### `benchpod vision register <board>`
+
+Register the board at `<board>` in your active organization, then store the pairing on the board
+(`PUT /api/v1/cloud`), after which it connects to embeddedci.com on its own. It reads the board's
+key from its status, so the board must be reachable on the LAN. Running it again is harmless: the
+same board keeps its registration and name. The board then shows in the BenchPod workspace on
+embeddedci.com, and tests reach it from anywhere as `embeddedci:<name>`
+(`AIVision("embeddedci:<name>")` in the Python SDK).
+
+```bash
+benchpod login
+benchpod vision register 10.1.0.165
+```
+
+| Flag            | Default                      | Purpose                                                         |
+|-----------------|------------------------------|-----------------------------------------------------------------|
+| `--name`        | the board's host name        | The board's name on embeddedci.com (URL-safe).                  |
+| `--board-token` | `AIVISION_TOKEN`             | The board's API token, when it has one.                         |
+| `--pair-server` | `api.embeddedci.com` for embeddedci.com, else the `--server-url` host | Host the board connects to. |
+| `--wait`        | `30s`                        | How long to wait for the board to connect (`0` = don't wait).   |
+| `--server-url`  | `https://www.embeddedci.com` | embeddedci-server base URL.                                     |
+| `--token-file`  | `~/.config/benchpod-cli/token.json` | Token cache.                                             |
+
+When the board does not connect within `--wait`, the command fails with the board's last
+connection error; the registration and the pairing stand and the board keeps retrying.
+
+### `benchpod vision list`
+
+The organization's AI Vision boards: name, online or offline, the `embeddedci:<name>` connection
+and the id.
+
+| Flag           | Default                      | Purpose                             |
+|----------------|------------------------------|-------------------------------------|
+| `--json`       | off                          | Print the boards as JSON.           |
+| `--server-url` | `https://www.embeddedci.com` | embeddedci-server base URL.         |
+| `--token-file` | `~/.config/benchpod-cli/token.json` | Token cache.                 |
+
+### `benchpod vision deregister <name or id>`
+
+Take the board out of the organization: it is disconnected and its logins are refused until it is
+registered again.
+
+| Flag            | Default                      | Purpose                                                    |
+|-----------------|------------------------------|------------------------------------------------------------|
+| `--unpair`      | (none)                       | The board's LAN address: also make it forget its pairing.  |
+| `--board-token` | `AIVISION_TOKEN`             | The board's API token, when it has one.                    |
+| `--server-url`  | `https://www.embeddedci.com` | embeddedci-server base URL.                                |
+| `--token-file`  | `~/.config/benchpod-cli/token.json` | Token cache.                                        |
+
+### `benchpod vision unpair <board>`
+
+Make the board forget its embeddedci.com pairing (`DELETE /api/v1/cloud` on its LAN), so it stops
+connecting. It stays registered until `benchpod vision deregister`.
+
+| Flag            | Default          | Purpose                                 |
+|-----------------|------------------|-----------------------------------------|
+| `--board-token` | `AIVISION_TOKEN` | The board's API token, when it has one. |
+
 ### `benchpod lan-policy`
 
 Show the pod's LAN policy: `open`, `locked` or `off`. See
