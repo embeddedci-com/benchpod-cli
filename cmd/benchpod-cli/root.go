@@ -133,7 +133,7 @@ func newRootCmd() *cobra.Command {
 			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g),
 		}},
 		{"cloud", "embeddedci.com:", []*cobra.Command{
-			newLoginCmd(g), newLogoutCmd(g), newRegisterCmd(g), newDeregisterCmd(g), newCloudCmd(g),
+			newLoginCmd(g), newLogoutCmd(g), newRegisterCmd(g), newDeregisterCmd(g), newCloudCmd(g), newVisionCmd(g),
 		}},
 	}
 	for _, grp := range groups {
