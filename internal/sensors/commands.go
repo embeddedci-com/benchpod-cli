@@ -13,6 +13,11 @@ const (
 	MaxCommandBytes = 1280
 	// CommandReserveBytes is kept free for the transport's envelope around a command.
 	CommandReserveBytes = 128
+	// MaxChunkBytes is the most raw bytes per upload chunk: 1024 base64 characters, a command
+	// of at most 1152 bytes (the size the firmware documents).
+	MaxChunkBytes = 768
+	// MaxLABytes is the most packed bytes one sensor_la capture takes (4 samples per byte).
+	MaxLABytes = 4096
 )
 
 // ChunkSize is the most raw bytes per chunk (a multiple of 3, so only the last chunk is padded)
@@ -31,7 +36,7 @@ func ChunkSize(base map[string]any, limit int) (int, error) {
 	if room < 4 {
 		return 0, fmt.Errorf("the command leaves no room for data")
 	}
-	return room / 4 * 3, nil
+	return min(room/4*3, MaxChunkBytes), nil
 }
 
 // UploadRequests are the sensor_define or sensor_stimulus commands that carry data, in order.
@@ -79,7 +84,7 @@ func UploadRequests(cmd string, data []byte, instance string, dryRun bool) ([]ma
 // PinRoles are the pin roles per kind.
 var PinRoles = map[string][]string{
 	"i2c":    {"sda", "scl", "drdy"},
-	"spi":    {"sclk", "mosi", "miso", "cs", "drdy"},
+	"spi":    {"sclk", "mosi", "miso", "cs"}, // the emulated SPI target has no data-ready pin
 	"uart":   {"tx", "rx"},
 	"analog": {"output"},
 }
@@ -93,7 +98,7 @@ var RequiredPins = map[string][]string{
 }
 
 // PinValue is an LA channel (1-14, also "la4", "pin4") as a number, or another word (a wiring
-// name) as text, for the pod to resolve.
+// name) as text. The pod takes channels only: the caller resolves a wiring name (ResolvePins).
 func PinValue(role, v string) (any, error) {
 	s := strings.TrimSpace(v)
 	if role == "output" {
@@ -126,6 +131,9 @@ func Pins(kind string, pins map[string]any) error {
 		return fmt.Errorf("unknown sensor kind %q", kind)
 	}
 	for r := range pins {
+		if kind == "spi" && r == "drdy" {
+			return fmt.Errorf("the emulated SPI target has no data-ready pin")
+		}
 		if !contains(roles, r) {
 			return fmt.Errorf("a %s sensor takes pins %s, not %s", kind, strings.Join(roles, ", "), r)
 		}
@@ -138,6 +146,26 @@ func Pins(kind string, pins map[string]any) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("a %s sensor needs pins %s (--pin %s=<LA channel>)", kind, strings.Join(missing, ", "), missing[0])
+	}
+	return nil
+}
+
+// ResolvePins replaces the wiring names in pins with their LA channels (lookup gives a name's
+// channel). A name lookup does not know is an error: the pod takes channels only.
+func ResolvePins(pins map[string]any, lookup func(name string) (int, bool)) error {
+	for role, v := range pins {
+		name, ok := v.(string)
+		if !ok || role == "output" {
+			continue
+		}
+		la, found := 0, false
+		if lookup != nil {
+			la, found = lookup(name)
+		}
+		if !found {
+			return fmt.Errorf("pin %s: %q is not an LA channel (1-14) nor a name in the wiring profile", role, name)
+		}
+		pins[role] = la
 	}
 	return nil
 }

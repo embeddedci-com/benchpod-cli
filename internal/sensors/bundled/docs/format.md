@@ -10,6 +10,10 @@ receives JSON (`tools/yaml2json.py` converts). Unknown keys are errors, so a typ
 Read YAML with the 1.2 rules: only `true` and `false` are booleans, so a key such as `on:` stays the
 word "on" (YAML 1.1 readers turn it into a boolean).
 
+**Key order matters.** `constants`, `functions`, `fragments` and `let` may refer to earlier entries
+only, so they are read in the order they appear in the file. A YAML to JSON converter must keep
+the source order of every mapping (`tools/yaml2json.py` does), and a JSON writer must not sort keys.
+
 ## 1. Common header
 
 ```yaml
@@ -257,7 +261,8 @@ i2c:
   address: 0x76
   alt_addresses: [0x77]     # selectable when the sensor is enabled
   register_address_bits: 8  # 8 | 16
-  page: 0x0000              # 16-bit addresses: the 256-byte window the image covers
+  page: 0x1200              # 16-bit addresses: base of the 256-byte window the image covers
+                            # (a multiple of 0x100; registers 0x1200..0x12FF here)
   auto_increment: true
   wrap: 0xFF                # the pointer wraps after this address
 ```
@@ -374,6 +379,9 @@ a DC output, a stimulus becomes a waveform, a recording stays a recording.
 format: 1
 kind: stimulus
 name: hot_afternoon
+label: "A hot afternoon"     # optional, like a definition's label
+description: |              # optional, Markdown
+  Warms up, holds, a short fault.
 repeat: false               # loop the whole stimulus
 signals:
   temperature_c:            # a param; with several sensors: env.temperature_c

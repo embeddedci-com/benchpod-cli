@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"sort"
 	"strconv"
@@ -39,8 +40,64 @@ func newSensorCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.AddCommand(newSensorLibraryCmd(g), newSensorExportCmd(g), newSensorValidateCmd(g),
 		newSensorStartCmd(g), newSensorSetCmd(g), newSensorStimulusCmd(g), newSensorFaultCmd(g),
-		newSensorStopCmd(g), newSensorStatusCmd(g))
+		newSensorStopCmd(g), newSensorStatusCmd(g), newSensorImageCmd(g))
 	return cmd
+}
+
+// sensorImages are the gateware images fpga_image takes, by the name the pod reports.
+var sensorImages = []string{"loop", "deep", "emulation"}
+
+func newSensorImageCmd(g *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "image [loop|deep|emulation]",
+		Short: "Show or switch the pod's FPGA image (the emulation image runs the I2C, SPI and UART sensors)",
+		Long: "Without an argument, show the FPGA image the pod runs. With one, switch to it (2 to 3 s):\n" +
+			"loop (the closed-loop DAC), deep (deep DAC replay) or emulation (gateware v54+).\n" +
+			"`benchpod sensor start` loads the emulation image by itself, and the pod never switches\n" +
+			"back on its own: after `benchpod sensor stop`, `benchpod sensor image loop` brings the\n" +
+			"control loop back. The pod refuses to leave the emulation image while I2C, SPI or UART\n" +
+			"sensors run. No flags.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"cmd": "fpga_image"}
+			if len(args) == 1 {
+				name := strings.ToLower(strings.TrimSpace(args[0]))
+				if !containsString(sensorImages, name) {
+					return usageErrorf("sensor image: the image is loop, deep or emulation, got %q", args[0])
+				}
+				req["image"] = name
+			}
+			ctx, cancel, t, err := g.podClient("sensor image", sensorTimeout)
+			if err != nil {
+				return err
+			}
+			defer cancel()
+			reply, err := sensorCommand(ctx, t, "sensor image", req)
+			if err != nil {
+				return err
+			}
+			name, _ := reply["name"].(string)
+			if name == "" {
+				if n, ok := reply["image"].(float64); ok && int(n) >= 0 && int(n) < len(sensorImages) {
+					name = sensorImages[int(n)]
+				}
+			}
+			verb := "runs"
+			if len(args) == 1 {
+				verb = "switched to"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "The pod on %s %s the %s FPGA image (image %v, gateware v%v)\n",
+				t.label, verb, valueOrUnknown(name), reply["image"], reply["version"])
+			return nil
+		},
+	}
+}
+
+func valueOrUnknown(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	return s
 }
 
 // ── the library ─────────────────────────────────────────────────────────────
@@ -344,9 +401,10 @@ func newSensorStartCmd(g *globalFlags) *cobra.Command {
 		Short: "Upload a definition and start it on the pod's pins",
 		Long: "Upload a definition (a file, - for stdin, or a library name) and start it.\n\n" +
 			"Pins are role=channel: I2C sda, scl (default: the wiring profile's i2c_sda/i2c_scl)\n" +
-			"and drdy; SPI sclk, mosi, miso, cs (default: the profile's spi_*) and drdy; UART tx\n" +
-			"(pod to DUT RX) and rx; analog output=dac (default) or output=current. A channel is\n" +
-			"1-14 (or la4); other words are wiring names the pod resolves. Set the LA voltage and,\n" +
+			"and drdy; SPI sclk, mosi, miso, cs (default: the profile's spi_*; the emulated SPI\n" +
+			"target has no data-ready pin); UART tx (pod to DUT RX) and rx; analog output=dac\n" +
+			"(default) or output=current. A channel is 1-14 (or la4); another word is a name in\n" +
+			"the wiring profile on embeddedci.com, resolved here. Set the LA voltage and,\n" +
 			"for I2C, the pull-ups first (`benchpod la pullup`). Starting an instance that runs\n" +
 			"replaces it; the sensor keeps running after this command, until `benchpod sensor stop`.",
 		Args: cobra.ExactArgs(1),
@@ -359,7 +417,7 @@ func newSensorStartCmd(g *globalFlags) *cobra.Command {
 			return runSensorStart(g, args[0], f, cmd.InOrStdin(), out)
 		},
 	}
-	c.Flags().StringVar(&f.instance, "instance", "", "instance name, [a-z0-9_]{1,32} (default: the definition's name)")
+	c.Flags().StringVar(&f.instance, "instance", "", "instance name, 1 to 16 characters of a-z, 0-9 and _ (default: the definition's name)")
 	c.Flags().StringArrayVar(&f.pins, "pin", nil, "pin as role=channel, e.g. --pin sda=2 --pin scl=1 (repeatable)")
 	c.Flags().StringVar(&f.address, "address", "", "I2C address: the definition's address or one of its alt_addresses (e.g. 0x77)")
 	c.Flags().StringArrayVar(&f.values, "set", nil, "initial value as key=number, e.g. --set temperature_c=30 (repeatable)")
@@ -379,9 +437,12 @@ func runSensorStart(g *globalFlags, src string, f sensorStartFlags, stdin io.Rea
 	instance := f.instance
 	if instance == "" {
 		instance = doc.Name()
+		if !sensors.InstanceRE.MatchString(instance) {
+			return usageErrorf("sensor start: the definition's name %q is longer than an instance name (at most 16 characters): pass --instance", instance)
+		}
 	}
-	if !sensors.NameRE.MatchString(instance) {
-		return usageErrorf("sensor start: --instance must match [a-z0-9_]{1,32}, got %q", instance)
+	if !sensors.InstanceRE.MatchString(instance) {
+		return usageErrorf("sensor start: --instance is 1 to 16 characters of a-z, 0-9 and _, got %q", instance)
 	}
 	req := map[string]any{"cmd": "sensor_start", "instance": instance}
 	pins, err := sensorPins(g, doc.Kind(), f.pins)
@@ -469,8 +530,23 @@ func sensorPins(g *globalFlags, kind string, flags []string) (map[string]any, er
 			missing = append(missing, role)
 		}
 	}
+	named := false
+	for role, v := range pins {
+		if _, ok := v.(string); ok && role != "output" {
+			named = true
+		}
+	}
+	var w *podWiring
+	if len(missing) > 0 || named {
+		w = loadPodWiring(g, os.Stderr)
+	}
+	if named {
+		if err := sensors.ResolvePins(pins, w.channel); err != nil {
+			return nil, err
+		}
+	}
 	if len(missing) > 0 {
-		if w := loadPodWiring(g, os.Stderr); w != nil {
+		if w != nil {
 			sort.Strings(missing)
 			for _, role := range missing {
 				if la := defaults[role](w); la != nil && *la >= 1 && *la <= laPinCount {
@@ -521,34 +597,45 @@ func newSensorSetCmd(g *globalFlags) *cobra.Command {
 
 // sensorSimple sends one command after the capability check and prints done.
 func sensorSimple(g *globalFlags, out io.Writer, what string, req map[string]any, done string) error {
-	if inst, ok := req["instance"].(string); ok && !sensors.NameRE.MatchString(inst) {
-		return usageErrorf("%s: an instance name matches [a-z0-9_]{1,32}, got %q", what, inst)
-	}
-	ctx, cancel, t, err := sensorPod(g, what)
+	_, err := sensorSend(g, what, req)
 	if err != nil {
-		return err
-	}
-	defer cancel()
-	if _, err := sensorCommand(ctx, t, what, req); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, done)
 	return nil
 }
 
+// sensorSend checks the instance name, then sends one command after the capability check.
+func sensorSend(g *globalFlags, what string, req map[string]any) (map[string]any, error) {
+	if inst, ok := req["instance"].(string); ok && !sensors.InstanceRE.MatchString(inst) {
+		return nil, usageErrorf("%s: an instance name is 1 to 16 characters of a-z, 0-9 and _, got %q", what, inst)
+	}
+	ctx, cancel, t, err := sensorPod(g, what)
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
+	return sensorCommand(ctx, t, what, req)
+}
+
 func newSensorStopCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop [instance]",
 		Short: "Stop one emulated sensor, or all of them",
-		Long:  "Stop an instance (or every one when none is named): the pod releases its pins and forgets the definition. No flags.",
-		Args:  cobra.MaximumNArgs(1),
+		Long: "Stop an instance (or every one when none is named): the pod releases its pins and forgets the\n" +
+			"definition. The emulation FPGA image stays loaded until `benchpod sensor image` switches it. No flags.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return sensorSimple(g, cmd.OutOrStdout(), "sensor stop",
-					map[string]any{"cmd": "sensor_stop", "all": true}, "Stopped every emulated sensor")
+			req := map[string]any{"cmd": "sensor_stop", "all": true}
+			if len(args) == 1 {
+				req = map[string]any{"cmd": "sensor_stop", "instance": args[0]}
 			}
-			return sensorSimple(g, cmd.OutOrStdout(), "sensor stop",
-				map[string]any{"cmd": "sensor_stop", "instance": args[0]}, "Stopped "+args[0])
+			reply, err := sensorSend(g, "sensor stop", req)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), stoppedLine(reply))
+			return nil
 		},
 	}
 }
@@ -715,7 +802,7 @@ func newSensorStatusCmd(g *globalFlags) *cobra.Command {
 				return err
 			}
 			defer cancel()
-			st, err := sensorCommand(ctx, t, "sensor status", map[string]any{"cmd": "sensor_status"})
+			st, err := sensorStatusAll(ctx, t)
 			if err != nil {
 				return err
 			}
@@ -730,6 +817,74 @@ func newSensorStatusCmd(g *globalFlags) *cobra.Command {
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "print the pod's reply as JSON")
 	return c
+}
+
+// stoppedLine reports a sensor_stop reply ({"stopped":["env"]}).
+func stoppedLine(reply map[string]any) string {
+	list, _ := reply["stopped"].([]any)
+	if len(list) == 0 {
+		return "No sensor was running"
+	}
+	names := make([]string, 0, len(list))
+	for _, n := range list {
+		names = append(names, fmt.Sprint(n))
+	}
+	return "Stopped " + strings.Join(names, ", ")
+}
+
+// sensorStatusAll reads every page of sensor_status (the pod ends a page with "next" when the
+// next instance would not fit the cloud reply cap) into one reply.
+func sensorStatusAll(ctx context.Context, t *podTarget) (map[string]any, error) {
+	st, err := sensorCommand(ctx, t, "sensor status", map[string]any{"cmd": "sensor_status"})
+	if err != nil {
+		return nil, err
+	}
+	list, _ := st["instances"].([]any)
+	seen := map[int]bool{0: true}
+	for {
+		n, ok := st["next"].(float64)
+		first := int(n)
+		if !ok || first <= 0 || seen[first] {
+			break
+		}
+		seen[first] = true
+		page, err := sensorCommand(ctx, t, "sensor status", map[string]any{"cmd": "sensor_status", "first": first})
+		if err != nil {
+			return nil, err
+		}
+		more, _ := page["instances"].([]any)
+		list = append(list, more...)
+		delete(st, "next")
+		if v, ok := page["next"]; ok {
+			st["next"] = v
+		}
+	}
+	delete(st, "next")
+	st["instances"] = list
+	return st, nil
+}
+
+// faultText is one sensor_status fault: {"type":"no_response","left_s":1.25}.
+func faultText(f any) string {
+	m, ok := f.(map[string]any)
+	if !ok {
+		return fmt.Sprint(f)
+	}
+	parts := []string{fmt.Sprint(m["type"])}
+	for _, k := range []string{"param", "value", "at", "mask", "rate_hz"} {
+		if v, ok := m[k]; ok && v != nil {
+			parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+		}
+	}
+	if m["stimulus"] == true {
+		parts = append(parts, "from the stimulus")
+	}
+	if left, ok := m["left_s"].(float64); ok {
+		parts = append(parts, fmt.Sprintf("%.2f s left", left))
+	} else {
+		parts = append(parts, "until cleared")
+	}
+	return strings.Join(parts, " ")
 }
 
 func printSensorStatus(out io.Writer, via string, st map[string]any) {
@@ -763,6 +918,9 @@ func printSensorStatus(out io.Writer, via string, st map[string]any) {
 			}
 		}
 		fmt.Fprintf(out, "%v: %v %v, %s, %s", inst["instance"], inst["kind"], inst["name"], state, formatPins(pins))
+		if slot, _ := inst["slot"].(string); slot != "" {
+			fmt.Fprintf(out, ", slot %s", slot)
+		}
 		if a, ok := inst["address"]; ok {
 			fmt.Fprintf(out, ", address %v", a)
 		}
@@ -780,9 +938,21 @@ func printSensorStatus(out io.Writer, via string, st map[string]any) {
 			fmt.Fprintf(out, "  values: %s\n", strings.Join(parts, " "))
 		}
 		if faults, ok := inst["faults"].([]any); ok && len(faults) > 0 {
-			fmt.Fprintf(out, "  faults: %v\n", faults)
+			parts := make([]string, 0, len(faults))
+			for _, f := range faults {
+				parts = append(parts, faultText(f))
+			}
+			fmt.Fprintf(out, "  faults: %s\n", strings.Join(parts, "; "))
+		}
+		if v, ok := inst["output"]; ok && v != nil {
+			fmt.Fprintf(out, "  output: %v\n", v)
 		}
 		if bus, ok := inst["bus"].(map[string]any); ok && len(bus) > 0 {
+			// transfers is always null (the gateware counts written bytes, not transfers).
+			if v, ok := bus["transfers"]; ok && v == nil {
+				bus = maps.Clone(bus)
+				delete(bus, "transfers")
+			}
 			b, _ := json.Marshal(bus)
 			fmt.Fprintf(out, "  bus: %s\n", b)
 		}

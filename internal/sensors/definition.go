@@ -25,8 +25,11 @@ const (
 // Kinds are the sensor kinds a pod plays.
 var Kinds = []string{"i2c", "spi", "uart", "analog"}
 
-// NameRE is the pattern of definition and instance names.
+// NameRE is the pattern of definition names.
 var NameRE = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+// InstanceRE is the pattern of instance names: the pod takes 16 characters at most.
+var InstanceRE = regexp.MustCompile(`^[a-z0-9_]{1,16}$`)
 
 // Document is a definition or stimulus as the pod receives it: a JSON object in document order.
 type Document struct{ *Map }

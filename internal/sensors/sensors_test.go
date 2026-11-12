@@ -139,7 +139,7 @@ func TestUploadChunksFitACloudCommand(t *testing.T) {
 		for i := range data {
 			data[i] = byte(i * 7)
 		}
-		reqs, err := UploadRequests("sensor_define", data, strings.Repeat("x", 32), true)
+		reqs, err := UploadRequests("sensor_define", data, strings.Repeat("x", 16), true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,6 +153,9 @@ func TestUploadChunksFitACloudCommand(t *testing.T) {
 				t.Fatalf("offset %v total %v", r["offset"], r["total"])
 			}
 			chunk, _ := base64.StdEncoding.DecodeString(r["data_b64"].(string))
+			if len(chunk) > MaxChunkBytes {
+				t.Fatalf("chunk of %d bytes, at most %d", len(chunk), MaxChunkBytes)
+			}
 			out = append(out, chunk...)
 			_, dry := r["dry_run"]
 			if dry != (i == len(reqs)-1) {
@@ -187,6 +190,20 @@ func TestPinsAddressesAndValues(t *testing.T) {
 	}
 	if err := Pins("i2c", map[string]any{"sda": 2, "scl": 1, "mosi": 3}); err == nil || !strings.Contains(err.Error(), "not mosi") {
 		t.Fatal(err)
+	}
+	if err := Pins("spi", map[string]any{"sclk": 1, "mosi": 2, "miso": 3, "cs": 4, "drdy": 5}); err == nil ||
+		!strings.Contains(err.Error(), "no data-ready pin") {
+		t.Fatal(err)
+	}
+	pins := map[string]any{"sda": "SDA_LINE", "scl": 1, "output": "dac"}
+	if err := ResolvePins(pins, func(n string) (int, bool) { return 7, n == "SDA_LINE" }); err != nil || pins["sda"] != 7 || pins["output"] != "dac" {
+		t.Fatal(pins, err)
+	}
+	if err := ResolvePins(map[string]any{"sda": "NOPE"}, nil); err == nil || !strings.Contains(err.Error(), "wiring profile") {
+		t.Fatal(err)
+	}
+	if !InstanceRE.MatchString(strings.Repeat("a", 16)) || InstanceRE.MatchString(strings.Repeat("a", 17)) {
+		t.Fatal("instance names are 1..16 characters")
 	}
 	if a, _ := Address("119"); a != "0x77" {
 		t.Fatal(a)

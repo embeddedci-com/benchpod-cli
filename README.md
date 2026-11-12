@@ -970,9 +970,15 @@ gets "this pod's firmware is too old for sensor emulation; update the firmware")
 plays I2C, SPI and UART sensors on LA channels and analog sensors on its analog outputs,
 from a **definition** in YAML or JSON (the format of the public sensor library,
 [github.com/embeddedci-com/benchpod-sensors](https://github.com/embeddedci-com/benchpod-sensors),
-`docs/format.md`). Up to 4 I2C sensors (on one bus or several), 1 SPI sensor and 1 UART
-sensor run at once, each an instance with a name (`[a-z0-9_]{1,32}`, the definition's
-`name` by default). A sensor keeps running after the command that started it, until
+`docs/format.md`). Up to 4 I2C sensors (on one bus or several), 1 SPI sensor, 1 UART
+sensor and 2 analog sensors (one per analog output) run at once, each an instance with a
+name (1 to 16 characters of `a-z`, `0-9` and `_`; the definition's `name` by default, so
+a longer definition name needs `--instance`). I2C, SPI and UART sensors run on the pod's
+emulation FPGA image, which the first one loads (about 2 s); it stays loaded after
+`benchpod sensor stop` until `benchpod sensor image` switches it. The pod's limits: UART
+8N1 only, no data-ready pin on the SPI target, one FIFO sensor at a time, conversion and
+command times of at most 65.535 ms (4 distinct ones per I2C sensor), no `excitation: adc`
+yet, `bus_stuck` of at most 1 s. A sensor keeps running after the command that started it, until
 `benchpod sensor stop`, a reboot or a firmware update. The pod commands work over the
 network and through embeddedci.com; `library`, `export` and an offline `validate` need no
 pod.
@@ -1046,8 +1052,8 @@ replaces it. It prints the params `sensor set` takes.
 
 | Flag         | Default | Purpose |
 |--------------|---------|---------|
-| `--pin`      | (none)  | `role=channel`, repeatable. I2C `sda`, `scl` (default: the wiring profile's `i2c_sda`/`i2c_scl` on embeddedci.com) and `drdy`; SPI `sclk`, `mosi`, `miso`, `cs` (default: the profile's `spi_*`) and `drdy`; UART `tx` (pod to DUT RX) and `rx`; analog `output=dac` (default) or `output=current`. A channel is `1`-`14` or `la1`-`la14`; another word is a wiring name the pod resolves. |
-| `--instance` | (the definition's name) | Instance name, `[a-z0-9_]{1,32}`. |
+| `--pin`      | (none)  | `role=channel`, repeatable. I2C `sda`, `scl` (default: the wiring profile's `i2c_sda`/`i2c_scl` on embeddedci.com) and `drdy`; SPI `sclk`, `mosi`, `miso`, `cs` (default: the profile's `spi_*`; the emulated SPI target has no data-ready pin); UART `tx` (pod to DUT RX) and `rx`; analog `output=dac` (default) or `output=current`. A channel is `1`-`14` or `la1`-`la14`; another word is a name in the wiring profile on embeddedci.com (a role such as `i2c_sda` or a signal such as `DRDY`), resolved to its channel here. |
+| `--instance` | (the definition's name) | Instance name, 1 to 16 characters of `a-z`, `0-9` and `_`. |
 | `--address`  | (none)  | I2C: the definition's address or one of its `alt_addresses` (`0x77`). |
 | `--set`      | (none)  | Initial value as `key=number`, repeatable. |
 | `--baud`     | `0` (the definition's) | UART: override the baud rate. |
@@ -1104,16 +1110,31 @@ section). `clear` ends its faults.
 ### `benchpod sensor stop [instance]`
 
 Stop an instance, or every one when none is named: the pod releases its pins and forgets
-the definition. No flags.
+the definition, and the command prints the names it stopped. The emulation FPGA image stays
+loaded. No flags.
 
 ### `benchpod sensor status`
 
-The running sensors (pins, address, values, faults, bus counters such as `transfers`),
-the stimulus and the FPGA image.
+The running sensors (slot, pins, address, values, faults with the time left, bus counters
+such as `writes` and `last_write`), the stimulus and the FPGA image. A long list comes from
+the pod in pages; this reads them all.
 
 | Flag     | Default | Purpose                          |
 |----------|---------|----------------------------------|
 | `--json` | `false` | Print the pod's reply as JSON.   |
+
+### `benchpod sensor image [loop|deep|emulation]`
+
+Without an argument, show the FPGA image the pod runs; with one, switch to it (2 to 3 s):
+`loop` (the closed-loop DAC), `deep` (deep DAC replay) or `emulation` (the I2C, SPI and
+UART sensors, gateware v54+). The pod never switches back by itself, so after
+`benchpod sensor stop`, `benchpod sensor image loop` brings the control loop back; it
+refuses to leave the emulation image while I2C, SPI or UART sensors run. No flags.
+
+```bash
+benchpod sensor image          # The pod on ... runs the emulation FPGA image (image 2, gateware v54)
+benchpod sensor stop && benchpod sensor image loop
+```
 
 ### `benchpod la`
 

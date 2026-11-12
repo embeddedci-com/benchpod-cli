@@ -30,7 +30,13 @@ const laVoltageUnsetHint = "set the DUT's I/O voltage first: `benchpod la voltag
 	"or on the web app's Wiring tab"
 
 // pinConflictRE matches the firmware's "pin conflict: LA%u is in use by %s; %s" (la_pins.c).
-var pinConflictRE = regexp.MustCompile(`^pin conflict: (LA\d+) is in use by (\S+); (.*)$`)
+// A sensor pin names its function too: "is in use by sensor:env (i2c_sda); ...", and an I2C
+// line several sensors share "sensor:env+1".
+var pinConflictRE = regexp.MustCompile(`^pin conflict: (LA\d+) is in use by (\S+)(?: \(([a-z0-9_]+)\))?; (.*)$`)
+
+// emulationImageRE matches the refusal of a feature the emulation image lacks
+// (command_handler_dac.c image_hint) and the image-switch refusal (fpga_image).
+var emulationImageRE = regexp.MustCompile(`\{"cmd":"sensor_stop","all":true\} then \{"cmd":"fpga_image","image":"(loop|deep)"\}$`)
 
 // pinReleaseHints maps the firmware's release hints (la_pins.c release_hint) to what a CLI user
 // does about them. The benchpod CLI has no command that holds a pin past its own run, so a pin in
@@ -58,15 +64,29 @@ func translateRefusal(msg string) (shown, hint string) {
 	if strings.HasPrefix(msg, "la voltage not set") {
 		return msg, laVoltageUnsetHint
 	}
+	if m := emulationImageRE.FindStringSubmatchIndex(msg); m != nil {
+		image := msg[m[2]:m[3]]
+		return strings.TrimSuffix(strings.TrimSpace(msg[:m[0]]), ":"), fmt.Sprintf(
+			"stop the sensors with `benchpod sensor stop`, then switch with `benchpod sensor image %s`", image)
+	}
+	if strings.HasPrefix(msg, "image switch refused:") {
+		if i := strings.Index(msg, "; stop them first ("); i > 0 {
+			return msg[:i], "stop them with `benchpod sensor stop` first"
+		}
+	}
 	if m := pinConflictRE.FindStringSubmatch(msg); m != nil {
+		owner := m[2]
+		if m[3] != "" {
+			owner += " (" + m[3] + ")"
+		}
 		if inst, ok := strings.CutPrefix(m[2], "sensor:"); ok {
-			inst = strings.TrimRight(inst, ";")
-			return "pin conflict: " + m[1] + " is in use by " + m[2], fmt.Sprintf(
+			inst, _, _ = strings.Cut(strings.TrimRight(inst, ";"), "+")
+			return "pin conflict: " + m[1] + " is in use by " + owner, fmt.Sprintf(
 				"the emulated sensor %s is using %s; stop it with `benchpod sensor stop %s`", inst, m[1], inst)
 		}
 		for _, h := range pinReleaseHints {
-			if strings.HasPrefix(m[3], h.prefix) {
-				return "pin conflict: " + m[1] + " is in use by " + m[2], fmt.Sprintf(h.hint, m[1])
+			if strings.HasPrefix(m[4], h.prefix) {
+				return "pin conflict: " + m[1] + " is in use by " + owner, fmt.Sprintf(h.hint, m[1])
 			}
 		}
 	}

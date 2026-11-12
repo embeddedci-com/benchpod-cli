@@ -40,7 +40,7 @@ func TestBlobsToInstall(t *testing.T) {
 		{Name: "gw1", File: "blob-gw1.bin", Size: 10, SHA256: "bb"},
 		{Name: "esp", File: "blob-esp.bin", Size: 20, SHA256: "cc"},
 		{Name: "gw2", File: "blob-gw2.bin", Size: 30, SHA256: "ee"}, // the emulation image (v54+)
-		{Name: "gw9", File: "blob-gw9.bin", Size: 5, SHA256: "dd"}, // a slot this pod does not have
+		{Name: "gw9", File: "blob-gw9.bin", Size: 5, SHA256: "dd"},  // a slot this pod does not have
 	}}
 	slots := []serialconsole.BlobSlot{
 		{Name: "gw0", State: "ok", Size: 10, SHA256: "AA"},

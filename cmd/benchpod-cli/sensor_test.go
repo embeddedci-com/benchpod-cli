@@ -89,10 +89,29 @@ func (p *fakeSensorPod) handle(req map[string]any) (any, string) {
 		return map[string]any{"instance": req["instance"], "slot": "i2c0", "image": "emulation", "image_loaded": true,
 			"unavailable": []string{"dac_control_loop", "deep_replay"}}, ""
 	case "sensor_status":
-		return map[string]any{"image": "emulation", "stimulus": map[string]any{"loaded": true, "running": true, "t_s": 1.5},
-			"instances": []any{map[string]any{"instance": "env", "kind": "i2c", "name": "bme280", "running": true,
-				"address": "0x76", "pins": map[string]any{"sda": 2, "scl": 1}, "values": map[string]any{"temperature_c": 25},
-				"faults": []any{}, "bus": map[string]any{"transfers": 120}}}}, ""
+		// Two pages: the pod ends a page with "next" when the next instance would not fit.
+		if req["first"] == nil {
+			return map[string]any{"image": "emulation", "stimulus": map[string]any{"loaded": true, "running": true, "t_s": 1.5},
+				"instances": []any{map[string]any{"instance": "env", "kind": "i2c", "name": "bme280", "slot": "i2c0", "running": true,
+					"address": "0x76", "pins": map[string]any{"sda": 2, "scl": 1}, "values": map[string]any{"temperature_c": 25},
+					"faults": []any{map[string]any{"type": "no_response", "left_s": 1.25}},
+					"bus":    map[string]any{"writes": 14, "transfers": nil}}}, "next": 1}, ""
+		}
+		return map[string]any{"image": "emulation", "instances": []any{map[string]any{"instance": "ntc", "kind": "analog",
+			"name": "ntc10k", "slot": "analog0", "running": true, "pins": map[string]any{"output": "dac"}, "output": 1.65,
+			"faults": []any{map[string]any{"type": "open", "left_s": nil}}}}}, ""
+	case "sensor_stop":
+		if req["all"] == true {
+			return map[string]any{"stopped": []string{"env", "ntc"}}, ""
+		}
+		return map[string]any{"stopped": []any{req["instance"]}}, ""
+	case "fpga_image":
+		img := map[string]float64{"loop": 0, "deep": 1, "emulation": 2}
+		n := 2.0
+		if s, ok := req["image"].(string); ok {
+			n = img[s]
+		}
+		return map[string]any{"image": n, "name": []string{"loop", "deep", "emulation"}[int(n)], "version": 54, "features": 4}, ""
 	}
 	return map[string]any{}, ""
 }
@@ -158,6 +177,25 @@ func TestSensorStartPinsFromTheWiringProfile(t *testing.T) {
 	}
 	if pins, _ := json.Marshal(pod.last("sensor_start")["pins"]); string(pins) != `{"scl":6,"sda":5}` {
 		t.Fatalf("pins %s", pins)
+	}
+	// Wiring names resolve here: the pod takes LA channels only.
+	loadPodWiring = func(*globalFlags, io.Writer) *podWiring {
+		w := &podWiring{I2cSda: &sda, I2cScl: &scl}
+		w.Signals = append(w.Signals, struct {
+			Name string `json:"name"`
+			LA   int    `json:"la"`
+		}{"DRDY", 7})
+		return w
+	}
+	if err := runSensorStart(g, "bmp280", sensorStartFlags{pins: []string{"drdy=drdy", "scl=i2c_sda"}}, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if pins, _ := json.Marshal(pod.last("sensor_start")["pins"]); string(pins) != `{"drdy":7,"scl":5,"sda":5}` {
+		t.Fatalf("pins %s", pins)
+	}
+	if err := runSensorStart(g, "bmp280", sensorStartFlags{pins: []string{"drdy=READY"}}, nil, io.Discard); err == nil ||
+		!strings.Contains(err.Error(), "not an LA channel") {
+		t.Fatalf("err = %v", err)
 	}
 	err := runSensorStart(g, "gps_nmea", sensorStartFlags{}, nil, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "needs pins tx") {
@@ -267,10 +305,13 @@ func TestSensorSetFaultStimulusStopStatus(t *testing.T) {
 	if _, err := runCmd(t, g, "stimulus", "stop"); err != nil || pod.last("sensor_stimulus_stop") == nil {
 		t.Fatal(err)
 	}
-	if _, err := runCmd(t, g, "stop"); err != nil || pod.last("sensor_stop")["all"] != true {
-		t.Fatal(err)
+	if out, err := runCmd(t, g, "stop"); err != nil || pod.last("sensor_stop")["all"] != true || !strings.Contains(out, "Stopped env, ntc") {
+		t.Fatal(err, out)
 	}
-	if _, err := runCmd(t, g, "stop", "env"); err != nil || pod.last("sensor_stop")["instance"] != "env" {
+	if out, err := runCmd(t, g, "stop", "env"); err != nil || pod.last("sensor_stop")["instance"] != "env" || !strings.Contains(out, "Stopped env") {
+		t.Fatal(err, out)
+	}
+	if _, err := runCmd(t, g, "set", strings.Repeat("a", 17), "x=1"); err == nil || !strings.Contains(err.Error(), "1 to 16 characters") {
 		t.Fatal(err)
 	}
 	g.outputFilename = filepath.Join(dir, "status.txt")
@@ -278,11 +319,26 @@ func TestSensorSetFaultStimulusStopStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, _ := os.ReadFile(g.outputFilename)
-	for _, part := range []string{"FPGA image emulation", "Stimulus: running, t = 1.5 s", "env: i2c bme280, running, scl LA1, sda LA2, address 0x76",
-		"values: temperature_c=25", `bus: {"transfers":120}`} {
+	for _, part := range []string{"FPGA image emulation", "Stimulus: running, t = 1.5 s",
+		"env: i2c bme280, running, scl LA1, sda LA2, slot i2c0, address 0x76",
+		"values: temperature_c=25", "faults: no_response 1.25 s left", `bus: {"writes":14}`,
+		"ntc: analog ntc10k, running, output dac, slot analog0", "output: 1.65", "faults: open until cleared"} {
 		if !strings.Contains(string(st), part) {
 			t.Errorf("status lacks %q:\n%s", part, st)
 		}
+	}
+	if pod.count("sensor_status") != 2 || pod.last("sensor_status")["first"] != 1.0 {
+		t.Fatalf("status pages: %d, last %v", pod.count("sensor_status"), pod.last("sensor_status"))
+	}
+	g.outputFilename = ""
+	if out, err := runCmd(t, g, "image"); err != nil || !strings.Contains(out, "runs the emulation FPGA image (image 2, gateware v54)") {
+		t.Fatal(err, out)
+	}
+	if out, err := runCmd(t, g, "image", "loop"); err != nil || pod.last("fpga_image")["image"] != "loop" || !strings.Contains(out, "switched to the loop") {
+		t.Fatal(err, out)
+	}
+	if _, err := runCmd(t, g, "image", "turbo"); err == nil {
+		t.Fatal("unknown image accepted")
 	}
 }
 
