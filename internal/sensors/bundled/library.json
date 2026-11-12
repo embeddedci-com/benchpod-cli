@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "version": "0.1.0",
+  "entries": [
+    {
+      "path": "sensors/i2c/bme280.yaml",
+      "name": "bme280",
+      "kind": "i2c",
+      "label": "Bosch BME280: temperature, pressure and humidity"
+    },
+    {
+      "path": "sensors/i2c/bmp280.yaml",
+      "name": "bmp280",
+      "kind": "i2c",
+      "label": "Bosch BMP280: temperature and pressure"
+    },
+    {
+      "path": "sensors/i2c/mpu6050.yaml",
+      "name": "mpu6050",
+      "kind": "i2c",
+      "label": "InvenSense MPU-6050: accelerometer and gyroscope"
+    },
+    {
+      "path": "sensors/i2c/sht4x.yaml",
+      "name": "sht4x",
+      "kind": "i2c",
+      "label": "Sensirion SHT4x: temperature and humidity"
+    },
+    {
+      "path": "sensors/uart/gps_nmea.yaml",
+      "name": "gps_nmea",
+      "kind": "uart",
+      "label": "GPS receiver: NMEA 0183 (u-blox style defaults)"
+    }
+  ]
+}

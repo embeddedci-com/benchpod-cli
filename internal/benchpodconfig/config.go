@@ -34,6 +34,9 @@ type Config struct {
 	Connection   string `json:"connection,omitempty"`
 	BenchPodAddr string `json:"bench_pod_addr,omitempty"`
 	LastSerial   string `json:"last_serial,omitempty"`
+	// SensorLibrary is the sensor library version the CLI and the Python SDK use ("latest" or a
+	// release such as "0.2.0"); "" is the version each one pins.
+	SensorLibrary string `json:"sensor_library,omitempty"`
 }
 
 // EnsurePort returns addr with DefaultPort appended when it carries no port.

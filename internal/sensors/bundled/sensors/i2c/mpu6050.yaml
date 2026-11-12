@@ -1,0 +1,46 @@
+format: 1
+kind: i2c
+name: mpu6050
+label: "InvenSense MPU-6050: accelerometer and gyroscope"
+description: |
+  Follows the measurement ranges, sleep and DEVICE_RESET the DUT writes. Scales from register map
+  sections 4.17 to 4.19.
+version: 1.0.0
+license: Apache-2.0
+
+params:
+  - { key: accel_x_g, unit: g, min: -16, max: 16, default: 0 }
+  - { key: accel_y_g, unit: g, min: -16, max: 16, default: 0 }
+  - { key: accel_z_g, unit: g, min: -16, max: 16, default: 1 }
+  - { key: gyro_x_dps, unit: dps, min: -2000, max: 2000, default: 0 }
+  - { key: gyro_y_dps, unit: dps, min: -2000, max: 2000, default: 0 }
+  - { key: gyro_z_dps, unit: dps, min: -2000, max: 2000, default: 0 }
+  - { key: temperature_c, unit: C, min: -40, max: 85, default: 25 }
+
+i2c:
+  address: 0x68
+  alt_addresses: [0x69]
+
+let:
+  - al: "[16384, 8192, 4096, 2048][bits(reg[0x1C], 4, 3)]"    # ACCEL_CONFIG AFS_SEL
+  - gl: "[131, 65.5, 32.8, 16.4][bits(reg[0x1B], 4, 3)]"      # GYRO_CONFIG FS_SEL
+  - asleep: "bit(reg[0x6B], 6)"
+  - on: "asleep ? 0 : 1"
+
+registers:
+  - { at: 0x1B, u8: 0x00, name: GYRO_CONFIG }
+  - { at: 0x1C, u8: 0x00, name: ACCEL_CONFIG }
+  - { at: 0x3A, u8: "on", name: INT_STATUS }
+  - { at: 0x3B, s16be: "on * accel_x_g * al", name: ACCEL_XOUT }
+  - { at: 0x3D, s16be: "on * accel_y_g * al" }
+  - { at: 0x3F, s16be: "on * accel_z_g * al" }
+  - { at: 0x41, s16be: "on * (temperature_c - 36.53) * 340", name: TEMP_OUT }
+  - { at: 0x43, s16be: "on * gyro_x_dps * gl", name: GYRO_XOUT }
+  - { at: 0x45, s16be: "on * gyro_y_dps * gl" }
+  - { at: 0x47, s16be: "on * gyro_z_dps * gl" }
+  - { at: 0x6B, u8: 0x40, name: PWR_MGMT_1 }           # SLEEP after power on
+  - { at: 0x75, u8: 0x68, name: WHO_AM_I, writable: false }
+
+on_write:
+  - when: "reg[0x6B] & 0x80"                           # DEVICE_RESET, self-clearing
+    do: reset

@@ -1,0 +1,42 @@
+format: 1
+kind: i2c
+name: sht4x
+label: "Sensirion SHT4x: temperature and humidity"
+datasheet: https://sensirion.com/products/catalog/SHT40
+version: 1.0.0
+license: Apache-2.0
+
+params:
+  - { key: temperature_c, unit: C, min: -40, max: 125, default: 25, label: Temperature }
+  - { key: humidity_pct, unit: "%", min: 0, max: 100, default: 40, label: Humidity }
+
+i2c:
+  address: 0x44
+  alt_addresses: [0x45]
+
+constants:
+  SERIAL_HI: 0x0B1E
+  SERIAL_LO: 0x5EA4
+
+functions:
+  word_crc:                  # two data bytes and their CRC, as every SHT4x answer word
+    args: [w, n]
+    return: "n == 0 ? byte(w, 1) : n == 1 ? byte(w, 0) : crc8(0x31, 0xFF, byte(w, 1), byte(w, 0))"
+
+let:
+  - st: "sat_u16((temperature_c + 45) * 65535 / 175)"     # datasheet 4.6
+  - srh: "sat_u16((humidity_pct + 6) * 65535 / 125)"
+
+# Each answer: T word + CRC, RH word + CRC. Later entries win where they overlap (0x32 over 0x2F).
+commands:
+  - { command: 0x15, busy_us: 110000, answer: &measure ["word_crc(st, 0)", "word_crc(st, 1)", "word_crc(st, 2)", "word_crc(srh, 0)", "word_crc(srh, 1)", "word_crc(srh, 2)"] }
+  - { command: 0x1E, busy_us: 1100000, answer: *measure }
+  - { command: 0x24, busy_us: 110000, answer: *measure }
+  - { command: 0x2F, busy_us: 1100000, answer: *measure }
+  - { command: 0x32, busy_us: 110000, answer: *measure }
+  - { command: 0x39, busy_us: 1100000, answer: *measure }
+  - command: 0x89
+    answer: ["word_crc(SERIAL_HI, 0)", "word_crc(SERIAL_HI, 1)", "word_crc(SERIAL_HI, 2)", "word_crc(SERIAL_LO, 0)", "word_crc(SERIAL_LO, 1)", "word_crc(SERIAL_LO, 2)"]
+  - { command: 0xE0, busy_us: 1700, answer: *measure }
+  - { command: 0xF6, busy_us: 4500, answer: *measure }
+  - { command: 0xFD, busy_us: 8300, answer: *measure }

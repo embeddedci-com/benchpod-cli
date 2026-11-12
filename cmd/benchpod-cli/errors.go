@@ -45,12 +45,10 @@ var pinReleaseHints = []struct {
 	{"stop the uart proxy first", "a UART session (the web app's Terminal, a test or an MCP session) " +
 		"is open on %s; close it there"},
 	{"end the SWD session first", "an SWD session (a flash or an OpenOCD run) is using %s; wait for it to end"},
-	{"stop the sensor emulation first", "I2C-sensor emulation is running on %s; stop it where it was " +
-		"started (the web app, the SDK, or MCP disable_i2c_sensor)"},
+	{"stop the sensor emulation first", "an emulated sensor is running on %s; stop it with " +
+		"`benchpod sensor stop` (or where it was started: the web app, the SDK or MCP sensor_stop)"},
 	{"stop the SPI session first", "an SPI session is open on %s; end it where it was started " +
 		"(the web app, the SDK or an MCP session)"},
-	{"stop the GPS receiver first", "GPS emulation is running on %s; stop it where it was started " +
-		"(the web app, the SDK, or MCP disable_gps)"},
 }
 
 // translateRefusal rewords a refusal whose firmware text names a raw JSON command: it returns the
@@ -61,6 +59,11 @@ func translateRefusal(msg string) (shown, hint string) {
 		return msg, laVoltageUnsetHint
 	}
 	if m := pinConflictRE.FindStringSubmatch(msg); m != nil {
+		if inst, ok := strings.CutPrefix(m[2], "sensor:"); ok {
+			inst = strings.TrimRight(inst, ";")
+			return "pin conflict: " + m[1] + " is in use by " + m[2], fmt.Sprintf(
+				"the emulated sensor %s is using %s; stop it with `benchpod sensor stop %s`", inst, m[1], inst)
+		}
 		for _, h := range pinReleaseHints {
 			if strings.HasPrefix(m[3], h.prefix) {
 				return "pin conflict: " + m[1] + " is in use by " + m[2], fmt.Sprintf(h.hint, m[1])

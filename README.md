@@ -277,6 +277,7 @@ CLI writes it.
 | `version`     | Format version, `1`. Written on every save; a file without it is version 1. |
 | `connection`  | The default `--connection` value: an address, a device path, `usb` or `embeddedci:<name>`. |
 | `last_serial` | The USB device most recently auto-detected as a pod, probed first next time (CLI only). |
+| `sensor_library` | The sensor library version for `benchpod sensor` and the Python SDK (`latest` or a release); absent means the version each pins. Set it with `benchpod sensor library --version <v> --save`. |
 | `bench_pod_addr` | Legacy: an address saved by old CLI versions, read as `connection` when that is empty. |
 
 Readers ignore keys they do not know. `token.json` next to it holds the
@@ -962,6 +963,158 @@ benchpod adc-range low
 benchpod adc-range test
 ```
 
+### `benchpod sensor`
+
+Emulate sensors for the DUT (pod firmware with the `sensors` capability; older firmware
+gets "this pod's firmware is too old for sensor emulation; update the firmware"). The pod
+plays I2C, SPI and UART sensors on LA channels and analog sensors on its analog outputs,
+from a **definition** in YAML or JSON (the format of the public sensor library,
+[github.com/embeddedci-com/benchpod-sensors](https://github.com/embeddedci-com/benchpod-sensors),
+`docs/format.md`). Up to 4 I2C sensors (on one bus or several), 1 SPI sensor and 1 UART
+sensor run at once, each an instance with a name (`[a-z0-9_]{1,32}`, the definition's
+`name` by default). A sensor keeps running after the command that started it, until
+`benchpod sensor stop`, a reboot or a firmware update. The pod commands work over the
+network and through embeddedci.com; `library`, `export` and an offline `validate` need no
+pod.
+
+A definition argument is a file (`.yaml`, `.yml` or `.json`), `-` for stdin, or the name
+of a library entry (`bme280`). YAML is read with the YAML 1.2 rules: only `true` and
+`false` are booleans, so a key such as `on:` stays the word "on".
+
+**The sensor library.** This CLI pins a library version (0.1.0) and carries its files, so
+the default works offline and never changes under a script. Pick another version, or
+`latest`, with `--version`, the `BENCHPOD_SENSOR_LIBRARY` environment variable, or
+`sensor_library` in `config.json` (`benchpod sensor library --version latest --save`), in
+that order. Other versions are downloaded once from the library's GitHub release and
+cached per version under the user cache directory (`<cache>/embeddedci/benchpod-sensors`,
+moved with `BENCHPOD_SENSOR_CACHE`; the Python SDK uses the same cache). Without a
+network the cache serves, then the built-in version, with a warning.
+
+```bash
+benchpod la pullup 1 on && benchpod la pullup 2 on      # I2C needs pull-ups
+benchpod sensor start bme280 --pin sda=2 --pin scl=1 --set temperature_c=22.5
+benchpod sensor set bme280 temperature_c=40
+benchpod sensor fault bme280 no_response --duration 2s
+benchpod sensor status
+benchpod sensor stop
+```
+
+### `benchpod sensor library`
+
+List the library's definitions and stimuli (name, kind, label) and the version in use.
+
+| Flag        | Default | Purpose                                                                 |
+|-------------|---------|-------------------------------------------------------------------------|
+| `--version` | (none)  | Library version: `latest`, a release such as `0.2.0`, or `default` (the pinned one). |
+| `--save`    | `false` | Save `--version` in `config.json` (`sensor_library`) for the CLI and the Python SDK; `default` clears it. |
+| `--offline` | `false` | Do not download: use the cache or the built-in version.                 |
+
+### `benchpod sensor export <name>`
+
+Write a library definition (YAML, as stored) to stdout or a file: a starting point for
+your own part.
+
+| Flag              | Default | Purpose                                                       |
+|-------------------|---------|---------------------------------------------------------------|
+| `--output`, `-o`  | (stdout) | Write to this file.                                          |
+| `--version`       | (none)  | Library version (default: the pinned one, or the saved one).  |
+| `--format-doc`    | `false` | Write the library's format reference (`docs/format.md`) instead. |
+
+```bash
+benchpod sensor export bmp280 -o sensors/my_baro.yaml
+```
+
+### `benchpod sensor validate <file|name>`
+
+Check a definition. The header (`format: 1`, `kind`, `name`, `params`, at most 32 KB of
+JSON) is checked here; with a pod connection (`--connection` or the saved one) the pod
+then compiles it without keeping it (a dry-run `sensor_define`) and reports the params,
+or the error with its place, for example `registers[4].s16be: unknown name 'ax' at 17`.
+
+| Flag        | Default | Purpose                                              |
+|-------------|---------|------------------------------------------------------|
+| `--version` | (none)  | Library version for a library name.                  |
+| `--offline` | `false` | Check the header only, even with a pod connection.   |
+
+### `benchpod sensor start <file|name>`
+
+Upload a definition (in chunks small enough for a cloud command) and start it. Set the
+LA voltage first, and the pull-ups for I2C. I2C, SPI and UART sensors run on the pod's
+emulation FPGA image, which it loads when another runs (about a second); the DAC control
+loop and deep DAC replay are unavailable meanwhile. Starting an instance that runs
+replaces it. It prints the params `sensor set` takes.
+
+| Flag         | Default | Purpose |
+|--------------|---------|---------|
+| `--pin`      | (none)  | `role=channel`, repeatable. I2C `sda`, `scl` (default: the wiring profile's `i2c_sda`/`i2c_scl` on embeddedci.com) and `drdy`; SPI `sclk`, `mosi`, `miso`, `cs` (default: the profile's `spi_*`) and `drdy`; UART `tx` (pod to DUT RX) and `rx`; analog `output=dac` (default) or `output=current`. A channel is `1`-`14` or `la1`-`la14`; another word is a wiring name the pod resolves. |
+| `--instance` | (the definition's name) | Instance name, `[a-z0-9_]{1,32}`. |
+| `--address`  | (none)  | I2C: the definition's address or one of its `alt_addresses` (`0x77`). |
+| `--set`      | (none)  | Initial value as `key=number`, repeatable. |
+| `--baud`     | `0` (the definition's) | UART: override the baud rate. |
+| `--version`  | (none)  | Library version for a library name. |
+
+```bash
+benchpod sensor start gps_nmea --instance gps --pin tx=9 --set lat_deg=50.85 --set lon_deg=4.35
+benchpod sensor start sensors/my_adc.yaml --pin sda=2 --pin scl=1 --address 0x49
+```
+
+### `benchpod sensor set <instance> <key=value>...`
+
+Change what a running sensor reports; the DUT sees it on its next read or message. The
+pod refuses a value outside its param's range and names the range. No flags.
+
+### `benchpod sensor stimulus`
+
+A stimulus plays sensor values (and faults) over time; one is loaded at a time and it may
+drive several instances (`env.temperature_c`, or `temperature_c` when one runs).
+
+### `benchpod sensor stimulus load <file>`
+
+Upload a stimulus, replacing the loaded one. A `data` segment's `file:` (CSV `t,value`,
+relative to the stimulus file) is sent inline. No flags.
+
+### `benchpod sensor stimulus start`
+
+Play the loaded stimulus. It ends after its last segment (signals hold their last value)
+unless it has `repeat: true`.
+
+| Flag   | Default | Purpose                                         |
+|--------|---------|-------------------------------------------------|
+| `--at` | `0s`    | Start this far into the stimulus, e.g. `12.5s`. |
+
+### `benchpod sensor stimulus stop`
+
+Stop the stimulus; the values stay where it left them. No flags.
+
+### `benchpod sensor fault <instance> <type|clear>`
+
+Make a running sensor misbehave now: `stuck`, `offset`, `gain`, `no_response`, `corrupt`,
+`bus_stuck`, `garbage`, `drop`, `baud_error`, `open` or `short` (see the format's faults
+section). `clear` ends its faults.
+
+| Flag         | Default | Purpose |
+|--------------|---------|---------|
+| `--duration` | `0s` (until cleared) | How long the fault lasts, e.g. `2s`. |
+| `--param`    | (none)  | The param a `stuck`, `offset` or `gain` fault applies to. |
+| `--value`    | (none)  | `offset` or `gain` amount, `drop` probability, `baud_error` percent, or a `stuck`/`open`/`short` value. |
+| `--register` | (none)  | `corrupt`: the register (`0xF9`). |
+| `--mask`     | (none)  | `corrupt`: the XOR mask (`0x01`). |
+| `--rate`     | (none)  | `garbage`: bytes per second (the pod's default is 100). |
+
+### `benchpod sensor stop [instance]`
+
+Stop an instance, or every one when none is named: the pod releases its pins and forgets
+the definition. No flags.
+
+### `benchpod sensor status`
+
+The running sensors (pins, address, values, faults, bus counters such as `transfers`),
+the stimulus and the FPGA image.
+
+| Flag     | Default | Purpose                          |
+|----------|---------|----------------------------------|
+| `--json` | `false` | Print the pod's reply as JSON.   |
+
 ### `benchpod la`
 
 Logic-analyzer pin control: the bank voltage, pull-ups and step pulses. Pins are
@@ -972,7 +1125,7 @@ embeddedci.com; `la voltage` also works over USB.
 
 Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
 (also `1800mV`, `3.3` or `3300`). Leave it out to show the setting. The pod refuses
-LA capture, UART, SWD flash, pull-ups and I2C-sensor emulation until it is set;
+LA capture, UART, SWD flash, pull-ups and sensor emulation until it is set;
 1.8 V needs a v3 pod, and the pod refuses a change while an LA pin is in use. Works
 over the network, over USB and through embeddedci.com. No flags.
 

@@ -145,6 +145,8 @@ type podWiring struct {
 	SwdSwdio  *int   `json:"swd_swdio"`
 	SwdNreset *bool  `json:"swd_nreset"`
 	SwdTarget string `json:"swd_target"`
+	I2cSda    *int   `json:"i2c_sda"`
+	I2cScl    *int   `json:"i2c_scl"`
 	SpiSclk   *int   `json:"spi_sclk"`
 	SpiMosi   *int   `json:"spi_mosi"`
 	SpiMiso   *int   `json:"spi_miso"`
