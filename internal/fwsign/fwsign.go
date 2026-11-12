@@ -9,7 +9,7 @@
 //
 //	 0  4 magic "BPSG"
 //	 4  2 format (1)
-//	 6  1 target: 0 firmware, 1 gw0, 2 gw1, 3 esp
+//	 6  1 target: 0 firmware, 1 gw0, 2 gw1, 3 esp, 6 bridge, 7 gw2
 //	 7  1 flags
 //	 8  4 image size
 //	12 32 SHA-256 of the image
@@ -65,11 +65,12 @@ const (
 	TargetGW1      uint8 = 2
 	TargetESP      uint8 = 3
 	TargetBridge   uint8 = 6 // the Wi-Fi bridge's firmware (4 and 5, ca and tls, are not signed)
+	TargetGW2      uint8 = 7 // gateware image 2, the sensor emulation image (gateware v54+)
 )
 
-var targetNames = []string{"firmware", "gw0", "gw1", "esp", "", "", "bridge"}
+var targetNames = []string{"firmware", "gw0", "gw1", "esp", "", "", "bridge", "gw2"}
 
-// TargetByName maps "firmware", "gw0", "gw1", "esp", "bridge" to its number.
+// TargetByName maps "firmware", "gw0", "gw1", "esp", "bridge", "gw2" to its number.
 func TargetByName(name string) (uint8, bool) {
 	for i, n := range targetNames {
 		if n != "" && n == name {

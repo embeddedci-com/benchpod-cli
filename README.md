@@ -1288,7 +1288,7 @@ blob's signature is reported; for now a missing or failing one never stops it.
 |-------------|-----------------|----------------------------------------------------------------|
 | `--release` | (the pod's)     | Take the blobs from this firmware release tag.                 |
 | `--dir`     | (none)          | Take the blobs from this directory (holding `blobs-manifest.json`), e.g. `stm32h563/build/blobs`. |
-| `--only`    | (all)           | Comma-separated slots to install: `gw0`, `gw1`, `esp`.         |
+| `--only`    | (all)           | Comma-separated slots to install: `gw0`, `gw1`, `gw2` (the sensor emulation image, gateware v54+), `esp`. |
 | `--force`   | off             | Install even the blobs the pod already holds.                  |
 
 ### `benchpod dfu`

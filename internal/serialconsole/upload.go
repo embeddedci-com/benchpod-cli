@@ -50,7 +50,7 @@ const uploadChunkAttempts = 5
 
 // BlobSlot is one line of the firmware's `blobs` command.
 type BlobSlot struct {
-	Name    string // "gw0", "gw1", "esp", "bridge" (the Wi-Fi bridge's firmware, on pods that support one)
+	Name    string // "gw0", "gw1", "gw2", "esp", "bridge" (the Wi-Fi bridge's firmware, on pods that support one)
 	State   string // "ok", "outdated", "missing", "unknown" (against the blobs the firmware was built with)
 	Size    int
 	Version int
@@ -102,7 +102,7 @@ func parseBlobs(out string) []BlobSlot {
 	return slots
 }
 
-// Upload sends data to target ("firmware", "gw0", "gw1", "esp") and commits it. version is
+// Upload sends data to target ("firmware", "gw0", "gw1", "gw2", "esp") and commits it. version is
 // stored with a gateware blob (0 = unknown). progress, when non-nil, is called after each chunk.
 // A firmware commit resets the pod: Upload then returns nil once the pod says "resetting".
 func (c *Console) Upload(ctx context.Context, target string, data []byte, version int, progress func(done, total int)) error {

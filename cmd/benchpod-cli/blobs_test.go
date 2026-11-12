@@ -39,19 +39,21 @@ func TestBlobsToInstall(t *testing.T) {
 		{Name: "gw0", File: "blob-gw0.bin", Size: 10, SHA256: "aa"},
 		{Name: "gw1", File: "blob-gw1.bin", Size: 10, SHA256: "bb"},
 		{Name: "esp", File: "blob-esp.bin", Size: 20, SHA256: "cc"},
+		{Name: "gw2", File: "blob-gw2.bin", Size: 30, SHA256: "ee"}, // the emulation image (v54+)
 		{Name: "gw9", File: "blob-gw9.bin", Size: 5, SHA256: "dd"}, // a slot this pod does not have
 	}}
 	slots := []serialconsole.BlobSlot{
 		{Name: "gw0", State: "ok", Size: 10, SHA256: "AA"},
 		{Name: "gw1", State: "outdated", Size: 10, SHA256: "b0"},
 		{Name: "esp", State: "missing"},
+		{Name: "gw2", State: "missing"},
 	}
 	got := blobsToInstall(m, slots, false)
-	if len(got) != 2 || got[0].Name != "gw1" || got[1].Name != "esp" {
+	if len(got) != 3 || got[0].Name != "gw1" || got[1].Name != "esp" || got[2].Name != "gw2" {
 		t.Fatalf("to install: %+v", got)
 	}
-	if all := blobsToInstall(m, slots, true); len(all) != 3 {
-		t.Fatalf("force installs %d, want 3", len(all))
+	if all := blobsToInstall(m, slots, true); len(all) != 4 {
+		t.Fatalf("force installs %d, want 4", len(all))
 	}
 }
 
