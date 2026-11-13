@@ -267,8 +267,11 @@ func runFlashSelfNetwork(g *globalFlags, f *flashSelfFlags, changed func(string)
 		if _, berr := target.Blobs(ctx); errors.Is(berr, serialconsole.ErrNoBlobSlots) {
 			fmt.Fprintln(os.Stderr, "flash-self: this firmware keeps its blobs built in; nothing to install")
 		} else if berr != nil {
-			err = fmt.Errorf("flash-self: the firmware is updated, but reading the pod's blob slots failed, so its blobs are not installed (retry with `benchpod install-blobs`): %w", berr)
-		} else if installed, berr = installBlobsList(ctx, target, src, false, nil); berr != nil {
+			// The firmware is in: warn, naming what was skipped, rather than fail the update.
+			fmt.Fprintln(os.Stderr, blobStatusWarning(ctx, src, &blobStatusError{err: berr}))
+		} else if installed, berr = installBlobsList(ctx, target, src, false, nil); errors.As(berr, new(*blobStatusError)) {
+			fmt.Fprintln(os.Stderr, blobStatusWarning(ctx, src, berr))
+		} else if berr != nil {
 			err = fmt.Errorf("flash-self: the firmware is updated, but installing its blobs failed (retry with `benchpod install-blobs`): %w", berr)
 		}
 	}
