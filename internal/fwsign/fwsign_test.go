@@ -156,7 +156,10 @@ func TestTargetNames(t *testing.T) {
 		t.Fatalf("bridge: %d %v", n, ok)
 	}
 	// 4 and 5 (ca, tls) are not signed targets: no name, and "" maps to nothing.
-	if _, ok := TargetByName(""); ok || TargetName(4) != "" || TargetName(7) != "" {
+	if n, ok := TargetByName("gw2"); !ok || TargetGW2 != 7 || n != TargetGW2 || TargetName(7) != "gw2" {
+		t.Fatalf("gw2: %d %v", n, ok)
+	}
+	if _, ok := TargetByName(""); ok || TargetName(4) != "" || TargetName(8) != "" {
 		t.Fatal("unsigned targets must not resolve")
 	}
 }

@@ -1,0 +1,71 @@
+format: 1
+kind: i2c
+name: sht3x
+label: "Sensirion SHT3x: temperature and humidity"
+description: |
+  Single-shot measurements without clock stretching (0x2400, 0x240B, 0x2416: high, medium and
+  low repeatability; reads are not acknowledged until the measurement time has passed, as on the
+  part), the clock-stretching ones (0x2C06, 0x2C0D, 0x2C10: the answer is ready at once, so the
+  pod never needs to stretch), periodic mode (every 0x20xx..0x27xx and ART command is
+  acknowledged; fetch data 0xE000 returns the current reading), the status register (0xF32D),
+  the serial number (0x3780 and 0x3682), break (0x3093), soft reset (0x30A2), heater on/off and
+  clear status. Each answer word comes with its CRC-8.
+
+  The status register reads 0x8010 (alert pending, reset detected) and does not follow the heater
+  or clear-status commands; the soft reset changes nothing.
+datasheet: https://sensirion.com/products/catalog/SHT31-DIS-B
+version: 1.0.0
+license: Apache-2.0
+
+params:
+  - { key: temperature_c, unit: C, min: -40, max: 125, default: 25, label: Temperature }
+  - { key: humidity_pct, unit: "%", min: 0, max: 100, default: 40, label: Humidity }
+
+i2c:
+  address: 0x44
+  alt_addresses: [0x45]
+  register_address_bits: 16  # no page: commands in any high byte (needs firmware 3.10.2)
+
+functions:
+  word_crc:                  # a data word and its CRC, as every SHT3x answer word
+    args: [w, n]
+    return: "n == 0 ? byte(w, 1) : n == 1 ? byte(w, 0) : crc8(0x31, 0xFF, byte(w, 1), byte(w, 0))"
+
+let:
+  - st: "sat_u16((temperature_c + 45) * 65535 / 175)"     # datasheet 4.13
+  - srh: "sat_u16(humidity_pct * 65535 / 100)"
+
+commands:                    # maximum measurement durations, datasheet table 4
+  - { command: 0x2400, busy_us: 15000, answer: &measure ["word_crc(st, 0)", "word_crc(st, 1)", "word_crc(st, 2)", "word_crc(srh, 0)", "word_crc(srh, 1)", "word_crc(srh, 2)"] }
+  - { command: 0x240B, busy_us: 6000, answer: *measure }
+  - { command: 0x2416, busy_us: 4000, answer: *measure }
+  - { command: 0x2C06, answer: *measure }              # clock stretching: ready at once
+  - { command: 0x2C0D, answer: *measure }
+  - { command: 0x2C10, answer: *measure }
+  - { command: 0xE000, answer: *measure }              # fetch data (periodic mode)
+  - { command: 0xF32D, answer: ["word_crc(0x8010, 0)", "word_crc(0x8010, 1)", "word_crc(0x8010, 2)"] }
+  - { command: 0x3780, answer: &serial ["word_crc(0x1A2B, 0)", "word_crc(0x1A2B, 1)", "word_crc(0x1A2B, 2)", "word_crc(0x3C4D, 0)", "word_crc(0x3C4D, 1)", "word_crc(0x3C4D, 2)"] }
+  - { command: 0x3682, answer: *serial }
+  # acknowledged only: periodic mode (0.5, 1, 2, 4 and 10 measurements per second), ART, break,
+  # soft reset, heater on/off, clear status
+  - { command: 0x2032 }
+  - { command: 0x2024 }
+  - { command: 0x202F }
+  - { command: 0x2130 }
+  - { command: 0x2126 }
+  - { command: 0x212D }
+  - { command: 0x2236 }
+  - { command: 0x2220 }
+  - { command: 0x222B }
+  - { command: 0x2334 }
+  - { command: 0x2322 }
+  - { command: 0x2329 }
+  - { command: 0x2737 }
+  - { command: 0x2721 }
+  - { command: 0x272A }
+  - { command: 0x2B32 }
+  - { command: 0x3093 }
+  - { command: 0x30A2 }
+  - { command: 0x306D }
+  - { command: 0x3066 }
+  - { command: 0x3041 }

@@ -1,0 +1,52 @@
+format: 1
+kind: i2c
+name: ina219
+label: "TI INA219: current, bus voltage and power monitor"
+description: |
+  A shunt monitor on a high-side shunt: set the current, the bus voltage and the shunt resistor.
+  SHUNT_VOLTAGE follows the PGA range the DUT writes to CONFIGURATION (40 to 320 mV, it
+  saturates), BUS_VOLTAGE follows BRNG (16 or 32 V) and carries CNVR and OVF, and CURRENT and
+  POWER are computed from the CALIBRATION the DUT writes, as the part does (CURRENT = shunt
+  voltage x calibration / 4096, POWER = CURRENT x bus voltage / 5000; both 0 until the DUT writes
+  a calibration). CALIBRATION reads back with bit 0 clear. A reset (CONFIGURATION bit 15) reloads
+  the power-on image. CNVR does not clear when POWER is read.
+datasheet: https://www.ti.com/product/INA219
+version: 1.0.0
+license: Apache-2.0
+
+params:
+  - { key: current_a, unit: A, min: -10, max: 10, default: 0.5, label: Current }
+  - { key: bus_v, unit: V, min: 0, max: 32, default: 12, label: Bus voltage }
+  - { key: shunt_ohm, unit: ohm, min: 0.001, max: 10, default: 0.1, label: Shunt resistor }
+
+i2c:
+  address: 0x40
+  alt_addresses: [0x41, 0x44, 0x45]
+  register_bytes: 2          # 16-bit registers, MSB first (needs firmware 3.10.2)
+
+let:
+  - pg: "bits(reg[0x00], 12, 11)"                       # CONFIGURATION PG
+  - brng: "bit(reg[0x00], 13)"                          # BRNG: 0 = 16 V, 1 = 32 V
+  - mode: "bits(reg[0x00], 2, 0)"
+  - shunt_fs: "4000 << pg"                              # full scale in 10 uV steps
+  - shunt_raw: "clamp(round(current_a * shunt_ohm / 0.00001), -shunt_fs, shunt_fs)"
+  - bus_raw: "clamp(round(bus_v / 0.004), 0, brng ? 8000 : 4000)"
+  - cal: "reg[0x05] & 0xFFFE"                           # CALIBRATION as written (FS0 reads 0)
+  - cur_full: "idiv(shunt_raw * cal, 4096)"
+  - pwr_full: "idiv(abs(cur_full) * bus_raw, 5000)"
+  - ovf: "abs(cur_full) > 32767 || pwr_full > 65535 ? 1 : 0"
+  - cnvr: "mode != 0 && mode != 4 ? 1 : 0"                # not in power-down or ADC off
+
+registers:
+  - { at: 0x00, u16be: 0x399F, name: CONFIGURATION }    # the DUT's writes stay
+  - { at: 0x01, s16be: "shunt_raw", name: SHUNT_VOLTAGE, writable: false }
+  - { at: 0x02, u16be: "(bus_raw << 3) | (cnvr << 1) | ovf", name: BUS_VOLTAGE, writable: false }
+  - { at: 0x03, u16be: "cal ? pwr_full : 0", name: POWER, writable: false }
+  - { at: 0x04, s16be: "cal ? cur_full : 0", name: CURRENT, writable: false }
+  - { at: 0x05, u16be: 0, name: CALIBRATION }           # the DUT's writes stay
+
+on_write:
+  - when: "written == 0x00 && (value & 0x8000)"         # RST (bit 15)
+    do: reset
+  - when: "written == 0x05"                             # FS0 is not stored
+    do: { set: { at: 0x05, u16be: "value & 0xFFFE" } }

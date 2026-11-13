@@ -1,0 +1,31 @@
+format: 1
+kind: stimulus
+name: gps_drive
+label: "A short drive with a tunnel"
+description: |
+  Starts parked, accelerates north to 50 km/h, turns east, speeds up to 90 km/h, loses the fix in
+  a tunnel (60 s to 75 s, with sentences dropped on the way in), then slows down and stops.
+  Drives the `gps_nmea` sensor.
+signals:
+  lat_deg:
+    - { shape: hold, value: 37.7749, duration_s: 0 }
+  lon_deg:
+    - { shape: hold, value: -122.4194, duration_s: 0 }
+  speed_kmh:
+    - { shape: hold, value: 0, duration_s: 10 }
+    - { shape: ramp, end: 50, duration_s: 15 }
+    - { shape: hold, value: 50, duration_s: 15 }
+    - { shape: ramp, end: 90, duration_s: 10 }
+    - { shape: hold, value: 90, duration_s: 40 }
+    - { shape: ramp, end: 0, duration_s: 20 }
+  course_deg:
+    - { shape: hold, value: 0, duration_s: 35 }
+    - { shape: ramp, end: 90, duration_s: 5 }
+    - { shape: hold, value: 90, duration_s: 70 }
+  fix:
+    - { shape: hold, value: 1, duration_s: 60 }
+    - { shape: step, value: 0 }
+    - { shape: hold, value: 0, duration_s: 15 }
+    - { shape: step, value: 1 }
+faults:
+  - { at_s: 55, duration_s: 5, type: drop, value: 0.5 }

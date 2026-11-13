@@ -19,7 +19,7 @@ import (
 // ── la voltage ──────────────────────────────────────────────────────────────
 //
 // The LA bank I/O voltage (firmware la_voltage / console la-voltage). The pod refuses every LA
-// operation (capture, UART, SWD flash, pull-ups, I2C-sensor emulation) until it is set, so this
+// operation (capture, UART, SWD flash, pull-ups, sensor emulation) until it is set, so this
 // is the first thing a bench needs. It works over the network and over USB.
 
 const laVoltageMissing = "this firmware has no LA voltage selection; update the pod's firmware"
@@ -30,7 +30,7 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 		Short: "Show or set the LA bank I/O voltage (1.8V or 3.3V, the DUT's logic level)",
 		Long: "Show or set the voltage of the pod's LA bank (LA1-LA14), which must match the\n" +
 			"DUT's I/O voltage. The pod refuses LA capture, UART, SWD flash, pull-ups and\n" +
-			"I2C-sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
+			"sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
 			"VOLTAGE is 1.8V or 3.3V (also 1800mV, 3.3, or 3300). Omit it to show the\n" +
 			"current setting. Works over the network, over USB (--connection usb) and through\n" +

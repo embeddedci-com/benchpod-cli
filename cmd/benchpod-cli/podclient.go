@@ -145,10 +145,39 @@ type podWiring struct {
 	SwdSwdio  *int   `json:"swd_swdio"`
 	SwdNreset *bool  `json:"swd_nreset"`
 	SwdTarget string `json:"swd_target"`
+	I2cSda    *int   `json:"i2c_sda"`
+	I2cScl    *int   `json:"i2c_scl"`
 	SpiSclk   *int   `json:"spi_sclk"`
 	SpiMosi   *int   `json:"spi_mosi"`
 	SpiMiso   *int   `json:"spi_miso"`
 	SpiCs     *int   `json:"spi_cs"`
+	// Signals are the profile's named DUT signals ("DRDY" on LA7).
+	Signals []struct {
+		Name string `json:"name"`
+		LA   int    `json:"la"`
+	} `json:"signals"`
+}
+
+// channel is the LA channel a wiring name stands for: a role ("i2c_sda", "spi_cs") or a signal
+// name (case does not matter). ok is false when the profile does not have it.
+func (w *podWiring) channel(name string) (int, bool) {
+	if w == nil {
+		return 0, false
+	}
+	n := strings.ToLower(strings.TrimSpace(name))
+	for role, la := range map[string]*int{"swd_swclk": w.SwdSwclk, "swd_swdio": w.SwdSwdio,
+		"i2c_sda": w.I2cSda, "i2c_scl": w.I2cScl, "spi_sclk": w.SpiSclk, "spi_mosi": w.SpiMosi,
+		"spi_miso": w.SpiMiso, "spi_cs": w.SpiCs} {
+		if role == n && la != nil {
+			return *la, true
+		}
+	}
+	for _, s := range w.Signals {
+		if strings.ToLower(s.Name) == n && s.LA >= 1 {
+			return s.LA, true
+		}
+	}
+	return 0, false
 }
 
 // wiringSource names where defaulted pins came from, in log lines.

@@ -101,9 +101,8 @@ func TestPinConflictHintsAreTranslated(t *testing.T) {
 		{"gpio", "pin_hint_gpio", "holds LA4 as a GPIO"},
 		{"uart_rx", "pin_hint_uart", "UART session"},
 		{"swd_clk", "pin_hint_swd", "SWD session"},
-		{"i2c_sda", "pin_hint_sensor", "disable_i2c_sensor"},
+		{"i2c_sda", "pin_hint_sensor", "benchpod sensor stop"},
 		{"spi_sck", "pin_hint_spi", "SPI session"},
-		{"gps_tx", "pin_hint_gps", "disable_gps"},
 	} {
 		msg := "pin conflict: LA4 is in use by " + tc.owner + "; " + fwrefusals.Example(tc.hintID)
 		err := withRefusalHint(fmt.Errorf("la step: %w", &tcpclient.PodError{Reason: msg}))
@@ -113,6 +112,28 @@ func TestPinConflictHintsAreTranslated(t *testing.T) {
 		if !strings.Contains(err.Error(), "pin conflict: LA4 is in use by "+tc.owner) || exitCode(err) != exitRefused {
 			t.Errorf("%s: got %v (exit %d)", tc.hintID, err, exitCode(err))
 		}
+	}
+	// A user-defined sensor instance owns its pins as sensor:<instance>.
+	msg0 := `pin conflict: LA2 is in use by sensor:env; stop the sensor emulation first ({"cmd":"sensor_stop","instance":"env"})`
+	if err := withRefusalHint(&tcpclient.PodError{Reason: msg0}); !strings.Contains(err.Error(), "`benchpod sensor stop env`") ||
+		strings.Contains(err.Error(), `{"cmd"`) {
+		t.Fatalf("got %v", err)
+	}
+	// The firmware also names the pin's function, and a shared I2C line "sensor:env+1".
+	msg1 := `pin conflict: LA2 is in use by sensor:env+1 (i2c_sda); stop the sensor emulation first ({"cmd":"sensor_stop","instance":"env"})`
+	if shown, hint := translateRefusal(msg1); shown != "pin conflict: LA2 is in use by sensor:env+1 (i2c_sda)" ||
+		!strings.Contains(hint, "`benchpod sensor stop env`") {
+		t.Fatalf("got %q / %q", shown, hint)
+	}
+	// The emulation image refusals name the CLI's commands.
+	msg2 := `control loop is not in the emulation image, which the emulated sensors use: {"cmd":"sensor_stop","all":true} then {"cmd":"fpga_image","image":"loop"}`
+	if shown, hint := translateRefusal(msg2); shown != "control loop is not in the emulation image, which the emulated sensors use" ||
+		hint != "stop the sensors with `benchpod sensor stop`, then switch with `benchpod sensor image loop`" {
+		t.Fatalf("got %q / %q", shown, hint)
+	}
+	msg3 := `image switch refused: the emulated sensors env, imu need the emulation image; stop them first ({"cmd":"sensor_stop","all":true})`
+	if shown, hint := translateRefusal(msg3); strings.Contains(shown, `{"cmd"`) || !strings.Contains(hint, "benchpod sensor stop") {
+		t.Fatalf("got %q / %q", shown, hint)
 	}
 	// The pinned example renders the gpio case.
 	if shown, hint := translateRefusal(fwrefusals.Example("pin_conflict")); shown != "pin conflict: LA4 is in use by gpio" || hint == "" {

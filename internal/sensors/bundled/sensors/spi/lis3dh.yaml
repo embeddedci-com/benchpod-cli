@@ -1,0 +1,68 @@
+format: 1
+kind: spi
+name: lis3dh
+label: "ST LIS3DH: 3-axis accelerometer (SPI)"
+description: |
+  Direct reads of the data registers: the output follows the full scale (CTRL_REG4 FS), the
+  operating mode (low-power, normal or high-resolution: 8, 10 or 12 bits, left-justified), the
+  output data rate and axis enables (CTRL_REG1: power-down and disabled axes read 0) and the
+  byte order (CTRL_REG4 BLE). SPI mode 3, address bit 7 selects a read, bit 6 auto increment.
+
+  For a DUT that reads through the FIFO, use `lis3dh_fifo`: the pod pops its FIFO on every read
+  of OUT_X_L, so one definition cannot serve both ways.
+datasheet: https://www.st.com/en/mems-and-sensors/lis3dh.html
+version: 1.0.0
+license: Apache-2.0
+
+params:
+  - { key: accel_x_g, unit: g, min: -16, max: 16, default: 0, label: X }
+  - { key: accel_y_g, unit: g, min: -16, max: 16, default: 0, label: Y }
+  - { key: accel_z_g, unit: g, min: -16, max: 16, default: 1, label: Z }
+
+spi:
+  mode: 3
+  read_bit: { bit: 7, value: 1 }
+  increment_bit: { bit: 6, value: 1 }
+  address_mask: 0x3F
+
+functions:
+  sample:                    # one axis as the 16-bit left-justified output word
+    args: [g, en]
+    let:
+      - v: "clamp(round(g * 1000 / sens), -(1 << (nbits - 1)), (1 << (nbits - 1)) - 1)"
+    return: "on && en ? v << (16 - nbits) : 0"
+  out:                       # byte n (0 = the register at the lower address) of an axis word
+    args: [w, n]
+    return: "ble ? byte(w, 1 - n) : byte(w, n)"
+
+let:
+  - odr: "bits(reg[0x20], 7, 4)"                       # CTRL_REG1 ODR
+  - lp: "bit(reg[0x20], 3)"                            # LPen
+  - hr: "bit(reg[0x23], 3) && !lp"                     # CTRL_REG4 HR
+  - fs: "bits(reg[0x23], 5, 4)"
+  - ble: "bit(reg[0x23], 6)"
+  - on: "odr != 0 && odr <= 9"
+  - nbits: "lp ? 8 : hr ? 12 : 10"
+  - sens: "lp ? [16, 32, 64, 192][fs] : hr ? [1, 2, 4, 12][fs] : [4, 8, 16, 48][fs]"   # mg/digit, table 4
+  - wx: "sample(accel_x_g, bit(reg[0x20], 0))"
+  - wy: "sample(accel_y_g, bit(reg[0x20], 1))"
+  - wz: "sample(accel_z_g, bit(reg[0x20], 2))"
+
+registers:
+  - { at: 0x07, u8: 0x00, name: STATUS_REG_AUX }
+  - { at: 0x0F, u8: 0x33, name: WHO_AM_I, writable: false }
+  - { at: 0x1E, u8: 0x10, name: CTRL_REG0 }
+  - { at: 0x1F, u8: 0x00, name: TEMP_CFG_REG }
+  - { at: 0x20, u8: 0x07, name: CTRL_REG1 }            # power-down, all axes enabled
+  - { at: 0x21, u8: 0x00, name: CTRL_REG2 }
+  - { at: 0x22, u8: 0x00, name: CTRL_REG3 }
+  - { at: 0x23, u8: 0x00, name: CTRL_REG4 }
+  - { at: 0x24, u8: 0x00, name: CTRL_REG5 }
+  - { at: 0x25, u8: 0x00, name: CTRL_REG6 }
+  - { at: 0x26, u8: 0x00, name: REFERENCE }
+  - { at: 0x27, u8: "on ? 0x0F : 0x00", name: STATUS_REG }   # ZYXDA, ZDA, YDA, XDA
+  - at: 0x28
+    name: OUT_X_L
+    bytes: ["out(wx, 0)", "out(wx, 1)", "out(wy, 0)", "out(wy, 1)", "out(wz, 0)", "out(wz, 1)"]
+  - { at: 0x2E, u8: 0x00, name: FIFO_CTRL_REG }
+  - { at: 0x2F, u8: 0x20, name: FIFO_SRC_REG, writable: false }   # EMPTY: the FIFO is not used
