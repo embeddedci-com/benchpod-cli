@@ -484,7 +484,7 @@ optionally `at_s`, `duration_s` (default: until cleared), `sensor` (with several
 | `corrupt` | i2c, spi | register `at` reads XOR `mask` (a broken CRC: `at` = the CRC byte) |
 | `bus_stuck` | i2c | SDA held low for `duration_s` (at most 1 s) |
 | `garbage` | uart | random bytes at `rate_hz` instead of the messages |
-| `drop` | uart | each message is dropped with probability `value` (0..1) |
+| `drop` | uart | each epoch (the messages due together, one GPS fix) is dropped whole with probability `value` (0..1) |
 | `baud_error` | uart | the baud rate is off by `value` percent |
 | `open` | analog | output at `range.min` (or `value`) |
 | `short` | analog | output at `range.max` (or `value`) |
