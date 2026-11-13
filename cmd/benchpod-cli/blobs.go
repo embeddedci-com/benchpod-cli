@@ -237,6 +237,9 @@ func installBlobsList(ctx context.Context, console blobTarget, src blobSource, f
 		fmt.Fprintf(os.Stderr, "blobs: %s installed (%.1f s)\n", e.Name, time.Since(start).Seconds())
 		done = append(done, e)
 	}
+	if r, ok := console.(gatewareReloader); ok && installedGateware(done) {
+		r.ReloadStaleGateware(ctx, os.Stderr)
+	}
 	return done, nil
 }
 

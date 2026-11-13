@@ -65,8 +65,8 @@ func newRootCmd() *cobra.Command {
 			"console: status, la voltage, flash (SWD), lan-policy, sig-policy, cloud ca and\n" +
 			"cloud proxy; the rest over the pod's USB network adapter when it is up.\n" +
 			"Through embeddedci.com: status, ping, la voltage, la pullup, la status, la step,\n" +
-			"generate, sensor, lan-policy, sig-policy, cloud ca show/clear, cloud proxy and\n" +
-			"deregister.\n" +
+			"la pins, la dir, i2c, generate, sensor, lan-policy, sig-policy, cloud ca\n" +
+			"show/clear, cloud proxy and deregister.\n" +
 			"Always over the USB console: set-wifi, show-network, clear-wifi, identity,\n" +
 			"install-blobs, bootsel, dfu, usb-bridge and usb-reattach; flash-self reflashes\n" +
 			"the pod over USB DFU. A command that cannot use the connection says so and\n" +
@@ -131,7 +131,7 @@ func newRootCmd() *cobra.Command {
 		}},
 		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{
 			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),
-			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g),
+			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g), newI2CCmd(g),
 		}},
 		{"cloud", "embeddedci.com:", []*cobra.Command{
 			newLoginCmd(g), newLogoutCmd(g), newRegisterCmd(g), newDeregisterCmd(g), newCloudCmd(g), newVisionCmd(g),

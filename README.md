@@ -201,7 +201,7 @@ Which command works over which connection:
 |---------------------|----------|
 | Network address     | Every pod command except the USB-only ones below. |
 | USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD), `install-blobs`, `cloud ca` and `cloud proxy`; without it the pod's Ethernet or Wi-Fi address, and the console where it still has the command. Firmware before 3.9.0: the console, as before. `lan-policy`, `sig-policy` and `identity` always use the console (physical presence). |
-| `embeddedci:<name>` | `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
+| `embeddedci:<name>` | `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
 | USB only            | `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU. These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
 A command that cannot use the connection it is given says so and names what to use
@@ -317,6 +317,10 @@ benchpod test ...
 benchpod la pullup 3 on                           # LA pin pull-up
 benchpod la status
 benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
+benchpod la pins                                  # every LA pin: function, level, pull-up, direction, warnings
+benchpod la dir 9,10 dut_output                   # the pod refuses push-pull drivers on these pins
+benchpod i2c start --sda 1 --scl 2 --hz 400000    # the pod as an I2C master (gateware v55+)
+benchpod i2c xfer 0x48 --write 0d --read 2        # hex in, hex out
 
 # Network (always over the USB console):
 benchpod set-wifi
@@ -594,7 +598,8 @@ benchpod spi-flash erase $PINS --addr 0 --len 64K    # or --chip
 `write` erases the range the file covers (whole 4 KB sectors, 1 MB per command),
 programs it in 768-byte chunks, and has the pod read every chunk back
 (`--no-erase`, `--no-verify` skip those steps). `--hz` picks the SCK rate (the
-pod rounds down, 190 kHz to 6 MHz) and `--mode` is 0 or 3. 3-byte addresses
+pod rounds down, 190 kHz to 6 MHz) and `--mode` is the SPI mode, 0 to 3 (modes 1
+and 2 need gateware v55 or later). 3-byte addresses
 reach the first 16 MB.
 
 With `--nreset` the DUT is held in reset (its NRST wired to the pod's reset
@@ -1141,8 +1146,8 @@ benchpod sensor stop && benchpod sensor image loop
 
 ### `benchpod la`
 
-Logic-analyzer pin control: the bank voltage, pull-ups and step pulses. Pins are
-`1`-`14` or `la1`-`la14`. All of them work over the network and through
+Logic-analyzer pin control: the bank voltage, pull-ups, step pulses, the pin list and
+pin directions. Pins are `1`-`14` or `la1`-`la14`. All of them work over the network and through
 embeddedci.com; `la voltage` also works over USB.
 
 ### `benchpod la voltage [VOLTAGE]`
@@ -1180,6 +1185,103 @@ Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
 | `--delay-us`  | (required) | The same in microseconds (older form of `--delay`).       |
 | `--dir-la`    | (none)  | Direction pin, driven before stepping.                       |
 | `--direction` | `0`     | Level for `--dir-la`: `0` or `1`.                            |
+
+### `benchpod la pins`
+
+List all 14 LA pins: what each one is used for (and by whom), its GPIO mode and
+level, its live level, its pull resistor, its direction (see `la dir`) and its
+warnings. A warning line follows the table for each pin that has one: a pull-up on
+under a push-pull output (it only costs current), or a pin driven high or pulled up
+while the pod's target power is off (that powers an unpowered DUT through its pins;
+ignore it when the DUT has its own supply). Directions and warnings need gateware v55
+or later; older pods show every pin as `unknown`.
+
+| Flag     | Default | Purpose                          |
+|----------|---------|----------------------------------|
+| `--json` | off     | Print the pod's reply as JSON.   |
+
+### `benchpod la dir [PINS DIR]`
+
+Tell the pod which way each pin's DUT signal goes, so it never drives against the
+DUT. `DIR` is `dut_input`, `dut_output`, `bidir` or `unknown` (the default after a
+restart). `PINS` is a pin, a list or a range (`9`, `9,10`, `9-12`, `la9`), a name from
+the pod's wiring profile (`uart_rx`, `DRDY`), or `all`. On a pin wired to a DUT
+output the pod refuses every push-pull driver: a GPIO output, UART TX, the SPI clock,
+data out and chip select, SWD, step pulses and an emulated sensor's outputs. Open
+drain, I2C and inputs stay allowed. A pin that is driven cannot be marked `dut_output`
+until it is released. With no arguments it lists every pin. Prints the pins it
+changed, in the `la pins` table. Needs gateware v55 or later. No flags.
+
+```bash
+benchpod la dir 9,10 dut_output
+benchpod la dir
+```
+
+### `benchpod i2c`
+
+The pod as an I2C master on any two LA pins (gateware v55 and later): read and write
+registers of a chip on the DUT's board, or scan the bus. `i2c start` opens the
+session and it stays open across runs until `i2c stop`. SWD, SPI and I2C sessions
+exclude each other. Bytes are hex in and hex out. All of them work over the network
+and through embeddedci.com. A pod with older firmware answers with the update it
+needs (`benchpod flash-self`).
+
+```bash
+benchpod la pullup 1 on
+benchpod la pullup 2 on
+benchpod i2c start --sda 1 --scl 2 --hz 400000
+benchpod i2c scan                          # 0x48 0x76
+benchpod i2c xfer 0x48 --write 0d --read 2 # 01 17
+benchpod i2c stop
+```
+
+### `benchpod i2c start`
+
+Claim two LA pins as an I2C master. Pins are `1`-`14` (or `la1`) or names from the
+pod's wiring profile; the ones you leave out are its `i2c_sda` and `i2c_scl`. The bus
+needs pull-ups: with `--pullups pod` both pins must be LA1-LA6 with their pull-up on
+(`benchpod la pullup 1 on`), and the LA bank at 3.3 V. The pod never switches a
+pull-up by itself. Prints the pins and the rate the pod uses: 400 kHz runs at about
+364 kHz, 1 MHz at about 923 kHz, and slow edges (weak pull-ups, long wires) make it a
+bit slower again, never faster.
+
+| Flag        | Default | Purpose                                                             |
+|-------------|---------|---------------------------------------------------------------------|
+| `--sda`     | (profile `i2c_sda`, else required) | LA pin for SDA, 1-14 or a wiring name.   |
+| `--scl`     | (profile `i2c_scl`, else required) | LA pin for SCL, 1-14 or a wiring name.   |
+| `--hz`      | `100000` | SCL rate in Hz, 10000 to 1000000.                                  |
+| `--pullups` | `pod`   | `pod` (the pod's pull-ups on LA1-LA6) or `external` (the board's).  |
+
+### `benchpod i2c xfer <addr>`
+
+Write, read, or write then read one device. `addr` is the 7-bit address (`0x48`,
+`48h` or `72`). `--write` bytes go out after the address; then, after a repeated
+START, `--read` bytes come back (the last one NACKed). With neither it probes the
+address. Prints the bytes read as hex (`01 17`), or `0x48: ack` when nothing was
+read. A byte that is not acknowledged is an error that says which: the address, a
+written byte, or the read.
+
+| Flag      | Default | Purpose                                                        |
+|-----------|---------|----------------------------------------------------------------|
+| `--write` | (none)  | Bytes to write, up to 128, hex: `0d`, `"0d 1f"` or `0x0d1f`.   |
+| `--read`  | `0`     | Bytes to read after the write, 0 to 248.                       |
+
+### `benchpod i2c scan`
+
+Probe each address and print the ones that acknowledge, in hex (`0x48 0x76`).
+
+| Flag     | Default | Purpose                  |
+|----------|---------|--------------------------|
+| `--from` | `0x08`  | First address to probe.  |
+| `--to`   | `0x77`  | Last address to probe.   |
+
+### `benchpod i2c status`
+
+Show the session's pins, rate and pull-ups, or that there is none. No flags.
+
+### `benchpod i2c stop`
+
+End the session and release both pins. No flags.
 
 ### `benchpod flash`
 
@@ -1242,7 +1344,7 @@ come from the pod's wiring profile (see [One wiring profile](#one-wiring-profile
 | `--miso`   | (profile `spi_miso`, else required) | LA pin for MISO, 1-14.                     |
 | `--cs`     | (profile `spi_cs`, else required)   | LA pin for CS, 1-14.                       |
 | `--hz`     | `1000000` | SCK rate in Hz; the pod uses the nearest rate at or below it (190 kHz to 6 MHz). |
-| `--mode`   | `0`       | SPI mode, `0` or `3`.                                                |
+| `--mode`   | `0`       | SPI mode `0` to `3` (CPOL = mode / 2, CPHA = mode % 2); `1` and `2` need gateware v55 or later. |
 | `--nreset` | off       | Hold the DUT in reset through the pod's reset pin for the whole run.  |
 
 ### `benchpod spi-flash id`
@@ -1309,6 +1411,13 @@ default they come from the release that matches the firmware the pod runs. Each
 blob's signature is reported; for now a missing or failing one never stops it.
 When the pod does not list its blob slots (its `blob_status` command fails), it installs
 nothing and exits non-zero with the pod's reason.
+
+After it installs a gateware image over the network API, it checks that the pod runs
+the gateware its firmware carries. Going back from a newer build, the pod can keep
+running the newer gateware (its startup check ran before the new images were in);
+then the CLI reloads the running image from its new slot and says so. `flash-self`
+does the same after it installs the blobs. When the reload fails, restarting the pod
+(tap RESET) loads the right gateware.
 
 | Flag        | Default         | Purpose                                                        |
 |-------------|-----------------|----------------------------------------------------------------|

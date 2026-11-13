@@ -134,7 +134,8 @@ func TestSPIFlagsConfig(t *testing.T) {
 		{sck: "3", mosi: "4", miso: "5", hz: 1},           // cs missing
 		{sck: "3", mosi: "4", miso: "4", cs: "6", hz: 1},  // duplicate
 		{sck: "3", mosi: "4", miso: "5", cs: "15", hz: 1}, // out of range
-		{sck: "3", mosi: "4", miso: "5", cs: "6", hz: 1, mode: 1},
+		{sck: "3", mosi: "4", miso: "5", cs: "6", hz: 1, mode: 4},
+		{sck: "3", mosi: "4", miso: "5", cs: "6", hz: 1, mode: -1},
 		{sck: "3", mosi: "4", miso: "5", cs: "6", hz: 0},
 	} {
 		if _, err := bad.config(); err == nil {
