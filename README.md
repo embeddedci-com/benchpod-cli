@@ -106,7 +106,10 @@ Firmware from 3.5.0 on keeps the iCE40 gateware and the ESP32-C3 Wi-Fi image in 
 W25Q flash rather than in its image. After writing the firmware, `flash-self` waits for the
 pod's USB console and installs the ones it lacks from the same release (or from `blobs/`
 next to a local `.bin`); `install-blobs` does that step on its own, and `set-wifi` runs it
-first when the ESP32-C3 image is missing. `flash-self` also refuses an image that does not
+first when the ESP32-C3 image is missing. If the flashed pod answers but does not list its
+blob slots (its `blob_status` fails), `flash-self` still exits 0, since the firmware is in, but
+prints a warning that names the blobs it skipped; install them with `benchpod install-blobs`,
+which treats the same failure as an error. `flash-self` also refuses an image that does not
 fit the pod's flash (a 1 MB STM32H563 cannot take firmware built for the 2 MB part).
 
 Releases can publish a signed manifest, `<asset>.sig`, next to `bench_pod_stm32.bin` and each
@@ -1304,6 +1307,8 @@ Install the gateware and ESP32-C3 images the pod's firmware goes with (USB: over
 pod's USB network adapter when it is up, firmware 3.9.0+, else its console). By
 default they come from the release that matches the firmware the pod runs. Each
 blob's signature is reported; for now a missing or failing one never stops it.
+When the pod does not list its blob slots (its `blob_status` command fails), it installs
+nothing and exits non-zero with the pod's reason.
 
 | Flag        | Default         | Purpose                                                        |
 |-------------|-----------------|----------------------------------------------------------------|

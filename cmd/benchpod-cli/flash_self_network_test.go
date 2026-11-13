@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 )
 
 // fwNetPod is a pod's network API as flash-self --network uses it: status, identity, ota_* for
@@ -25,6 +29,7 @@ type fwNetPod struct {
 	flashKB int
 	refuse  string // error reply to ota_begin
 	corrupt bool   // ota_end reports a hash mismatch
+	blobErr string // error reply to blob_status (default "unknown cmd": blobs built in)
 	staged  []byte
 	sha     string
 	state   string
@@ -77,6 +82,9 @@ func (p *fwNetPod) handle(req map[string]any) (string, bool) {
 	case "identity_public":
 		return okReply(map[string]any{"public": "pubkey-1"}), false
 	case "blob_status":
+		if p.blobErr != "" {
+			return errReply(p.blobErr), false
+		}
 		return errReply("unknown cmd"), false
 	case "ota_begin":
 		if p.refuse != "" {
@@ -212,5 +220,91 @@ func TestFlashSelfNetworkRefusesCloudAndDFUFlags(t *testing.T) {
 		func(name string) bool { return name == "enter-dfu" }, nil)
 	if err == nil || !strings.Contains(err.Error(), "--enter-dfu is for USB DFU") {
 		t.Fatalf("enter-dfu err = %v", err)
+	}
+}
+
+// blobsDirWith writes a blobs manifest listing names (files need not exist: nothing is fetched
+// when the slots cannot be read).
+func blobsDirWith(t *testing.T, names ...string) string {
+	dir := t.TempDir()
+	var entries []string
+	for _, n := range names {
+		entries = append(entries, fmt.Sprintf(`{"name":%q,"file":"blob-%s.bin","size":10,"sha256":"00"}`, n, n))
+	}
+	m := `{"format":1,"blobs":[` + strings.Join(entries, ",") + `]}`
+	if err := os.WriteFile(filepath.Join(dir, blobsManifestName), []byte(m), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// A pod that answers blob_status with an error (a dev build said "reply too large") must not
+// look like one with nothing to install: flash-self warns, naming the skipped blobs and the
+// retry, and keeps its exit status (the firmware itself is in).
+func TestFlashSelfNetworkWarnsWhenBlobStatusFails(t *testing.T) {
+	fastNetworkFlash(t)
+	pod := &fwNetPod{t: t, version: "3.9.0", flashKB: 2048, blobErr: "reply too large"}
+	addr := pod.start()
+	file, _ := fwImage(t, 2000, 1024)
+	dir := blobsDirWith(t, "gw0", "gw1", "gw2", "esp")
+	var err error
+	out := captureStderr(t, func() {
+		err = runFlashSelfNetwork(&globalFlags{connection: addr, noFirmwareReport: true},
+			&flashSelfFlags{network: true, blobsDir: dir}, noFlagChanged, []string{file})
+	})
+	if err != nil {
+		t.Fatalf("the firmware was flashed; want a warning, got err = %v", err)
+	}
+	for _, want := range []string{"WARNING", "reply too large", "NOT installed: gw0, gw1, gw2, esp", "benchpod install-blobs"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stderr lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "already holds every blob") || strings.Contains(out, "built in") {
+		t.Fatalf("a failed blob_status read as nothing to install:\n%s", out)
+	}
+	if n := strings.Count(pod.cmds(), "ota_begin"); n != 1 {
+		t.Fatalf("installed blobs without a slot listing: %s", pod.cmds())
+	}
+}
+
+// install-blobs (installBlobsList) fails when the pod does not list its slots.
+func TestInstallBlobsFailsWhenBlobStatusFails(t *testing.T) {
+	pod := &fwNetPod{t: t, version: "3.10.3", flashKB: 2048, blobErr: "reply too large"}
+	addr := pod.start()
+	ctx := context.Background()
+	lan, err := openLAN(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lan.s.Close()
+	target := lanBlobs{lan: lan, addr: addr}
+	installed, err := installBlobsList(ctx, target, blobSource{base: blobsDirWith(t, "gw0", "gw2")}, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "reply too large") || !strings.Contains(err.Error(), "no blobs were installed") {
+		t.Fatalf("err = %v, want the blob_status failure", err)
+	}
+	var bs *blobStatusError
+	if !errors.As(err, &bs) || len(installed) != 0 {
+		t.Fatalf("err = %T %v, installed = %v", err, err, installed)
+	}
+	if strings.Contains(pod.cmds(), "ota_begin") {
+		t.Fatalf("sent a blob without a slot listing: %s", pod.cmds())
+	}
+}
+
+// "unknown cmd" still means firmware with its blobs built in, not a failure.
+func TestInstallBlobsBuiltInIsNotABlobStatusFailure(t *testing.T) {
+	pod := &fwNetPod{t: t, version: "3.4.0", flashKB: 2048}
+	addr := pod.start()
+	ctx := context.Background()
+	lan, err := openLAN(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lan.s.Close()
+	_, err = installBlobsList(ctx, lanBlobs{lan: lan, addr: addr}, blobSource{base: blobsDirWith(t, "gw0")}, false, nil)
+	var bs *blobStatusError
+	if !errors.Is(err, serialconsole.ErrNoBlobSlots) || errors.As(err, &bs) {
+		t.Fatalf("err = %v, want ErrNoBlobSlots", err)
 	}
 }

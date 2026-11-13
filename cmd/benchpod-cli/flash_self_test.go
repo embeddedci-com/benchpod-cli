@@ -113,3 +113,29 @@ func TestInstallBlobsAfterFlashFailsWhenTheConsoleNeverReturns(t *testing.T) {
 		t.Fatalf("err = %v, want an error naming install-blobs", err)
 	}
 }
+
+// After a DFU flash, a pod that does not list its blob slots gets a warning naming the skipped
+// blobs and the retry; flash-self keeps its exit status (the firmware itself is in).
+func TestInstallBlobsAfterFlashWarnsWhenTheSlotsAreNotListed(t *testing.T) {
+	oldWait, oldRetry, oldOpen, oldSkip := flashedConsoleWait, flashedConsoleRetry, openFlashedConsole, skipUSBNetForBlobs
+	t.Cleanup(func() {
+		flashedConsoleWait, flashedConsoleRetry, openFlashedConsole, skipUSBNetForBlobs = oldWait, oldRetry, oldOpen, oldSkip
+	})
+	skipUSBNetForBlobs = true
+	openFlashedConsole = func(*globalFlags) (*serialconsole.Console, error) {
+		return serialconsole.NewConsole(&textConsole{status: "  device : benchpod\r\n"}), nil
+	}
+	var err error
+	var installed []blobEntry
+	out := captureStderr(t, func() {
+		_, installed, err = installBlobsAfterFlash(&globalFlags{}, blobSource{base: blobsDirWith(t, "gw0", "gw2", "esp")})
+	})
+	if err != nil || len(installed) != 0 {
+		t.Fatalf("err = %v, installed = %v; want a warning only", err, installed)
+	}
+	for _, want := range []string{"WARNING", "NOT installed: gw0, gw2, esp", "benchpod install-blobs"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stderr lacks %q:\n%s", want, out)
+		}
+	}
+}

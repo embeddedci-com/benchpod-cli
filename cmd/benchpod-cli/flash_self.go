@@ -599,9 +599,16 @@ func installBlobsAfterFlash(g *globalFlags, src blobSource) (after podVersions, 
 			fmt.Fprintln(os.Stderr, "flash-self: this firmware keeps its blobs built in; nothing to install")
 			return after, installed, nil
 		}
-		return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but reading the pod's blob slots failed, so its blobs are not installed (retry with `benchpod install-blobs`): %w", err)
+		// The firmware is in: warn, naming what was skipped, rather than fail the flash.
+		fmt.Fprintln(os.Stderr, blobStatusWarning(ctx, src, &blobStatusError{err: err}))
+		return after, installed, nil
 	}
 	if installed, err = installBlobsList(ctx, target, src, false, nil); err != nil {
+		var bs *blobStatusError
+		if errors.As(err, &bs) {
+			fmt.Fprintln(os.Stderr, blobStatusWarning(ctx, src, bs))
+			return after, installed, nil
+		}
 		return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but installing its blobs failed (retry with `benchpod install-blobs`): %w", err)
 	}
 	return after, installed, nil

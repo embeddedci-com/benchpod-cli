@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -136,6 +137,43 @@ func blobsToInstall(m blobsManifest, slots []serialconsole.BlobSlot, force bool)
 	return out
 }
 
+// blobStatusError is a failed read of the pod's blob slots (blob_status, or the console's
+// `blobs`): nothing can be compared, so nothing is installed.
+type blobStatusError struct{ err error }
+
+func (e *blobStatusError) Error() string {
+	return fmt.Sprintf("the pod did not list its blob slots (blob_status: %v), so no blobs were installed", e.err)
+}
+
+func (e *blobStatusError) Unwrap() error { return e.err }
+
+// blobNamesAt names the blobs the manifest at src lists ("gw0, gw1, gw2, esp"), or a generic
+// phrase when the manifest cannot be read.
+func blobNamesAt(ctx context.Context, src blobSource) string {
+	m, err := loadBlobsManifest(ctx, src)
+	var names []string
+	if err == nil {
+		for _, e := range m.Blobs {
+			if e.Size > 0 && e.File != "" {
+				names = append(names, e.Name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return "the gateware and ESP32-C3 images that go with this firmware"
+	}
+	return strings.Join(names, ", ")
+}
+
+// blobStatusWarning is what flash-self prints when the flashed pod did not list its blob
+// slots: the firmware is in, the blobs are not, and how to retry.
+func blobStatusWarning(ctx context.Context, src blobSource, err error) string {
+	return fmt.Sprintf("flash-self: WARNING: the firmware is flashed, but reading the pod's blob slots failed (%v),\n"+
+		"  so these blobs were NOT installed: %s.\n"+
+		"  The pod may run old or missing gateware until they are. Install them with `benchpod install-blobs`.",
+		errors.Unwrap(err), blobNamesAt(ctx, src))
+}
+
 // installBlobs brings the pod's blob slots in line with the manifest at src, over the USB
 // console. only, when non-empty, limits it to those slot names.
 func installBlobs(ctx context.Context, console blobTarget, src blobSource, force bool, only []string) error {
@@ -147,7 +185,10 @@ func installBlobs(ctx context.Context, console blobTarget, src blobSource, force
 func installBlobsList(ctx context.Context, console blobTarget, src blobSource, force bool, only []string) ([]blobEntry, error) {
 	slots, err := console.Blobs(ctx)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, serialconsole.ErrNoBlobSlots) {
+			return nil, err
+		}
+		return nil, &blobStatusError{err: err}
 	}
 	m, err := loadBlobsManifest(ctx, src)
 	if err != nil {
@@ -263,7 +304,10 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			if strings.TrimSpace(only) != "" {
 				sel = strings.Split(only, ",")
 			}
-			before, _ := target.Blobs(ctx)
+			before, err := target.Blobs(ctx)
+			if err != nil && !errors.Is(err, serialconsole.ErrNoBlobSlots) {
+				return fmt.Errorf("install-blobs: %w", &blobStatusError{err: err})
+			}
 			installed, err := installBlobsList(ctx, target, src, force, sel)
 			if len(installed) > 0 {
 				g.reportFirmware(blobsEvent(ctx, target, before, installed))
