@@ -66,7 +66,7 @@ func TestKeyOrderIsKept(t *testing.T) {
 // The bundled definitions convert to the same JSON as the library's tools/yaml2json.py.
 func TestBundledMatchesYaml2json(t *testing.T) {
 	lib := Bundled()
-	if lib.Version != PinnedVersion || len(lib.Entries) != 5 {
+	if lib.Version != PinnedVersion || len(lib.Entries) != 13 {
 		t.Fatalf("bundled: %s %d entries", lib.Version, len(lib.Entries))
 	}
 	for _, e := range lib.Entries {
@@ -85,7 +85,11 @@ func TestBundledMatchesYaml2json(t *testing.T) {
 		if !reflect.DeepEqual(a, b) {
 			t.Errorf("%s differs from yaml2json.py:\n%s\n%s", e.Name, got, golden)
 		}
-		if err := CheckDefinition(doc); err != nil {
+		check := CheckDefinition
+		if e.Kind == "stimulus" {
+			check = CheckStimulus
+		}
+		if err := check(doc); err != nil {
 			t.Errorf("%s: %v", e.Name, err)
 		}
 	}

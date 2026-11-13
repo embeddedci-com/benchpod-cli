@@ -2,6 +2,11 @@ format: 1
 kind: i2c
 name: sht4x
 label: "Sensirion SHT4x: temperature and humidity"
+description: |
+  Every measure command (high, medium and low repeatability, and the heater variants) and the
+  serial number, each word with its CRC-8. Reads are not acknowledged until the measurement time
+  has passed, as on the part. The pod's command times end at 65.535 ms, so the heater commands
+  (0.1 s and 1 s on the part) answer after 65.535 ms; the heater itself is not modeled.
 datasheet: https://sensirion.com/products/catalog/SHT40
 version: 1.0.0
 license: Apache-2.0

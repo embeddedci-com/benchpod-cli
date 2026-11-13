@@ -3,6 +3,18 @@
   "version": "0.1.0",
   "entries": [
     {
+      "path": "sensors/analog/ntc_10k_divider.yaml",
+      "name": "ntc_10k_divider",
+      "kind": "analog",
+      "label": "NTC 10k thermistor in a voltage divider"
+    },
+    {
+      "path": "sensors/analog/pressure_4_20ma.yaml",
+      "name": "pressure_4_20ma",
+      "kind": "analog",
+      "label": "Pressure transmitter, 0 to 10 bar, 4-20 mA"
+    },
+    {
       "path": "sensors/i2c/bme280.yaml",
       "name": "bme280",
       "kind": "i2c",
@@ -27,10 +39,46 @@
       "label": "Sensirion SHT4x: temperature and humidity"
     },
     {
+      "path": "sensors/spi/lis3dh.yaml",
+      "name": "lis3dh",
+      "kind": "spi",
+      "label": "ST LIS3DH: 3-axis accelerometer (SPI)"
+    },
+    {
+      "path": "sensors/spi/lis3dh_fifo.yaml",
+      "name": "lis3dh_fifo",
+      "kind": "spi",
+      "label": "ST LIS3DH: 3-axis accelerometer with FIFO (SPI)"
+    },
+    {
       "path": "sensors/uart/gps_nmea.yaml",
       "name": "gps_nmea",
       "kind": "uart",
       "label": "GPS receiver: NMEA 0183 (u-blox style defaults)"
+    },
+    {
+      "path": "sensors/uart/mhz19b.yaml",
+      "name": "mhz19b",
+      "kind": "uart",
+      "label": "Winsen MH-Z19B: CO2 over UART"
+    },
+    {
+      "path": "stimuli/gps_drive.yaml",
+      "name": "gps_drive",
+      "kind": "stimulus",
+      "label": "A short drive with a tunnel"
+    },
+    {
+      "path": "stimuli/pressure_drop.yaml",
+      "name": "pressure_drop",
+      "kind": "stimulus",
+      "label": "Pressure drop and a loop break"
+    },
+    {
+      "path": "stimuli/temperature_ramp_fault.yaml",
+      "name": "temperature_ramp_fault",
+      "kind": "stimulus",
+      "label": "Temperature ramp with a stuck reading"
     }
   ]
 }

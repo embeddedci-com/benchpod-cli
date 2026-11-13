@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -352,7 +353,8 @@ func TestSensorLibraryExportAndSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, _ := os.ReadFile(g.outputFilename)
-	if !strings.Contains(string(list), "Sensor library 0.1.0 (bundled)") || !strings.Contains(string(list), "gps_nmea  uart") {
+	if !strings.Contains(string(list), "Sensor library 0.1.0 (bundled)") || !regexp.MustCompile(`gps_nmea +uart`).Match(list) ||
+		!regexp.MustCompile(`temperature_ramp_fault +stimulus`).Match(list) {
 		t.Fatal(string(list))
 	}
 	g.outputFilename = ""

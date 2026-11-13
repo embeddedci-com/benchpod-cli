@@ -5,6 +5,7 @@ label: "GPS receiver: NMEA 0183 (u-blox style defaults)"
 description: |
   Prints RMC, VTG, GGA, GSA, GSV and GLL once per fix, like a NEO-6M/M8N out of the box. The
   position moves along course at the set speed between fixes. The sky is synthetic but stable.
+datasheet: https://en.wikipedia.org/wiki/NMEA_0183
 version: 1.0.0
 license: Apache-2.0
 

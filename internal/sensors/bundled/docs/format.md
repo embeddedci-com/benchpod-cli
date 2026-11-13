@@ -208,6 +208,9 @@ conversion:
   while_busy: flag          # flag (default) | nack (reads not acknowledged) | stretch (I2C clock stretching)
 ```
 
+`while_busy` applies to conversions and to commands with `busy_us`. A sensor with commands but no
+`conversion` block runs in `nack` mode, as Sensirion parts do.
+
 ### 3.3 Reacting to DUT writes
 
 ```yaml

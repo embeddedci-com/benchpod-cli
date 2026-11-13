@@ -5,6 +5,7 @@ label: "InvenSense MPU-6050: accelerometer and gyroscope"
 description: |
   Follows the measurement ranges, sleep and DEVICE_RESET the DUT writes. Scales from register map
   sections 4.17 to 4.19.
+datasheet: https://invensense.tdk.com/products/motion-tracking/6-axis/mpu-6050/
 version: 1.0.0
 license: Apache-2.0
 

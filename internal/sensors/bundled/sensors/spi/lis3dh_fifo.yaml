@@ -1,0 +1,83 @@
+format: 1
+kind: spi
+name: lis3dh_fifo
+label: "ST LIS3DH: 3-axis accelerometer with FIFO (SPI)"
+description: |
+  The LIS3DH read through its 32-sample FIFO (CTRL_REG5 FIFO_EN, FIFO_CTRL_REG mode FIFO or
+  stream): samples arrive at the output data rate, and every read of OUT_X_L pops the next byte,
+  so a 6-byte burst from OUT_X_L is one X, Y, Z sample, as on the part. FIFO_SRC_REG reports the
+  level (FSS), EMPTY, OVRN_FIFO and the watermark (WTM against FTH). The data format follows
+  CTRL_REG1 and CTRL_REG4 as in `lis3dh`; OUT_X_H to OUT_Z_H read the current sample directly.
+
+  Limits: a full FIFO drops its oldest sample in both modes (the part stops in FIFO mode and
+  drops the oldest in stream mode). With the FIFO off, OUT_X_L reads 0 and a burst from it
+  stays at OUT_X_L: for direct reads use `lis3dh`. The pod runs one FIFO sensor at a time.
+datasheet: https://www.st.com/en/mems-and-sensors/lis3dh.html
+version: 1.0.0
+license: Apache-2.0
+
+params:
+  - { key: accel_x_g, unit: g, min: -16, max: 16, default: 0, label: X }
+  - { key: accel_y_g, unit: g, min: -16, max: 16, default: 0, label: Y }
+  - { key: accel_z_g, unit: g, min: -16, max: 16, default: 1, label: Z }
+
+spi:
+  mode: 3
+  read_bit: { bit: 7, value: 1 }
+  increment_bit: { bit: 6, value: 1 }
+  address_mask: 0x3F
+
+functions:
+  sample:                    # one axis as the 16-bit left-justified output word
+    args: [g, en]
+    let:
+      - v: "clamp(round(g * 1000 / sens), -(1 << (nbits - 1)), (1 << (nbits - 1)) - 1)"
+    return: "on && en ? v << (16 - nbits) : 0"
+  out:                       # byte n (0 = the register at the lower address) of an axis word
+    args: [w, n]
+    return: "ble ? byte(w, 1 - n) : byte(w, n)"
+
+let:
+  - odr: "bits(reg[0x20], 7, 4)"                       # CTRL_REG1 ODR
+  - lp: "bit(reg[0x20], 3)"                            # LPen
+  - hr: "bit(reg[0x23], 3) && !lp"                     # CTRL_REG4 HR
+  - fs: "bits(reg[0x23], 5, 4)"
+  - ble: "bit(reg[0x23], 6)"
+  - on: "odr != 0 && odr <= 9"
+  - nbits: "lp ? 8 : hr ? 12 : 10"
+  - sens: "lp ? [16, 32, 64, 192][fs] : hr ? [1, 2, 4, 12][fs] : [4, 8, 16, 48][fs]"   # mg/digit, table 4
+  - wx: "sample(accel_x_g, bit(reg[0x20], 0))"
+  - wy: "sample(accel_y_g, bit(reg[0x20], 1))"
+  - wz: "sample(accel_z_g, bit(reg[0x20], 2))"
+  - fifo_on: "bit(reg[0x24], 6) && bits(reg[0x2E], 7, 6) != 0"   # CTRL_REG5 FIFO_EN, FIFO_CTRL_REG FM
+  - fth: "bits(reg[0x2E], 4, 0)"
+
+registers:
+  - { at: 0x07, u8: 0x00, name: STATUS_REG_AUX }
+  - { at: 0x0F, u8: 0x33, name: WHO_AM_I, writable: false }
+  - { at: 0x1E, u8: 0x10, name: CTRL_REG0 }
+  - { at: 0x1F, u8: 0x00, name: TEMP_CFG_REG }
+  - { at: 0x20, u8: 0x07, name: CTRL_REG1 }            # power-down, all axes enabled
+  - { at: 0x21, u8: 0x00, name: CTRL_REG2 }
+  - { at: 0x22, u8: 0x00, name: CTRL_REG3 }
+  - { at: 0x23, u8: 0x00, name: CTRL_REG4 }
+  - { at: 0x24, u8: 0x00, name: CTRL_REG5 }
+  - { at: 0x25, u8: 0x00, name: CTRL_REG6 }
+  - { at: 0x26, u8: 0x00, name: REFERENCE }
+  - { at: 0x27, u8: "on ? 0x0F : 0x00", name: STATUS_REG }   # ZYXDA, ZDA, YDA, XDA
+  - at: 0x28
+    name: OUT_X_L
+    bytes: ["out(wx, 0)", "out(wx, 1)", "out(wy, 0)", "out(wy, 1)", "out(wz, 0)", "out(wz, 1)"]
+  - { at: 0x2E, u8: 0x00, name: FIFO_CTRL_REG }
+  - at: 0x2F
+    name: FIFO_SRC_REG                                 # WTM, OVRN_FIFO, EMPTY, FSS[4:0]
+    u8: "(fifo_level > fth ? 0x80 : 0) | (fifo_level >= 32 ? 0x40 : 0) | (fifo_level == 0 ? 0x20 : 0) | min(fifo_level, 31)"
+    writable: false
+
+fifo:
+  at: 0x28                   # OUT_X_L: reads pop, the pointer stays
+  depth: 32
+  frame: ["out(wx, 0)", "out(wx, 1)", "out(wy, 0)", "out(wy, 1)", "out(wz, 0)", "out(wz, 1)"]
+  rate_hz: "on ? [0, 1, 10, 25, 50, 100, 200, 400, lp ? 1600 : 0, lp ? 5376 : 1344][odr] : 0"
+  enabled: "fifo_on"
+  overflow: drop_oldest
