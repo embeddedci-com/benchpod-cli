@@ -1412,6 +1412,13 @@ blob's signature is reported; for now a missing or failing one never stops it.
 When the pod does not list its blob slots (its `blob_status` command fails), it installs
 nothing and exits non-zero with the pod's reason.
 
+After it installs a gateware image over the network API, it checks that the pod runs
+the gateware its firmware carries. Going back from a newer build, the pod can keep
+running the newer gateware (its startup check ran before the new images were in);
+then the CLI reloads the running image from its new slot and says so. `flash-self`
+does the same after it installs the blobs. When the reload fails, restarting the pod
+(tap RESET) loads the right gateware.
+
 | Flag        | Default         | Purpose                                                        |
 |-------------|-----------------|----------------------------------------------------------------|
 | `--release` | (the pod's)     | Take the blobs from this firmware release tag.                 |
