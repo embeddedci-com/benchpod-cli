@@ -61,7 +61,8 @@ Expressions are strings (a bare number is also accepted). They are evaluated wit
 - Names: params, constants, `let` entries, function arguments, built-in variables (2.5).
 - Tables: `[16384, 8192, 4096, 2048][i]`. The index is truncated; out of range is 0.
 - Registers: `reg[0xF4]` is the byte the DUT sees now at that register (its own writes
-  included). `reg16be[a]`, `reg16le[a]` read two bytes.
+  included). `reg16be[a]`, `reg16le[a]` read two bytes. With word registers (4.1) `reg[p]` is
+  the whole 16-bit register (`reg16le[p]` its bytes swapped).
 - Strings: `'N'` (no escapes), where a template or an answer takes text (5.1). A `let`, a constant
   or a function may hold a string, `c ? 'a' : 'b'` picks one, and `==` and `!=` compare them; any
   other operator on a string is an error.
@@ -151,7 +152,10 @@ fragments.
 | `fifo_level` | frames waiting in the FIFO (3.5) |
 | `input` | analog with `excitation: adc`: the voltage the pod measures (6) |
 
-`written` and `value` read -1 when the pod only knows that the DUT wrote, not where.
+`written` and `value` read -1 when the pod only knows that the DUT wrote, not where. With word
+registers (4.1) `written` is the register and `value` the whole 16-bit word, once per register the
+DUT writes; with the command map (4.2) `written` is the address of the byte: the command for its
+first data byte, the command + 1 for the next, and so on.
 
 ## 3. Registers (I2C and SPI)
 
@@ -196,7 +200,17 @@ commands:
 ```
 
 `commands` entries are `registers` entries with a `busy_us` (2-byte commands: `command: 0x2400`,
-needs `register_address_bits: 16`).
+needs `register_address_bits: 16`). Commands whose high bytes differ (SHT3x 0x2400 and 0xE000,
+SCD4x 0xEC05 and 0x3682) need the command map (4.2); there a command may also have no answer (it
+is only acknowledged, for its `busy_us`), and `write_bytes: n` reserves the bytes a set command
+writes after itself:
+
+```yaml
+commands:
+  - { command: 0x241D, write_bytes: 3 }      # set_temperature_offset: a word and its CRC
+  - { command: 0x2318, busy_us: 1000, answer: ["reg[0x241D]", "reg[0x241E]", "reg[0x241F]"] }
+  - { command: 0x21B1 }                      # start_periodic_measurement: acknowledged
+```
 
 ### 3.2 Conversion
 
@@ -269,6 +283,32 @@ i2c:
   auto_increment: true
   wrap: 0xFF                # the pointer wraps after this address
 ```
+
+### 4.1 Word registers
+
+```yaml
+i2c:
+  address: 0x48
+  register_bytes: 2         # 1 (default) | 2
+```
+
+For parts whose pointer selects a 16-bit register (TI TMP117, TMP102, LM75, INA219, INA226,
+ADS1115): register `p` is two bytes, MSB first, and a read or write runs on into register `p + 1`.
+`at:` is the register (`{ at: 0x0F, u16be: 0x0117 }`), and `reg[p]`, `written` and `value` are
+registers and 16-bit words. Up to 128 registers: the pointer's bit 7 is ignored, so `p` and
+`p + 0x80` are one register (0xFE reads the definition's 0x7E or 0xFE entry; defining both is an
+error). Needs `register_address_bits: 8`; `wrap` does not apply. Firmware 3.10.2 and later.
+
+### 4.2 Command map
+
+`register_address_bits: 16` without `page` serves 16-bit addresses (Sensirion commands) with any
+high byte from the one 256-byte image: the pod places each address's bytes (the entry's, or its
+`write_bytes`, whichever is longer) and one byte per high byte in use, and the gateware follows
+the layout. Each address gets its own bytes even where address ranges overlap (SHT3x 0x2C0D's six
+bytes and 0x2C10); `reg[a]` reads the entry at `a`, else the bytes after the nearest address below.
+Everything must fit in 256 bytes: the answers plus one byte per high byte. A command the definition does not list reads whatever the layout of its high byte points at
+(drivers check the CRC). `wrap` does not apply. Firmware 3.10.2 and later; with `page` the old
+single window is kept.
 
 ```yaml
 spi:

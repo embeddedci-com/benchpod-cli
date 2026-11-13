@@ -5,7 +5,7 @@ label: "Temperature ramp with a stuck reading"
 description: |
   Room temperature, a ramp to 60 °C, a hold and a slow cool-down. From 50 s to 60 s the sensor
   freezes on its reading (a stuck sensor), from 120 s to 123 s it stops answering. Drives
-  `temperature_c` of any temperature sensor (sht4x, bme280, bmp280, ntc_10k_divider ...).
+  `temperature_c` of any temperature sensor (tmp117, sht3x, sht4x, bme280, ntc_10k_divider ...).
 signals:
   temperature_c:
     - { shape: hold, value: 22, duration_s: 10 }

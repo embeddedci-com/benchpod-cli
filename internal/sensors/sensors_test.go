@@ -66,7 +66,7 @@ func TestKeyOrderIsKept(t *testing.T) {
 // The bundled definitions convert to the same JSON as the library's tools/yaml2json.py.
 func TestBundledMatchesYaml2json(t *testing.T) {
 	lib := Bundled()
-	if lib.Version != PinnedVersion || len(lib.Entries) != 13 {
+	if lib.Version != PinnedVersion || len(lib.Entries) != 17 {
 		t.Fatalf("bundled: %s %d entries", lib.Version, len(lib.Entries))
 	}
 	for _, e := range lib.Entries {
@@ -398,5 +398,24 @@ func TestMissingReleaseAndVersionSelection(t *testing.T) {
 	}
 	if v, _ := RequestedVersion("", ""); v != PinnedVersion {
 		t.Fatal(v)
+	}
+}
+
+// Word registers (i2c.register_bytes: 2) and the 16-bit command map pass the header check: the pod
+// checks the bus block.
+func TestHeaderAcceptsWordRegistersAndCommandMap(t *testing.T) {
+	lib := Bundled()
+	for _, name := range []string{"tmp117", "ina219", "sht3x", "scd4x"} {
+		d, err := lib.Load(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckDefinition(d); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	d, _ := ParseText("format: 1\nkind: i2c\nname: w\ni2c: { address: 0x48, register_bytes: 2 }\nregisters:\n  - { at: 0x00, u16be: 1 }\n")
+	if err := CheckDefinition(d); err != nil {
+		t.Fatal(err)
 	}
 }

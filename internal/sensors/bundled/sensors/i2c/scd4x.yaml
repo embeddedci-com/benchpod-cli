@@ -1,0 +1,78 @@
+format: 1
+kind: i2c
+name: scd4x
+label: "Sensirion SCD4x: CO2, temperature and humidity"
+description: |
+  The SCD40/SCD41 command set: read_measurement (0xEC05, CO2 in ppm, temperature and humidity),
+  get_data_ready_status (always ready), get_serial_number, the settings (temperature offset,
+  altitude, ambient pressure, automatic self-calibration: what the DUT sets reads back), forced
+  recalibration (answers a correction of 0), self test (passes), and every command without an
+  answer (start and stop periodic measurement, low-power mode, single shot, persist, reinit,
+  factory reset, power down and wake up) is acknowledged. Each answer word comes with its CRC-8.
+  The read commands take 1 ms (reads are not acknowledged before), as on the part.
+
+  The slow commands (stop_periodic_measurement 500 ms, measure_single_shot 5 s,
+  perform_self_test 10 s, persist_settings 800 ms) return no data or are read after the DUT's
+  own wait, so the pod only acknowledges them. The temperature offset is stored but does not
+  change the reading, and factory reset does not restore the settings. Why the SCD4x and not the
+  SCD30: the SCD30 holds the clock while it prepares an answer, needs 3 ms between command and
+  read, and sends IEEE floats.
+datasheet: https://sensirion.com/products/catalog/SCD41
+version: 1.0.0
+license: Apache-2.0
+
+params:
+  - { key: co2_ppm, unit: ppm, min: 0, max: 40000, default: 600, label: CO2 }
+  - { key: temperature_c, unit: C, min: -10, max: 60, default: 25, label: Temperature }
+  - { key: humidity_pct, unit: "%", min: 0, max: 100, default: 40, label: Humidity }
+
+i2c:
+  address: 0x62
+  register_address_bits: 16  # no page: commands in any high byte (needs firmware 3.10.2)
+
+functions:
+  word_crc:
+    args: [w, n]
+    return: "n == 0 ? byte(w, 1) : n == 1 ? byte(w, 0) : crc8(0x31, 0xFF, byte(w, 1), byte(w, 0))"
+
+let:
+  - co2: "sat_u16(co2_ppm)"
+  - st: "sat_u16((temperature_c + 45) * 65536 / 175)"     # datasheet 3.6.2: T = -45 + 175 * word / 2^16
+  - srh: "sat_u16(humidity_pct * 65536 / 100)"            # RH = 100 * word / 2^16
+
+commands:
+  - command: 0xEC05          # read_measurement
+    busy_us: 1000
+    answer: ["word_crc(co2, 0)", "word_crc(co2, 1)", "word_crc(co2, 2)",
+             "word_crc(st, 0)", "word_crc(st, 1)", "word_crc(st, 2)",
+             "word_crc(srh, 0)", "word_crc(srh, 1)", "word_crc(srh, 2)"]
+  - { command: 0xE4B8, busy_us: 1000, answer: ["word_crc(0x8006, 0)", "word_crc(0x8006, 1)", "word_crc(0x8006, 2)"] }   # data ready
+  - command: 0x3682          # get_serial_number
+    busy_us: 1000
+    answer: ["word_crc(0xF896, 0)", "word_crc(0xF896, 1)", "word_crc(0xF896, 2)",
+             "word_crc(0x9F07, 0)", "word_crc(0x9F07, 1)", "word_crc(0x9F07, 2)",
+             "word_crc(0x3BB2, 0)", "word_crc(0x3BB2, 1)", "word_crc(0x3BB2, 2)"]
+  # settings: the set command stores the DUT's word and CRC (write_bytes), the get command reads
+  # them back. Power-on values: offset 4 °C (0x05DA), altitude 0 m, 1013 hPa, self-calibration on.
+  - { command: 0x241D, write_bytes: 3, answer: ["word_crc(0x05DA, 0)", "word_crc(0x05DA, 1)", "word_crc(0x05DA, 2)"] }
+  - { command: 0x2318, busy_us: 1000, answer: ["reg[0x241D]", "reg[0x241E]", "reg[0x241F]"] }
+  - { command: 0x2427, write_bytes: 3, answer: ["word_crc(0, 0)", "word_crc(0, 1)", "word_crc(0, 2)"] }
+  - { command: 0x2322, busy_us: 1000, answer: ["reg[0x2427]", "reg[0x2428]", "reg[0x2429]"] }
+  - { command: 0xE000, write_bytes: 3, busy_us: 1000, answer: ["word_crc(1013, 0)", "word_crc(1013, 1)", "word_crc(1013, 2)"] }   # set and get ambient pressure
+  - { command: 0x2416, write_bytes: 3, answer: ["word_crc(1, 0)", "word_crc(1, 1)", "word_crc(1, 2)"] }
+  - { command: 0x2313, busy_us: 1000, answer: ["reg[0x2416]", "reg[0x2417]", "reg[0x2418]"] }
+  # forced recalibration: the DUT writes its target ppm, reads the correction after 400 ms
+  # (0x8000 = no correction); the answer keeps its bytes (writable: false)
+  - { command: 0x362F, write_bytes: 3, busy_us: 400000, writable: false, answer: ["word_crc(0x8000, 0)", "word_crc(0x8000, 1)", "word_crc(0x8000, 2)"] }
+  - { command: 0x3639, busy_us: 10000000, answer: ["word_crc(0, 0)", "word_crc(0, 1)", "word_crc(0, 2)"] }   # self test: passed
+  # acknowledged only
+  - { command: 0x21B1 }      # start_periodic_measurement
+  - { command: 0x3F86 }      # stop_periodic_measurement
+  - { command: 0x21AC }      # start_low_power_periodic_measurement
+  - { command: 0x3615 }      # persist_settings
+  - { command: 0x3632 }      # perform_factory_reset
+  - { command: 0x3646 }      # reinit
+  - { command: 0x219D }      # measure_single_shot (SCD41)
+  - { command: 0x2196 }      # measure_single_shot_rht_only (SCD41)
+  - { command: 0x36E0 }      # power_down (SCD41)
+  - { command: 0x36F6 }      # wake_up (SCD41)

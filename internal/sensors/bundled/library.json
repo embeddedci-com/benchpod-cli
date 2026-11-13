@@ -27,16 +27,40 @@
       "label": "Bosch BMP280: temperature and pressure"
     },
     {
+      "path": "sensors/i2c/ina219.yaml",
+      "name": "ina219",
+      "kind": "i2c",
+      "label": "TI INA219: current, bus voltage and power monitor"
+    },
+    {
       "path": "sensors/i2c/mpu6050.yaml",
       "name": "mpu6050",
       "kind": "i2c",
       "label": "InvenSense MPU-6050: accelerometer and gyroscope"
     },
     {
+      "path": "sensors/i2c/scd4x.yaml",
+      "name": "scd4x",
+      "kind": "i2c",
+      "label": "Sensirion SCD4x: CO2, temperature and humidity"
+    },
+    {
+      "path": "sensors/i2c/sht3x.yaml",
+      "name": "sht3x",
+      "kind": "i2c",
+      "label": "Sensirion SHT3x: temperature and humidity"
+    },
+    {
       "path": "sensors/i2c/sht4x.yaml",
       "name": "sht4x",
       "kind": "i2c",
       "label": "Sensirion SHT4x: temperature and humidity"
+    },
+    {
+      "path": "sensors/i2c/tmp117.yaml",
+      "name": "tmp117",
+      "kind": "i2c",
+      "label": "TI TMP117: high-accuracy temperature"
     },
     {
       "path": "sensors/spi/lis3dh.yaml",

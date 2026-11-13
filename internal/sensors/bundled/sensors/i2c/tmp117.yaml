@@ -1,0 +1,46 @@
+format: 1
+kind: i2c
+name: tmp117
+label: "TI TMP117: high-accuracy temperature"
+description: |
+  The 16-bit temperature result at 7.8125 m°C per LSB, CONFIGURATION, the alert limits, the
+  temperature offset (an offset the DUT writes is added to the result, as on the part) and the
+  device ID (0x0117). The part converts continuously from power on, so CONFIGURATION's
+  Data_Ready flag (bit 13) always reads 1 and drivers that wait for it go on at once. A soft reset
+  (CONFIGURATION bit 1) reloads the power-on image. The alert flags, the one-shot timing and the
+  EEPROM are not modeled: EEPROM writes are stored and read back, nothing is persisted.
+datasheet: https://www.ti.com/product/TMP117
+version: 1.0.0
+license: Apache-2.0
+
+params:
+  - { key: temperature_c, unit: C, min: -55, max: 150, default: 25, label: Temperature }
+
+i2c:
+  address: 0x48
+  alt_addresses: [0x49, 0x4A, 0x4B]
+  register_bytes: 2          # 16-bit registers, MSB first (needs firmware 3.10.2)
+
+constants:
+  LSB_C: 0.0078125           # datasheet 7.3.1: 1 LSB = 7.8125 m°C
+
+let:
+  - offset_c: "s16(reg[0x07]) * LSB_C"
+
+registers:
+  - { at: 0x00, s16be: "(temperature_c + offset_c) / LSB_C", name: TEMP_RESULT, writable: false }
+  - { at: 0x01, u16be: 0x2220, name: CONFIGURATION }    # 0x0220 + Data_Ready
+  - { at: 0x02, u16be: 0x6000, name: THIGH_LIMIT }      # 192 °C
+  - { at: 0x03, u16be: 0x8000, name: TLOW_LIMIT }       # -256 °C
+  - { at: 0x04, u16be: 0x0000, name: EEPROM_UL }
+  - { at: 0x05, u16be: 0x0000, name: EEPROM1 }
+  - { at: 0x06, u16be: 0x0000, name: EEPROM2 }
+  - { at: 0x07, s16be: 0, name: TEMP_OFFSET }           # the DUT's writes stay
+  - { at: 0x08, u16be: 0x0000, name: EEPROM3 }
+  - { at: 0x0F, u16be: 0x0117, name: DEVICE_ID, writable: false }
+
+on_write:
+  - when: "written == 0x01 && (value & 0x0002)"         # Soft_Reset (bit 1)
+    do: reset
+  - when: "written == 0x01"                             # flags (bits 15:12) are read-only
+    do: { set: { at: 0x01, u16be: "(value & 0x0FFF) | 0x2000" } }

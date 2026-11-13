@@ -23,8 +23,12 @@ emulates your own part.
 |---|---|---|
 | `bme280` | I2C | Bosch BME280: temperature, pressure, humidity |
 | `bmp280` | I2C | Bosch BMP280: temperature, pressure |
+| `ina219` | I2C | TI INA219: current, bus voltage and power, from the calibration the DUT writes |
 | `mpu6050` | I2C | InvenSense MPU-6050: accelerometer and gyroscope |
+| `scd4x` | I2C | Sensirion SCD40/SCD41: CO2, temperature, humidity |
+| `sht3x` | I2C | Sensirion SHT3x: temperature, humidity (single shot and periodic) |
 | `sht4x` | I2C | Sensirion SHT4x: temperature, humidity |
+| `tmp117` | I2C | TI TMP117: temperature |
 | `lis3dh` | SPI | ST LIS3DH: accelerometer, direct reads |
 | `lis3dh_fifo` | SPI | ST LIS3DH: accelerometer, read through its FIFO |
 | `gps_nmea` | UART | GPS receiver: NMEA 0183 sentences |
@@ -33,7 +37,8 @@ emulates your own part.
 | `pressure_4_20ma` | analog | 0 to 10 bar pressure transmitter, 4-20 mA |
 
 Each file's `description` says what it covers and where the pod differs from the part (for
-example, the SHT4x heater commands answer after 65.535 ms).
+example, the SHT4x heater commands answer after 65.535 ms). The TMP117, INA219, SHT3x and SCD4x
+need firmware 3.10.2 or later (word registers and 16-bit commands in any high byte).
 
 ## Use a library sensor
 
@@ -59,7 +64,7 @@ benchpod sensor start bme280 --pin sda=2 --pin scl=1 --set temperature_c=22
 benchpod sensor set bme280 temperature_c=31.5
 benchpod sensor stimulus load stimuli/temperature_ramp_fault.yaml
 benchpod sensor stimulus start
-benchpod sensor export bme280 > my_bme280.yaml            # a copy to change
+benchpod sensor export tmp117 > my_tmp117.yaml            # a copy to change
 ```
 
 Web app and desktop app: open the pod's **Sensors** page, pick a sensor from the library, choose
@@ -67,7 +72,7 @@ its pins and start it. Sliders set the values; a stimulus plays them over time.
 
 ## Write your own
 
-1. Copy the closest definition, for example `sensors/i2c/bme280.yaml`, and give it a new `name`
+1. Copy the closest definition, for example `sensors/i2c/tmp117.yaml`, and give it a new `name`
    (the file name, at most 16 characters of `a-z`, `0-9` and `_`).
 2. Change the registers, commands, messages or transfer function to your part's datasheet.
    `docs/format.md` has the whole format. Write the datasheet's decode formula and let `solve()`
@@ -96,7 +101,7 @@ Pull requests are welcome. A new sensor comes with:
 - the definition in `sensors/<kind>/<name>.yaml`, with `label`, `description` (what it covers,
   what it does not) and a `datasheet` link;
 - a test in `tests/<name>.test.mjs` that reads the sensor back the way the vendor's driver
-  does, with its own decode code (see `tests/mhz19b.test.mjs`), using Node's test runner and no
+  does, with its own decode code (see `tests/sht3x.test.mjs`), using Node's test runner and no
   npm packages;
 - `library.json` regenerated with `python3 tools/build_library.py`.
 
