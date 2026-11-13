@@ -52,7 +52,7 @@ func newSPIFlashCmd(g *globalFlags) *cobra.Command {
 	pf.StringVar(&f.miso, "miso", "", "LA pin for MISO, 1-14 (default: spi_miso from the pod's wiring profile)")
 	pf.StringVar(&f.cs, "cs", "", "LA pin for CS, 1-14 (default: spi_cs from the pod's wiring profile)")
 	pf.IntVar(&f.hz, "hz", 1000000, "SCK rate in Hz; the pod uses the nearest rate at or below it (190 kHz to 6 MHz)")
-	pf.IntVar(&f.mode, "mode", 0, "SPI mode, 0 or 3")
+	pf.IntVar(&f.mode, "mode", 0, "SPI mode 0-3 (CPOL = mode/2, CPHA = mode%2); modes 1 and 2 need gateware v55 or later")
 	pf.BoolVar(&f.nreset, "nreset", false, "hold the DUT in reset through the pod's reset pin while flashing")
 
 	cmd.AddCommand(
@@ -113,8 +113,8 @@ func (f *spiFlags) config() (spiflash.Config, error) {
 		}
 		pins[i] = n
 	}
-	if f.mode != 0 && f.mode != 3 {
-		return spiflash.Config{}, fmt.Errorf("--mode must be 0 or 3")
+	if f.mode < 0 || f.mode > 3 {
+		return spiflash.Config{}, fmt.Errorf("--mode must be 0, 1, 2 or 3")
 	}
 	if f.hz <= 0 {
 		return spiflash.Config{}, fmt.Errorf("--hz must be positive")

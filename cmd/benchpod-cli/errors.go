@@ -55,7 +55,12 @@ var pinReleaseHints = []struct {
 		"`benchpod sensor stop` (or where it was started: the web app, the SDK or MCP sensor_stop)"},
 	{"stop the SPI session first", "an SPI session is open on %s; end it where it was started " +
 		"(the web app, the SDK or an MCP session)"},
+	{"stop the I2C session first", "the I2C master is using %s; end it with `benchpod i2c stop`"},
 }
+
+// i2cPullupRE matches i2c_start's "I2C needs pull-ups: switch on LA1's with
+// {"cmd":"la","la":1,"pullup":"on"}, or pass "pullups":"external"".
+var i2cPullupRE = regexp.MustCompile(`^(I2C needs pull-ups): switch on LA(\d+)'s with \{"cmd":"la","la":\d+,"pullup":"on"\}`)
 
 // translateRefusal rewords a refusal whose firmware text names a raw JSON command: it returns the
 // text to show and the hint to add ("" for none). Other refusals come back unchanged with no hint.
@@ -63,6 +68,14 @@ func translateRefusal(msg string) (shown, hint string) {
 	msg = strings.TrimSpace(msg)
 	if strings.HasPrefix(msg, "la voltage not set") {
 		return msg, laVoltageUnsetHint
+	}
+	if m := i2cPullupRE.FindStringSubmatch(msg); m != nil {
+		return m[1], fmt.Sprintf("switch LA%s's on with `benchpod la pullup %s on`, or pass --pullups external "+
+			"when the board has its own", m[2], m[2])
+	}
+	if strings.HasSuffix(msg, "need gateware v55+: update the pod's firmware") ||
+		strings.HasSuffix(msg, "needs gateware v55+: update the pod's firmware") {
+		return msg, "update it with `benchpod flash-self`"
 	}
 	if m := emulationImageRE.FindStringSubmatchIndex(msg); m != nil {
 		image := msg[m[2]:m[3]]
