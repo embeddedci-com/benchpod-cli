@@ -118,8 +118,9 @@ developer key, if `~/.config/benchpod/fw-signing-dev.key` exists) and print one 
 example `signature: ok (release-1 key 9b5cc58445e62d88, release 3.6.0)` or `signature: none (this
 release is not signed)`. A local file's signature is read from `<file>.sig`. Firmware that
 checks signatures itself also gets the manifest with each USB upload, and its verdict is
-printed as `pod signature check: ...`. For now this only reports: a missing or failing
-signature never stops a flash or an install.
+printed as `pod signature check: ...`. `flash-self` refuses a downloaded firmware image whose
+signature is missing or fails (`--allow-unsigned` flashes it anyway) and downloads over https
+only; a local file and the blobs are only reported on.
 
 ## Connection
 
@@ -1391,7 +1392,8 @@ blobs. With no argument it fetches the latest release. See
 | `--enter-dfu`        | off          | First reboot a running pod into DFU over its USB console.     |
 | `--wait`             | `1m` (60s)   | How long to wait for the pod to show up in DFU mode.          |
 | `--firmware-version` | (latest)     | Fetch this release tag instead of the latest.                 |
-| `--firmware-url`     | (latest)     | Download the firmware from this URL instead.                  |
+| `--firmware-url`     | (latest)     | Download the firmware from this URL instead (https only).     |
+| `--allow-unsigned`   | off          | Flash a downloaded image whose signature is missing or fails (a local file is never refused). |
 | `--address`          | `0x08000000` | Flash base address (STM32 main flash).                        |
 | `--dfu-util`         | (`PATH`)     | Path to the `dfu-util` binary.                                |
 | `--no-leave`         | off          | Stay in DFU after flashing instead of starting the firmware.  |
@@ -1399,9 +1401,10 @@ blobs. With no argument it fetches the latest release. See
 | `--blobs-dir`        | (next to the firmware) | Take the blobs from this directory.                 |
 | `--network`          | off          | Update over the pod's network API instead of USB DFU: its USB network adapter (firmware 3.9.0+) or the `--connection` address. Needs running firmware; the DFU-only flags do not apply. |
 
-It prints a `signature:` line for the release's `.sig` (report only, see
-[dfu-util](#dfu-util-for-flash-self)) and exits non-zero when the firmware does not
-fit the pod's flash, the download's checksum does not match, or dfu-util fails.
+It prints a `signature:` line for the release's `.sig` (see
+[dfu-util](#dfu-util-for-flash-self)) and exits non-zero when a downloaded image's signature
+is missing or fails (unless `--allow-unsigned`), the firmware does not fit the pod's flash, the
+download's checksum does not match, or dfu-util fails. A local file's signature is only reported.
 
 ### `benchpod install-blobs`
 
