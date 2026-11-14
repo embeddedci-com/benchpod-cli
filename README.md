@@ -51,7 +51,17 @@ benchpod --version
 
 Swap `Darwin_arm64` for `Darwin_x86_64`, `Linux_x86_64`, `Linux_arm64`, etc. On
 Windows download `benchpod_Windows_x86_64.zip` and extract `benchpod.exe`.
-`releases/latest/download/checksums.txt` verifies the download.
+`releases/latest/download/checksums.txt` verifies the download. From the first release built
+with it on, `checksums.txt.sigstore.json` next to it proves `checksums.txt` came from this repo's
+release workflow ([cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 2.4 or
+newer):
+
+```bash
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/embeddedci-com/benchpod-cli/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+shasum -a 256 --ignore-missing -c checksums.txt
+```
 
 > **macOS, direct download only:** if you fetch the archive with a *browser*
 > (not curl/Homebrew) it gets the quarantine flag and double-clicking is
