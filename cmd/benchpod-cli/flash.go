@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -452,6 +453,18 @@ const clearResetEventsTCL = `foreach __t [target names] {
 // buildOpenOCDArgs assembles the OpenOCD args for a flash run: an optional
 // target config, an auto-built program command when a file is given, then any
 // passthrough configs/args appended last so users can extend or override.
+var loadAddrRe = regexp.MustCompile(`^(0[xX][0-9a-fA-F]{1,8}|[0-9]{1,10})$`)
+
+// tclWord is path as one Tcl word with no substitution: in braces. Backslashes (Windows) become
+// forward slashes, which OpenOCD takes on Windows too; a path with a brace or a newline is refused.
+func tclWord(path string) (string, error) {
+	path = strings.ReplaceAll(path, `\`, "/")
+	if strings.ContainsAny(path, "{}\n\r") {
+		return "", fmt.Errorf("the firmware path %q has characters OpenOCD would read as commands", path)
+	}
+	return "{" + path + "}", nil
+}
+
 func buildOpenOCDArgs(target, file, loadAddr string, noVerify, noReset, connectUnderReset, clearResetEvents bool, extraConfigs, extraArgs []string) ([]string, error) {
 	target = strings.TrimSpace(target)
 	file = strings.TrimSpace(file)
@@ -479,8 +492,17 @@ func buildOpenOCDArgs(target, file, loadAddr string, noVerify, noReset, connectU
 		ocArgs = append(ocArgs, "-c", clearResetEventsTCL)
 	}
 	if file != "" {
-		prog := []string{"program", file}
+		// The program command is Tcl: "[...]" in a file name or address would run as a command.
+		// The path goes in braces (no substitution inside); the address must be a number.
+		word, err := tclWord(file)
+		if err != nil {
+			return nil, err
+		}
+		prog := []string{"program", word}
 		if a := strings.TrimSpace(loadAddr); a != "" {
+			if !loadAddrRe.MatchString(a) {
+				return nil, fmt.Errorf("--load-address must be a number like 0x08000000, not %q", loadAddr)
+			}
 			prog = append(prog, a)
 		}
 		if !noVerify {
