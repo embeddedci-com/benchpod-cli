@@ -79,6 +79,43 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# checksums.txt is signed with cosign keyless (Sigstore, the release job's GitHub OIDC identity; no
+# key or secret to keep). The bundle checksums.txt.sigstore.json goes on the release next to it.
+# Verify (README, "Verify a download"):
+#   cosign verify-blob --bundle checksums.txt.sigstore.json \
+#     --certificate-identity-regexp '^https://github.com/embeddedci-com/benchpod-cli/\.github/workflows/release\.yml@refs/tags/v' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+# CI's snapshot build skips it (--skip=sign): it has no OIDC token.
+signs:
+  - id: checksums-cosign
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+# Apple Developer ID signing + notarization of the macOS binaries (quill, runs on any OS). Off
+# until the MACOS_* secrets exist (see the release workflow); with them unset or empty this is
+# skipped and the binaries ship unsigned as before. Once a notarized release is out, drop the
+# cask's quarantine-stripping postflight_steps below.
+notarize:
+  macos:
+    - enabled: '{{ ne (envOrDefault "MACOS_SIGN_P12" "") "" }}'
+      ids:
+        - darwin
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
 
