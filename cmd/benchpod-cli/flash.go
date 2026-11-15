@@ -179,8 +179,8 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if spec.IsCloud() && !serverSide {
 		return fmt.Errorf("--server-side=false needs a direct link to the pod: pass its network address or `usb` as --connection")
 	}
-	if spec.IsNetwork() || spec.IsCloud() {
-		f.fillFromWiring(g)
+	if !isESPTarget(f.target) && (spec.IsNetwork() || spec.IsCloud()) {
+		f.fillFromWiring(g) // an ESP32 target uses no SWD settings
 	}
 	if isESPTarget(f.target) {
 		if fromBuild {

@@ -318,7 +318,7 @@ func espWait(ctx context.Context, c *tcpclient.Client, r espRegion) (*espStatus,
 		if st.Total > 0 {
 			if pct := st.Done * 100 / st.Total / 10 * 10; pct != lastPct {
 				lastPct = pct
-				log.Printf("flash: %s %s %d%% (%s)", st.Chip, r.name, pct, st.Phase)
+				log.Printf("flash: %s %d%% (%s)", strings.TrimSpace(st.Chip+" "+r.name), pct, st.Phase)
 			}
 		}
 	}
