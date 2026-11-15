@@ -77,6 +77,12 @@ type flashFlags struct {
 	// nresetSet says --nreset was given (either way), so the wiring profile does not override it.
 	nresetSet bool
 
+	// ESP32-family targets (--target esp32...): flash_esp.go.
+	espRx, espTx, espBoot, espEN string
+	espImages                    []string
+	espBaud                      int
+	espFlashSize                 string
+
 	// hasNRST is filled in from the pod during runFlash (not a flag): whether
 	// this pod has the dedicated target-reset pin. Used by the failure hint.
 	hasNRST bool
@@ -138,6 +144,13 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	fl.IntVar(&f.targetPower, "target-power", 0, "enable a target power eFuse before flashing: 1 (internal 5V) or 2 (external)")
 	fl.StringArrayVarP(&f.extraConfigs, "command", "c", nil, "extra OpenOCD command, repeatable (passthrough, appended last)")
 	fl.StringArrayVar(&f.extraArgs, "openocd-arg", nil, "extra raw OpenOCD argument, repeatable (passthrough, appended last)")
+	fl.StringVar(&f.espRx, "rx", "", "ESP32 (--target esp32...): LA pin on the target's TXD0 (default: uart_rx from the pod's wiring profile)")
+	fl.StringVar(&f.espTx, "tx", "", "ESP32: LA pin on the target's RXD0 (default: uart_tx from the pod's wiring profile)")
+	fl.StringVar(&f.espBoot, "boot", "", "ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain (default: a wiring-profile signal named BOOT, IO0 or IO9)")
+	fl.StringVar(&f.espEN, "en", "", "ESP32: LA pin on the target's EN, or nrst for the pod's reset pin (default: a wiring-profile signal named EN, else nrst)")
+	fl.StringArrayVar(&f.espImages, "image", nil, "ESP32: OFFSET=FILE to write, repeatable, like esptool write_flash (e.g. 0x10000=build/app.bin)")
+	fl.IntVar(&f.espBaud, "esp-baud", espDefaultBaud, "ESP32: UART rate after the ROM loader's baud change (it starts at 115200)")
+	fl.StringVar(&f.espFlashSize, "flash-size", "", "ESP32: the target's flash size, e.g. 4MB (default 4MB, or the size in a flasher_args.json)")
 	return cmd
 }
 
@@ -158,7 +171,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if f.serverSideSet {
 		serverSide = f.serverSide
 	}
-	if spec.IsCloud() && !fromBuild {
+	if spec.IsCloud() && !fromBuild && !isESPTarget(f.target) {
 		return fmt.Errorf("flash over embeddedci.com (--connection %s%s) flashes a build uploaded there: pass --build, --repo or --ref. "+
 			"A local --file needs a direct link to the pod: pass its network address (`benchpod discover` finds it) or `usb`",
 			cloudConnPrefix, spec.Name)
@@ -168,6 +181,12 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	}
 	if spec.IsNetwork() || spec.IsCloud() {
 		f.fillFromWiring(g)
+	}
+	if isESPTarget(f.target) {
+		if fromBuild {
+			return fmt.Errorf("an ESP32 target is flashed from --file or --image, not an uploaded build")
+		}
+		return runFlashESP(g, f, spec)
 	}
 	var art *serverapi.BuildArtifact
 	if fromBuild {

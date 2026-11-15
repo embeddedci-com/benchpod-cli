@@ -1339,8 +1339,35 @@ embeddedci.com always verifies and resets: `--no-verify`, `--no-reset`,
 | `--openocd`                | (`PATH`) | Path to the `openocd` binary.                                          |
 | `--command`, `-c`          | (none)  | Extra OpenOCD command, repeatable, appended last.                       |
 | `--openocd-arg`            | (none)  | Extra raw OpenOCD argument, repeatable, appended last.                  |
+| `--rx`                     | (profile `uart_rx`) | ESP32: LA pin on the target's TXD0.                         |
+| `--tx`                     | (profile `uart_tx`) | ESP32: LA pin on the target's RXD0.                         |
+| `--boot`                   | (profile signal `BOOT`, `IO0` or `IO9`) | ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain. |
+| `--en`                     | (profile signal `EN`, else `nrst`) | ESP32: LA pin on the target's EN, or `nrst` for the pod's reset pin (DUT header J1 pin 22). |
+| `--image`                  | (none)  | ESP32: `OFFSET=FILE` to write, repeatable, like `esptool write_flash` (`0x10000=build/app.bin`). |
+| `--esp-baud`               | `460800` | ESP32: UART rate after the ROM loader's baud change (it starts at 115200). |
+| `--flash-size`             | `4MB` (or the size in `flasher_args.json`) | ESP32: the target's flash size; every region must fit. |
 
 Pass `--target` (with `--file` or `--build`) or at least one `-c`/`--openocd-arg`.
+
+#### ESP32 targets
+
+With `--target esp32` (or `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, ...) the pod flashes an
+ESP32-family target through the chip's UART ROM bootloader instead of SWD, the way esptool does:
+no OpenOCD, no esptool, no USB cable to the target. Wire the target's TXD0 to `--rx`, RXD0 to
+`--tx`, IO0 (IO9 on the C3/C6) to `--boot`, EN to the pod's reset pin (or an LA pin, `--en`), and
+GND, at 3.3 V. `--file` is a `.bin` written at 0 (an `esptool merge_bin` image) or an ESP-IDF
+`build/flasher_args.json`; `--image` adds `OFFSET=FILE` regions.
+
+```bash
+benchpod flash --target esp32s3 --file build/flasher_args.json --boot 6
+benchpod flash --target esp32 --image 0x1000=bootloader.bin --image 0x8000=partitions.bin \
+  --image 0x10000=app.bin --boot la6 --en nrst --flash-size 4MB
+```
+
+Each region is uploaded into the pod, then the pod writes it and checks the chip's MD5; at the
+end the target is reset into the new image (`--no-reset` leaves it in its loader). Needs the
+pod's network (its address, or `usb` with USB networking) and firmware with the `esp_flash`
+command. Over embeddedci.com use the Python SDK (`bp.flash_esp`) or the MCP server.
 
 ### `benchpod spi-flash`
 

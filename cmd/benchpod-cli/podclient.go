@@ -151,6 +151,8 @@ type podWiring struct {
 	SpiMosi   *int   `json:"spi_mosi"`
 	SpiMiso   *int   `json:"spi_miso"`
 	SpiCs     *int   `json:"spi_cs"`
+	UartRx    *int   `json:"uart_rx"`
+	UartTx    *int   `json:"uart_tx"`
 	// Signals are the profile's named DUT signals ("DRDY" on LA7).
 	Signals []struct {
 		Name string `json:"name"`
@@ -167,7 +169,7 @@ func (w *podWiring) channel(name string) (int, bool) {
 	n := strings.ToLower(strings.TrimSpace(name))
 	for role, la := range map[string]*int{"swd_swclk": w.SwdSwclk, "swd_swdio": w.SwdSwdio,
 		"i2c_sda": w.I2cSda, "i2c_scl": w.I2cScl, "spi_sclk": w.SpiSclk, "spi_mosi": w.SpiMosi,
-		"spi_miso": w.SpiMiso, "spi_cs": w.SpiCs} {
+		"spi_miso": w.SpiMiso, "spi_cs": w.SpiCs, "uart_rx": w.UartRx, "uart_tx": w.UartTx} {
 		if role == n && la != nil {
 			return *la, true
 		}
