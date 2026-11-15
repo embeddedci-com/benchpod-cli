@@ -55,6 +55,8 @@ jobs:
       contents: write
       # cosign keyless signing of checksums.txt (Sigstore Fulcio certificate for this workflow).
       id-token: write
+    # TAP_GITHUB_TOKEN is a secret of the `release` environment (v* tags only), not of the repo.
+    environment: release
     # macOS runner: macOS binaries need cgo (IOKit); Linux/Windows cross-compile
     # from here with cgo off. See .goreleaser.yaml for the full rationale.
     runs-on: macos-latest
