@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/fwsign"
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +65,8 @@ type flashSelfFlags struct {
 	skipBlobs   bool
 	blobsDir    string
 	network     bool
+	// allowUnsigned flashes a downloaded image whose signature is missing or does not check out.
+	allowUnsigned bool
 }
 
 // firmwareReleaseURL returns the GitHub release download URL for the STM32
@@ -74,6 +77,25 @@ func firmwareReleaseURL(version string) string {
 		return fmt.Sprintf("https://github.com/%s/releases/latest/download/%s", defaultFirmwareRepo, defaultFirmwareAsset)
 	}
 	return fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", defaultFirmwareRepo, v, defaultFirmwareAsset)
+}
+
+// requireSignature refuses a downloaded image whose signature is missing or wrong, unless
+// --allow-unsigned. A local file (your own build) is only reported on.
+func (f *flashSelfFlags) requireSignature(location string, r fwsign.Report) error {
+	if !isHTTPURL(location) || f.allowUnsigned || r.Result == fwsign.ResultOK {
+		return nil
+	}
+	return fmt.Errorf("the downloaded firmware's signature is %s: not flashing it (pass --allow-unsigned to flash it anyway)", r.Result)
+}
+
+// loopbackURL says whether an http URL points at this computer (a local test server).
+func loopbackURL(u string) bool {
+	rest := strings.TrimPrefix(u, "http://")
+	host := rest
+	if i := strings.IndexAny(rest, "/:"); i >= 0 {
+		host = rest[:i]
+	}
+	return host == "localhost" || host == "127.0.0.1" || strings.HasPrefix(rest, "[::1]")
 }
 
 // isHTTPURL reports whether s is an http(s) URL (vs a local file path).
@@ -114,7 +136,9 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			"The pod must be in its DFU bootloader; if it isn't, this prints how to get\n" +
 			"there and waits (use --enter-dfu to reboot a running pod automatically).\n\n" +
 			"The release's signature (bench_pod_stm32.bin.sig, or <file>.sig next to a local\n" +
-			"file) is checked and reported before writing; for now it never stops a flash.\n\n" +
+			"file) is checked before writing. A downloaded image must be signed with a key\n" +
+			"this CLI knows (--allow-unsigned flashes it anyway); a local file is only\n" +
+			"reported on. Downloads must use https.\n\n" +
 			"Requires dfu-util on PATH (`brew install dfu-util`; the Homebrew cask pulls\n" +
 			"it in automatically).\n\n" +
 			"--network updates over the pod's network API instead, with no dfu-util and no\n" +
@@ -155,8 +179,11 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Report on the release's signature (<asset>.sig). Report only: never refuses.
-			checkFirmwareSignature(ctx, location, file)
+			// Check the release's signature (<asset>.sig): a download must check out (a local file
+			// is only reported on, for your own builds).
+			if err := f.requireSignature(location, checkFirmwareSignature(ctx, location, file)); err != nil {
+				return err
+			}
 
 			// The pod as it is now, for the firmware report (nothing when it is already in DFU).
 			var before podVersions
@@ -224,6 +251,7 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 	fl.DurationVar(&f.wait, "wait", 60*time.Second, "how long to wait for the pod to enter / re-enumerate in DFU mode")
 	fl.StringVar(&f.firmwareURL, "firmware-url", "", "override the firmware download URL (default: the latest public release)")
 	fl.StringVar(&f.firmwareVer, "firmware-version", "", "fetch a specific firmware release tag instead of the latest")
+	fl.BoolVar(&f.allowUnsigned, "allow-unsigned", false, "flash a downloaded image whose signature is missing or does not check out (a local file is never refused)")
 	fl.BoolVar(&f.skipBlobs, "skip-blobs", false, "do not install the gateware and ESP32-C3 images after flashing")
 	fl.StringVar(&f.blobsDir, "blobs-dir", "", "take the blobs from this directory instead of next to the firmware")
 	fl.BoolVar(&f.network, "network", false, "update over the pod's network API instead of USB DFU: its USB network adapter "+
@@ -269,6 +297,9 @@ func (f *flashSelfFlags) resolveFirmware(ctx context.Context, arg string) (file,
 		fmt.Fprintf(os.Stderr, "flash-self: fetching the %s firmware (%s)\n", which, defaultFirmwareRepo)
 	}
 
+	if strings.HasPrefix(url, "http://") && !loopbackURL(url) {
+		return "", "", nil, fmt.Errorf("refusing to download firmware over plain http (%s): use an https URL or a local file", url)
+	}
 	path, err := downloadFirmware(ctx, url)
 	if err != nil {
 		return "", "", nil, err

@@ -225,6 +225,9 @@ func runFlashSelfNetwork(g *globalFlags, f *flashSelfFlags, changed func(string)
 		return fmt.Errorf("this firmware needs %d KB of flash and the pod has %d KB: it was built for the 2 MB H563; use a newer release", need, st.FlashKB)
 	}
 	sig := checkFirmwareSignature(ctx, location, file)
+	if err := f.requireSignature(location, sig); err != nil {
+		return err
+	}
 	var manifest []byte
 	if sig.Forwardable() {
 		manifest = sig.Manifest.Raw

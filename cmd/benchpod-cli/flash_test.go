@@ -23,17 +23,17 @@ func TestBuildOpenOCDArgs(t *testing.T) {
 		{
 			name:   "target+file default (no reset clearing)",
 			target: target, file: file,
-			want: []string{"-f", target, "-c", "program fw.elf verify reset exit"},
+			want: []string{"-f", target, "-c", "program {fw.elf} verify reset exit"},
 		},
 		{
 			name:   "clear reset events injected before program",
 			target: target, file: file, clearResetEvents: true,
-			want: []string{"-f", target, "-c", clearResetEventsTCL, "-c", "program fw.elf verify reset exit"},
+			want: []string{"-f", target, "-c", clearResetEventsTCL, "-c", "program {fw.elf} verify reset exit"},
 		},
 		{
 			name:   "connect under reset + clear reset events ordering",
 			target: target, file: file, connectUnderReset: true, clearResetEvents: true,
-			want: []string{"-f", target, "-c", "reset_config srst_only srst_nogate connect_assert_srst", "-c", clearResetEventsTCL, "-c", "program fw.elf verify reset exit"},
+			want: []string{"-f", target, "-c", "reset_config srst_only srst_nogate connect_assert_srst", "-c", clearResetEventsTCL, "-c", "program {fw.elf} verify reset exit"},
 		},
 		{
 			name:   "clear reset events with no file still injects after target",
@@ -43,7 +43,7 @@ func TestBuildOpenOCDArgs(t *testing.T) {
 		{
 			name:   "no-verify no-reset",
 			target: target, file: file, noVerify: true, noReset: true,
-			want: []string{"-f", target, "-c", "program fw.elf exit"},
+			want: []string{"-f", target, "-c", "program {fw.elf} exit"},
 		},
 		{
 			name:    "nothing to do",
@@ -96,5 +96,18 @@ func TestBuildOpenOCDArgsResetOrder(t *testing.T) {
 	}
 	if resetIdx > progIdx || clearIdx > progIdx {
 		t.Errorf("reset_config (%d) and clear-events (%d) must come before program (%d): %v", resetIdx, clearIdx, progIdx, got)
+	}
+}
+
+// Request text never reaches the program command as Tcl.
+func TestBuildOpenOCDArgsKeepsTclOut(t *testing.T) {
+	args, err := buildOpenOCDArgs("target/stm32f4x.cfg", `C:\fw\[x].bin`, "0x08000000", false, false, false, false, nil, nil)
+	if err != nil || args[len(args)-1] != "program {C:/fw/[x].bin} 0x08000000 verify reset exit" {
+		t.Fatalf("args = %v, %v", args, err)
+	}
+	for _, c := range []struct{ file, addr string }{{"fw.bin", "[exec id]"}, {"fw.bin", "0x08 ; shutdown"}, {"a}b.bin", ""}, {"{x}.elf", ""}} {
+		if _, err := buildOpenOCDArgs("target/stm32f4x.cfg", c.file, c.addr, false, false, false, false, nil, nil); err == nil {
+			t.Errorf("file %q addr %q: want an error", c.file, c.addr)
+		}
 	}
 }
