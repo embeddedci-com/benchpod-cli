@@ -17,9 +17,11 @@ import (
 )
 
 // ESP32-family targets have no SWD: `flash --target esp32` has the pod write them through the
-// chip's UART ROM bootloader (the firmware's esp_flash command), the way esptool does. Each region
-// is uploaded into the pod's PSRAM (load_bin), then the pod writes it in the background and this
-// polls its status.
+// chip's UART ROM bootloader (the firmware's esp_flash command), the way esptool does. The usual
+// flash flags keep their meaning: --file (a .bin, or an ESP-IDF flasher_args.json),
+// --load-address (where a .bin goes), --nreset (EN on the pod's reset pin) and --no-reset; --rx,
+// --tx and --boot are the only ESP32 flags. Each region is uploaded into the pod's PSRAM
+// (load_bin), then the pod writes it in the background and this polls its status.
 
 var espTargetRe = regexp.MustCompile(`^esp32(-?(s2|s3|c2|c3|c5|c6|h2|p4))?$`)
 
@@ -29,13 +31,15 @@ func isESPTarget(t string) bool {
 }
 
 const (
-	espDefaultBaud      = 460800
-	espDefaultFlashSize = 4 << 20
+	espBaud = 460800
+	// espDefaultFlashSize is the SPI_SET_PARAMS size when flasher_args.json names none: only an
+	// upper bound for the ROM's writes (a write past the real chip fails at the erase).
+	espDefaultFlashSize = 16 << 20
 	espPollInterval     = 250 * time.Millisecond
 )
 
-// espBootSignals / espENSignals are the wiring-profile signal names used when --boot / --en are
-// not given (case-insensitive), the same as the SDK.
+// espBootSignals / espENSignals are the wiring-profile signal names used for the boot strap when
+// --boot is not given and for EN without --nreset (case-insensitive), the same as the SDK.
 var (
 	espBootSignals = []string{"BOOT", "IO0", "GPIO0", "IO9", "GPIO9", "ESP_BOOT"}
 	espENSignals   = []string{"EN", "CHIP_EN", "ESP_EN", "CHIP_PU"}
@@ -50,7 +54,7 @@ type espRegion struct {
 var espSizes = map[string]int{"256KB": 256 << 10, "512KB": 512 << 10, "1MB": 1 << 20, "2MB": 2 << 20,
 	"4MB": 4 << 20, "8MB": 8 << 20, "16MB": 16 << 20, "32MB": 32 << 20, "64MB": 64 << 20, "128MB": 128 << 20}
 
-// parseFlashSize: "4MB", "4194304" or "" (4 MB).
+// parseFlashSize: "4MB", "4194304" or "" (16 MB).
 func parseFlashSize(s string) (int, error) {
 	v := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(s), " ", ""))
 	if v == "" {
@@ -62,12 +66,12 @@ func parseFlashSize(s string) (int, error) {
 	if n, err := strconv.Atoi(v); err == nil && n > 0 {
 		return n, nil
 	}
-	return 0, fmt.Errorf("--flash-size must be like 4MB or a byte count, got %q", s)
+	return 0, fmt.Errorf("flash_size must be like 4MB or a byte count, got %q", s)
 }
 
-// espImages reads the regions to write: --file (a .bin at 0, or an ESP-IDF flasher_args.json)
-// and --image OFFSET=FILE pairs. It also returns the flash size a flasher_args.json names.
-func espImages(file string, images []string) ([]espRegion, string, error) {
+// espImages reads the regions to write: --file, a .bin at loadAddr ("" = 0) or an ESP-IDF
+// flasher_args.json. It also returns the flash size a flasher_args.json names.
+func espImages(file, loadAddr string) ([]espRegion, string, error) {
 	var regions []espRegion
 	flashSize := ""
 	if f := strings.TrimSpace(file); f != "" {
@@ -100,26 +104,19 @@ func espImages(file string, images []string) ([]espRegion, string, error) {
 				flashSize = fs
 			}
 		} else {
-			r, err := espRegionFrom("0", f)
+			off := strings.TrimSpace(loadAddr)
+			if off == "" {
+				off = "0"
+			}
+			r, err := espRegionFrom(off, f)
 			if err != nil {
 				return nil, "", err
 			}
 			regions = append(regions, r)
 		}
 	}
-	for _, pair := range images {
-		off, path, ok := strings.Cut(pair, "=")
-		if !ok {
-			return nil, "", fmt.Errorf("--image wants OFFSET=FILE, e.g. 0x10000=build/app.bin, got %q", pair)
-		}
-		r, err := espRegionFrom(off, path)
-		if err != nil {
-			return nil, "", err
-		}
-		regions = append(regions, r)
-	}
 	if len(regions) == 0 {
-		return nil, "", fmt.Errorf("an ESP32 target needs --file (a .bin written at 0, or an ESP-IDF flasher_args.json) or --image OFFSET=FILE")
+		return nil, "", fmt.Errorf("an ESP32 target needs --file: a .bin (written at --load-address, default 0) or an ESP-IDF flasher_args.json")
 	}
 	sort.Slice(regions, func(i, j int) bool { return regions[i].offset < regions[j].offset })
 	for i := 1; i < len(regions); i++ {
@@ -134,10 +131,10 @@ func espImages(file string, images []string) ([]espRegion, string, error) {
 func espRegionFrom(off, path string) (espRegion, error) {
 	o, err := strconv.ParseInt(strings.TrimSpace(off), 0, 64)
 	if err != nil || o < 0 {
-		return espRegion{}, fmt.Errorf("bad flash offset %q for %s", off, path)
+		return espRegion{}, fmt.Errorf("bad flash address %q for %s", off, path)
 	}
 	if o%4096 != 0 {
-		return espRegion{}, fmt.Errorf("offset 0x%x for %s is not a multiple of 4096 (a flash sector)", o, path)
+		return espRegion{}, fmt.Errorf("address 0x%x for %s is not a multiple of 4096 (a flash sector)", o, path)
 	}
 	data, err := os.ReadFile(strings.TrimSpace(path))
 	if err != nil {
@@ -149,7 +146,8 @@ func espRegionFrom(off, path string) (espRegion, error) {
 	return espRegion{offset: int(o), data: data, name: filepath.Base(path)}, nil
 }
 
-// espPins resolves --rx/--tx/--boot/--en, falling back to the wiring profile.
+// espPins resolves --rx/--tx/--boot and EN (--nreset: the pod's reset pin, else a profile signal
+// named EN, else the reset pin), falling back to the wiring profile.
 func (f *flashFlags) espPins(w *podWiring) (map[string]any, error) {
 	pin := func(flag, val, role string, signals []string) (int, error) {
 		if strings.TrimSpace(val) != "" {
@@ -190,18 +188,12 @@ func (f *flashFlags) espPins(w *podWiring) (map[string]any, error) {
 		return nil, fmt.Errorf("--boot is required: the LA pin on the target's IO0 (IO9 on the C3/C6), or a wiring-profile signal named BOOT, IO0 or IO9")
 	}
 	pins := map[string]any{"rx": rx, "tx": tx, "boot": boot, "en": "nrst"}
-	switch v := strings.ToLower(strings.TrimSpace(f.espEN)); v {
-	case "nrst":
-	case "":
+	if !f.nreset {
 		if n, _ := pin("en", "", "", espENSignals); n != 0 {
 			pins["en"] = n
+		} else if f.nresetSet {
+			return nil, fmt.Errorf("an ESP32's EN goes on the pod's reset pin (--nreset) or on a wiring-profile signal named EN")
 		}
-	default:
-		n, err := parseLAPin(v)
-		if err != nil {
-			return nil, fmt.Errorf("--en: an LA pin or nrst: %w", err)
-		}
-		pins["en"] = n
 	}
 	return pins, nil
 }
@@ -225,25 +217,18 @@ func runFlashESP(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 	if !spec.IsNetwork() {
 		return fmt.Errorf("flashing an ESP32 needs the pod's network: pass its address, or `usb` on firmware 3.9.0+ with USB networking (the image is uploaded into the pod first)")
 	}
-	regions, argsSize, err := espImages(f.file, f.espImages)
+	regions, argsSize, err := espImages(f.file, f.loadAddr)
 	if err != nil {
 		return err
 	}
-	sizeFlag := f.espFlashSize
-	if strings.TrimSpace(sizeFlag) == "" {
-		sizeFlag = argsSize
-	}
-	flashSize, err := parseFlashSize(sizeFlag)
+	flashSize, err := parseFlashSize(argsSize)
 	if err != nil {
 		return err
 	}
 	for _, r := range regions {
 		if r.offset+len(r.data) > flashSize {
-			return fmt.Errorf("%s at 0x%x (%d bytes) does not fit a %d KB flash; pass --flash-size", r.name, r.offset, len(r.data), flashSize>>10)
+			return fmt.Errorf("%s at 0x%x (%d bytes) does not fit the %d KB flash its flasher_args.json names", r.name, r.offset, len(r.data), flashSize>>10)
 		}
-	}
-	if f.espBaud < 9600 || f.espBaud > 2000000 {
-		return fmt.Errorf("--esp-baud must be 9600..2000000")
 	}
 	pins, err := f.espPins(loadPodWiring(g, os.Stderr))
 	if err != nil {
@@ -262,7 +247,7 @@ func runFlashESP(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 			return fmt.Errorf("flash: uploading %s: %w", r.name, err)
 		}
 		req := map[string]any{"cmd": "esp_flash", "op": "start", "offset": r.offset, "len": len(r.data),
-			"baud": f.espBaud, "flash_size": flashSize, "run": !f.noReset && i == len(regions)-1}
+			"baud": espBaud, "flash_size": flashSize, "run": !f.noReset && i == len(regions)-1}
 		for k, v := range pins {
 			req[k] = v
 		}
@@ -284,7 +269,7 @@ func runFlashESP(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 		if res != "ok" && res != "unverified" {
 			msg := res
 			if res == "no answer from the ROM loader" {
-				msg += ": check that the target is powered, its TXD0 goes to --rx and RXD0 to --tx, IO0 (IO9 on the C3/C6) to --boot, and EN to --en"
+				msg += ": check that the target is powered, its TXD0 goes to --rx and RXD0 to --tx, IO0 (IO9 on the C3/C6) to --boot, and EN to the pod's reset pin (--nreset)"
 			}
 			return fmt.Errorf("flash: %s at 0x%x failed in %s: %s", r.name, r.offset, st.Phase, msg)
 		}

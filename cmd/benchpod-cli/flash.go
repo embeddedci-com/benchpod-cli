@@ -78,10 +78,7 @@ type flashFlags struct {
 	nresetSet bool
 
 	// ESP32-family targets (--target esp32...): flash_esp.go.
-	espRx, espTx, espBoot, espEN string
-	espImages                    []string
-	espBaud                      int
-	espFlashSize                 string
+	espRx, espTx, espBoot string
 
 	// hasNRST is filled in from the pod during runFlash (not a flag): whether
 	// this pod has the dedicated target-reset pin. Used by the failure hint.
@@ -147,10 +144,6 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	fl.StringVar(&f.espRx, "rx", "", "ESP32 (--target esp32...): LA pin on the target's TXD0 (default: uart_rx from the pod's wiring profile)")
 	fl.StringVar(&f.espTx, "tx", "", "ESP32: LA pin on the target's RXD0 (default: uart_tx from the pod's wiring profile)")
 	fl.StringVar(&f.espBoot, "boot", "", "ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain (default: a wiring-profile signal named BOOT, IO0 or IO9)")
-	fl.StringVar(&f.espEN, "en", "", "ESP32: LA pin on the target's EN, or nrst for the pod's reset pin (default: a wiring-profile signal named EN, else nrst)")
-	fl.StringArrayVar(&f.espImages, "image", nil, "ESP32: OFFSET=FILE to write, repeatable, like esptool write_flash (e.g. 0x10000=build/app.bin)")
-	fl.IntVar(&f.espBaud, "esp-baud", espDefaultBaud, "ESP32: UART rate after the ROM loader's baud change (it starts at 115200)")
-	fl.StringVar(&f.espFlashSize, "flash-size", "", "ESP32: the target's flash size, e.g. 4MB (default 4MB, or the size in a flasher_args.json)")
 	return cmd
 }
 
