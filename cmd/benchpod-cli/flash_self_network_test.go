@@ -210,13 +210,8 @@ func TestFlashSelfNetworkImageTooBig(t *testing.T) {
 	}
 }
 
-func TestFlashSelfNetworkRefusesCloudAndDFUFlags(t *testing.T) {
-	err := runFlashSelfNetwork(&globalFlags{connection: "embeddedci:bench-1", noFirmwareReport: true},
-		&flashSelfFlags{network: true}, noFlagChanged, nil)
-	if err == nil || !strings.Contains(err.Error(), "update a cloud pod from the web app") {
-		t.Fatalf("cloud err = %v", err)
-	}
-	err = runFlashSelfNetwork(&globalFlags{connection: "127.0.0.1:1"}, &flashSelfFlags{network: true},
+func TestFlashSelfNetworkRefusesDFUFlags(t *testing.T) {
+	err := runFlashSelfNetwork(&globalFlags{connection: "127.0.0.1:1"}, &flashSelfFlags{network: true},
 		func(name string) bool { return name == "enter-dfu" }, nil)
 	if err == nil || !strings.Contains(err.Error(), "--enter-dfu is for USB DFU") {
 		t.Fatalf("enter-dfu err = %v", err)

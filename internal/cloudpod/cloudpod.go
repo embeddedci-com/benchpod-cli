@@ -191,7 +191,7 @@ func (e *Error) Error() string {
 	case e.Code == "not_capable":
 		return fmt.Sprintf("%s cannot take commands through embeddedci.com: its firmware is too old; update it (web app or `benchpod flash-self`)", e.Name)
 	case e.Code == "forbidden_tier":
-		return "this change needs an organization owner or admin on embeddedci.com (API keys: the benchpod:admin scope)"
+		return fmt.Sprintf("this change needs an owner or admin of %s's organization on embeddedci.com (API keys: the benchpod:admin scope)", e.Name)
 	case e.Status == http.StatusForbidden && strings.Contains(e.Message, "missing the required scope"):
 		return fmt.Sprintf("the API key cannot do this: %s (create a key with that scope, or unset BENCHPOD_API_KEY to use your `benchpod login` session)", e.Message)
 	case e.Status == http.StatusUnauthorized:

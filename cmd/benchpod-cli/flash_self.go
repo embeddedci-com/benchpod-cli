@@ -65,6 +65,7 @@ type flashSelfFlags struct {
 	skipBlobs   bool
 	blobsDir    string
 	network     bool
+	dryRun      bool // --dry-run: stage and verify through embeddedci.com, write nothing
 	// allowUnsigned flashes a downloaded image whose signature is missing or does not check out.
 	allowUnsigned bool
 }
@@ -148,6 +149,12 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 			"default because it also recovers a pod whose firmware does not run.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cc *cobra.Command, args []string) error {
+			if name, ok := g.explicitCloud(); ok {
+				return runFlashSelfCloud(g, f, func(name string) bool { return cc.Flags().Changed(name) }, args, name)
+			}
+			if f.dryRun {
+				return errors.New("--dry-run is for an update through embeddedci.com (--connection embeddedci:<name>)")
+			}
 			if f.network {
 				return runFlashSelfNetwork(g, f, func(name string) bool { return cc.Flags().Changed(name) }, args)
 			}
@@ -255,7 +262,9 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 	fl.BoolVar(&f.skipBlobs, "skip-blobs", false, "do not install the gateware and ESP32-C3 images after flashing")
 	fl.StringVar(&f.blobsDir, "blobs-dir", "", "take the blobs from this directory instead of next to the firmware")
 	fl.BoolVar(&f.network, "network", false, "update over the pod's network API instead of USB DFU: its USB network adapter "+
-		"(firmware 3.9.0+, the default USB connection) or the address in --connection; the pod must be running firmware")
+		"(firmware 3.9.0+, the default USB connection) or the address in --connection; the pod must be running firmware. "+
+		"With --connection embeddedci:<name> the update always goes through embeddedci.com")
+	fl.BoolVar(&f.dryRun, "dry-run", false, "through embeddedci.com: have the pod stage and verify the image, then drop it; nothing is written")
 	return cmd
 }
 
