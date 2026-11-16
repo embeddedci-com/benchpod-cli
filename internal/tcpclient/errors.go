@@ -16,6 +16,10 @@ import (
 type PodError struct {
 	Cmd    string
 	Reason string
+	// Code and Args: the pod's stable error code (BP0001...) and its values, from firmware that
+	// sends them (benchpod-firmware errors/catalog.toml); "" / nil otherwise.
+	Code string
+	Args map[string]any
 }
 
 func (e *PodError) Error() string {
@@ -97,3 +101,8 @@ func firmwareMessage(msg string) string {
 
 // podError is an error reply from the JSON API.
 func podError(msg string) error { return &PodError{Reason: firmwareMessage(msg)} }
+
+// replyError is an error reply from the JSON API with its code and args.
+func replyError(r *reply) error {
+	return &PodError{Reason: firmwareMessage(r.Message), Code: r.Code, Args: r.Args}
+}

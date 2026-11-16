@@ -144,10 +144,11 @@ func resolveCloudPod(ctx context.Context, name string) (*cloudpod.Client, error)
 
 // ── one wiring profile ──────────────────────────────────────────────────────
 //
-// The pod's wiring profile lives on embeddedci.com (the web app's Wiring tab, the SDK and MCP
-// read it). Commands that take pins default the ones left out from it when this machine can read
-// it: signed in (or BENCHPOD_API_KEY) and the pod on that account. Flags always win; without a
-// profile the command behaves as before (the flags are required).
+// The pod's wiring profiles live on the pod (current firmware; the web app, the SDK and MCP read the
+// same ones): --wiring-profile, else the pod's default. Older firmware keeps one profile on
+// embeddedci.com, read when this machine can: signed in (or BENCHPOD_API_KEY) and the pod on that
+// account. Commands that take pins default the ones left out from it; flags always win; without a
+// profile the flags are required.
 
 // podWiring is the part of the wiring profile the CLI defaults flags from. Pins are LA channel
 // numbers; nil is "not wired".
@@ -204,6 +205,14 @@ const wiringLookupTimeout = 6 * time.Second
 // none to use: over USB, without a sign-in, for a pod not on the account, or when the lookup
 // fails (then it writes one warning line to warn). A variable so tests can replace it.
 var loadPodWiring = func(g *globalFlags, warn io.Writer) *podWiring {
+	// Firmware that stores profiles: the pod's own (--wiring-profile, else its default).
+	if w, ok := loadPodWiringFromPod(g, warn); ok {
+		return w
+	}
+	if g.wiringProfile != "" {
+		fmt.Fprintf(warn, "Warning: --wiring-profile %s: %v; using the flags only\n", g.wiringProfile, errNoWiringStore)
+		return nil
+	}
 	spec, err := g.resolveTarget()
 	if err != nil {
 		return nil

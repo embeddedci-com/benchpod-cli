@@ -83,7 +83,7 @@ func (s *Session) Command(ctx context.Context, req map[string]any) (json.RawMess
 	case "ok":
 		return r.Data, nil
 	case "error":
-		return nil, podError(r.Message)
+		return nil, replyError(r)
 	default:
 		return nil, fmt.Errorf("unexpected response status %q", r.Status)
 	}

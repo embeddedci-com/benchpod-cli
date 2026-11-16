@@ -622,6 +622,8 @@ type CommandResponse struct {
 	Status    string          `json:"status"`
 	Data      json.RawMessage `json:"data,omitempty"`
 	Error     string          `json:"error,omitempty"`
+	Code      string          `json:"code,omitempty"` // the pod's stable error code (newer firmware)
+	Args      map[string]any  `json:"args,omitempty"`
 }
 
 // DeviceCommand calls POST /api/benchpod/devices/{id}/command, which sends one single-reply JSON
