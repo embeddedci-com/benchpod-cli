@@ -157,3 +157,10 @@ func (c *Client) AuthorizeRequest(ctx context.Context, req *http.Request, creden
 func (c *Client) WithOrg(sel string) *Client {
 	return &Client{BaseURL: c.BaseURL, HTTP: c.HTTP, Org: sel}
 }
+
+// cachedOrg is the looked-up organization, for a copy of the client to reuse.
+func (c *Client) cachedOrg() (forSel, id string) {
+	c.orgMu.Lock()
+	defer c.orgMu.Unlock()
+	return c.orgFor, c.orgResolved
+}

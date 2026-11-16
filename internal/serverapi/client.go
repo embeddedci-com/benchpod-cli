@@ -453,7 +453,11 @@ func (c *Client) doJSON(ctx context.Context, method, path, accessToken string, b
 		return errors.New("serverapi: access token is empty")
 	}
 	var reader io.Reader
-	if body != nil {
+	contentType := "application/json"
+	var extra map[string]string
+	if raw, ok := body.(rawBody); ok {
+		reader, contentType, extra = bytes.NewReader(raw.data), raw.contentType, raw.headers
+	} else if body != nil {
 		buf, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
@@ -465,7 +469,10 @@ func (c *Client) doJSON(ctx context.Context, method, path, accessToken string, b
 		return err
 	}
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
+	}
+	for k, v := range extra {
+		req.Header.Set(k, v)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", Authorization(accessToken))
