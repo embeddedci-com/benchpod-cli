@@ -144,7 +144,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 		if msg == "" {
 			msg = "pod returned an error"
 		}
-		return nil, &tcpclient.PodError{Reason: msg}
+		return nil, &tcpclient.PodError{Reason: msg, Code: resp.Code, Args: resp.Args}
 	}
 	return resp.Data, nil
 }

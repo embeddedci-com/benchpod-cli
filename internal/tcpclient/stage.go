@@ -26,7 +26,7 @@ func (c *Client) StagePSRAM(ctx context.Context, data []byte) (int, error) {
 		return 0, readErr(ctx, err)
 	}
 	if r.Status == "error" {
-		return 0, podError(r.Message)
+		return 0, replyError(r)
 	}
 	if r.Status != "ok" {
 		return 0, fmt.Errorf("load_bin: unexpected response status %q", r.Status)
@@ -43,7 +43,7 @@ func (c *Client) StagePSRAM(ctx context.Context, data []byte) (int, error) {
 		case "": // {"ack":N}: progress, keep reading
 			continue
 		case "error":
-			return 0, podError(r.Message)
+			return 0, replyError(r)
 		case "ok":
 			var d struct {
 				Total *int `json:"total"`

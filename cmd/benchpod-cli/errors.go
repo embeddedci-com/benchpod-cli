@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/cloudpod"
+	"github.com/embeddedci-com/benchpod-cli/internal/errcatalog"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -138,6 +139,9 @@ func refusedError(what string, pe *tcpclient.PodError, overLAN bool) error {
 
 // refusedWithHint is refusedError with the hint given ("" for none).
 func refusedWithHint(what string, pe *tcpclient.PodError, hint string) error {
+	if coded, ok := codedRefusal(pe); ok {
+		return &shownRefusal{msg: what + ": the pod refused: " + coded, pe: pe}
+	}
 	shown, _ := translateRefusal(pe.Reason)
 	msg := what + ": the pod refused: " + shown
 	if hint != "" {
@@ -169,6 +173,16 @@ func withRefusalHint(err error) error {
 	pe, ok := tcpclient.AsPodError(err)
 	if !ok {
 		return err
+	}
+	if coded, ok := codedRefusal(pe); ok {
+		if strings.Contains(err.Error(), coded) {
+			return err
+		}
+		msg := strings.Replace(err.Error(), strings.TrimSpace(pe.Reason), coded, 1)
+		if msg == err.Error() {
+			msg = err.Error() + ": " + coded
+		}
+		return &shownRefusal{msg: msg, pe: pe}
 	}
 	hint := explainRefusal(pe.Reason, pe.Cmd == "")
 	if hint == "" || strings.Contains(err.Error(), hint) {
@@ -273,4 +287,17 @@ func markUsageErrors(cmd *cobra.Command) {
 		}
 	}
 	walk(cmd)
+}
+
+// codedRefusal is a refusal with a stable error code, worded from the catalog: "BP0009: <what went
+// wrong>; <what to do in the CLI> (<docs>)". ok is false without a code; a code this CLI's catalog
+// does not know (newer firmware) shows the pod's text with the code and its docs link.
+func codedRefusal(pe *tcpclient.PodError) (string, bool) {
+	if pe == nil || pe.Code == "" {
+		return "", false
+	}
+	if text, ok := errcatalog.Render(pe.Code, pe.Args, "cli"); ok {
+		return text, true
+	}
+	return fmt.Sprintf("%s: %s (%s)", pe.Code, strings.TrimSpace(pe.Reason), errcatalog.DocsURL(pe.Code)), true
 }

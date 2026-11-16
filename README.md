@@ -746,6 +746,7 @@ and `token.json` for the embeddedci.com session.
 | `--tls`             | `auto`                           | TLS to the pod's LAN API: `auto` (8443 when the pod has it, pinned on first use), `on` (TLS only) or `off` (plaintext 8080). Also `BENCHPOD_TLS`. See [Connection](#connection). |
 | `--tls-ca`          | (none)                           | PEM file of CA certificates: verify the pod's certificate and name against them instead of pinning. Also `BENCHPOD_TLS_CA`. |
 | `--org`             | (the active organization)        | The embeddedci.com organization cloud calls act in: its id, slug or name. Also `BENCHPOD_ORG`. See [Organizations](#organizations). |
+| `--wiring-profile`  | (the pod's default profile)      | The wiring profile stored on the pod that fills in the pins a command leaves out (`flash`, `i2c`, `spi-flash`, ...). Also `BENCHPOD_WIRING_PROFILE`. See [`benchpod wiring`](#benchpod-wiring). |
 | `--no-firmware-report` | `false`                       | Do not report firmware and blob updates to embeddedci.com (also `BENCHPOD_NO_FIRMWARE_REPORT=1`); see [Firmware-update reports](#firmware-update-reports). |
 
 ### Firmware-update reports
@@ -1806,6 +1807,65 @@ Same as `benchpod lan-policy`.
 ### `benchpod lan-policy set <open|locked|off>`
 
 Set the LAN policy (cloud with an owner or admin role, or USB).
+
+### `benchpod wiring`
+
+The wiring profiles stored on the pod: which DUT signal is on which LA channel, the I/O voltage,
+the power rail. A pod with current firmware keeps up to 16 named profiles (4096 bytes of JSON each,
+16 KB in all), one of them its default; the SDK, the MCP server, the web app and these commands all
+see the same ones. Works over the network and through embeddedci.com. Without a subcommand it prints
+the default profile (or `--wiring-profile`). Commands that take pins fill in the ones you leave out
+from that profile. Older firmware keeps one profile on embeddedci.com instead; these commands then
+say to update the pod.
+
+A profile is schema version 2: what it does not set is undefined (that pin is not wired, no I/O
+voltage, no rail), and a command that needs it says which flag to pass. No flags.
+
+### `benchpod wiring list`
+
+List the pod's profiles with their revision and size; `*` marks the default. No flags.
+
+### `benchpod wiring show [NAME]`
+
+Print a stored profile as JSON (default: the pod's default profile). No flags.
+
+### `benchpod wiring export [NAME]`
+
+The same as `show`, for redirecting into a file a repository keeps: `benchpod wiring export k66 > wiring.json`. No flags.
+
+### `benchpod wiring save FILE`
+
+Store a `.json` profile on the pod. A version 1 file (or one without a `version`) is upgraded first:
+what it leaves out takes the reference bench's values (the EmbeddedCI NUCLEO-F446RE wiring). Saving
+never changes which profile is the default; the pod's first profile becomes its default.
+
+| Flag      | Default                 | Purpose |
+|-----------|-------------------------|---------|
+| `--name`  | (the pod's default profile) | The profile name: 1-40 characters, `a-z`, `0-9` and `-`. |
+| `--force` | `false`                 | Replace a profile of that name that already exists (other than the default, which `save` always updates). |
+
+### `benchpod wiring default [NAME]`
+
+Show the pod's default profile, or make `NAME` the default: the profile every tool uses when it names
+none. No flags.
+
+### `benchpod wiring delete NAME`
+
+Delete a stored profile. The default cannot be deleted (`BP0013`): make another one the default first. No flags.
+
+### `benchpod wiring upgrade FILE`
+
+Rewrite a version 1 wiring file as version 2, writing out the reference bench's values for what it
+leaves out, so the file means the same with SDK 3.0 and later. The old file is kept as `FILE.v1.bak`.
+No flags.
+
+### `benchpod explain CODE`
+
+What a BenchPod error code means and how to fix it, from the catalog built into the CLI (offline).
+When the pod refuses a command, firmware with error codes sends a stable code (`BP0001` and up) and
+the CLI shows it with the fix, for example
+`wiring: the pod refused: BP0013: k66 is the pod's default wiring profile and cannot be deleted; make another profile the default first ...`.
+Every code is also on [embeddedci.com/docs/errors](https://embeddedci.com/docs/errors). No flags.
 
 ### `benchpod lan-tls`
 

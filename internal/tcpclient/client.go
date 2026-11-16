@@ -62,6 +62,8 @@ type reply struct {
 	B64     *string         `json:"b64"` // replaces Data when the request asked for "enc":"b64"
 	Message string          `json:"message"`
 	More    bool            `json:"more"`
+	Code    string          `json:"code"` // the stable error code of an error reply (newer firmware)
+	Args    map[string]any  `json:"args"`
 }
 
 // Command sends req as a single JSON line and reads exactly one response line.
@@ -84,7 +86,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 	case "ok":
 		return r.Data, nil
 	case "error":
-		return nil, podError(r.Message)
+		return nil, replyError(r)
 	default:
 		return nil, fmt.Errorf("unexpected response status %q", r.Status)
 	}
@@ -135,7 +137,7 @@ func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error)
 				return out, nil
 			}
 		case "error":
-			return nil, podError(r.Message)
+			return nil, replyError(r)
 		default:
 			return nil, fmt.Errorf("unexpected response status %q", r.Status)
 		}

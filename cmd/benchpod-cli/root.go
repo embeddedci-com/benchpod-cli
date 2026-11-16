@@ -26,6 +26,8 @@ type globalFlags struct {
 
 	noFirmwareReport bool // --no-firmware-report: do not tell embeddedci.com about firmware updates (fwreport.go)
 
+	wiringProfile string // --wiring-profile: the pod wiring profile to use (wiring.go); "" = the pod's default
+
 	usbAddr string // the pod's USB network address, once networkTarget found it (one probe per run)
 	usbErr  error  // why it found none (also one probe per run: the console may be open later)
 }
@@ -90,6 +92,7 @@ func newRootCmd() *cobra.Command {
 			g.tls = viper.GetString("tls")
 			g.tlsCA = viper.GetString("tls-ca")
 			g.org = strings.TrimSpace(viper.GetString("org"))
+			g.wiringProfile = strings.TrimSpace(viper.GetString("wiring-profile"))
 			cloudOrg = g.org
 			mode, err := tcpclient.ParseTLSMode(g.tls)
 			if err != nil {
@@ -112,13 +115,15 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.tlsCA, "tls-ca", "", "PEM file of CA certificates: verify the pod's TLS certificate and name against them instead of pinning")
 	pf.StringVar(&g.org, "org", "",
 		"embeddedci.com organization for cloud calls (embeddedci:<name>, login-backed commands): its id, slug or name (default: the active organization in the web app; also BENCHPOD_ORG)")
+	pf.StringVar(&g.wiringProfile, "wiring-profile", "",
+		"the wiring profile stored on the pod that fills in pins a command leaves out (default: the pod's default profile; also BENCHPOD_WIRING_PROFILE)")
 	pf.BoolVar(&g.noFirmwareReport, "no-firmware-report", false,
 		"do not report firmware and blob updates to embeddedci.com (also BENCHPOD_NO_FIRMWARE_REPORT=1)")
 
 	viper.SetEnvPrefix("BENCHPOD")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
-	for _, name := range []string{"connection", "config-file", "output-filename", "timeout", "tls", "tls-ca", "org"} {
+	for _, name := range []string{"connection", "config-file", "output-filename", "timeout", "tls", "tls-ca", "org", "wiring-profile"} {
 		_ = viper.BindPFlag(name, pf.Lookup(name))
 	}
 
@@ -136,6 +141,7 @@ func newRootCmd() *cobra.Command {
 			newStatusCmd(g), newPingCmd(g), newLACmd(g), newIdentityCmd(g),
 			newFlashSelfCmd(g), newInstallBlobsCmd(g), newBootselCmd(g), newDfuCmd(g),
 			newLanPolicyCmd(g), newSigPolicyCmd(g), newUSBNetworkCmd(g), newLanTLSCmd(g),
+			newWiringCmd(g), newExplainCmd(),
 		}},
 		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{
 			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),
