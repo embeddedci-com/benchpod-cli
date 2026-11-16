@@ -1334,6 +1334,36 @@ Show the session's pins, rate and pull-ups, or that there is none. No flags.
 
 End the session and release both pins. No flags.
 
+### `benchpod expansion [chip]`
+
+GPIO expander boards: off-the-shelf I2C and SPI breakouts that add GPIOs on 2 to 5 LA
+pins. The Python SDK (`bp.expansion`) and the MCP server's `expansion` tool attach and drive
+them, with the pins named `EXT1`..`EXTn`. Without a chip, this lists the chips they drive:
+bus, LA pins used, pins gained, LA voltage and directions. With an I2C chip, it reads every
+pin of it through the pod's I2C master and prints its direction and live level, named as the
+SDK names them. It only reads; nothing on the chip changes. An MCP23017 is read with the
+register layout it has after power-up.
+
+An open `benchpod i2c start` session is used as it is. Otherwise the command opens one on
+`--sda` and `--scl` (default: the wiring profile's `i2c_sda` and `i2c_scl`) and closes it
+afterwards; with `--pullups pod` the pull-ups must be on (`benchpod la pullup 1 on`). SPI
+expanders (MCP23S17, 74HC595, 74HC165) are not read by the CLI: use the SDK or the MCP server.
+
+```bash
+benchpod expansion                                     # the chip list
+benchpod expansion tca9555 --addr 0x20 --sda 1 --scl 2
+benchpod expansion mcp23017 --addr 0x20,0x21 --pullups external --json
+```
+
+| Flag        | Default | Purpose                                                             |
+|-------------|---------|---------------------------------------------------------------------|
+| `--addr`    | (the chip's first address) | The 7-bit address, or several for chips on one bus: `0x20,0x21`. |
+| `--sda`     | (profile `i2c_sda`) | LA pin for SDA when no I2C session is open.             |
+| `--scl`     | (profile `i2c_scl`) | LA pin for SCL when no I2C session is open.             |
+| `--hz`      | (the chip's limit) | SCL rate when a session is opened: 400 kHz, or 100 kHz for the PCF8574. |
+| `--pullups` | `pod`   | `pod` (the pod's pull-ups on LA1-LA6) or `external` (the breakout's). |
+| `--json`    | `false` | Print JSON.                                                         |
+
 ### `benchpod flash`
 
 Flash an SWD target wired to the pod, through host-side OpenOCD and the pod's

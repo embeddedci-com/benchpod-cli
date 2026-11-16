@@ -139,7 +139,7 @@ func newRootCmd() *cobra.Command {
 		}},
 		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{
 			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),
-			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g), newI2CCmd(g),
+			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g), newI2CCmd(g), newExpansionCmd(g),
 		}},
 		{"cloud", "embeddedci.com:", []*cobra.Command{
 			newLoginCmd(g), newLogoutCmd(g), newRegisterCmd(g), newDeregisterCmd(g), newCloudCmd(g), newVisionCmd(g),
