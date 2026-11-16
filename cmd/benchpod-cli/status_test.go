@@ -96,3 +96,28 @@ func TestLoginKeepsTheEmail(t *testing.T) {
 		t.Fatalf("got %q", tok.Who())
 	}
 }
+
+func TestStatusMACs(t *testing.T) {
+	cases := []struct{ raw, want string }{
+		{`{"version":"3.10.7"}`, ""},
+		{`{"eth_mac":"02:35:c7:76:b7:9b"}`, "Ethernet 02:35:c7:76:b7:9b"},
+		{`{"eth_mac":"02:35:c7:76:b7:9b","wifi_mac":null}`, "Ethernet 02:35:c7:76:b7:9b, Wi-Fi not known yet (`benchpod scan-wifi` tells it)"},
+		{`{"eth_mac":"02:35:c7:76:b7:9b","wifi_mac":"7c:e8:b1:c5:ca:6c"}`, "Ethernet 02:35:c7:76:b7:9b, Wi-Fi 7c:e8:b1:c5:ca:6c"},
+	}
+	for _, c := range cases {
+		var st podStatus
+		if err := json.Unmarshal([]byte(c.raw), &st); err != nil {
+			t.Fatal(err)
+		}
+		if got := describeMACs(st); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.raw, got, c.want)
+		}
+	}
+	var st podStatus
+	_ = json.Unmarshal([]byte(`{"version":"3.10.8","eth_mac":"02:35:c7:76:b7:9b","wifi_mac":"7c:e8:b1:c5:ca:6c"}`), &st)
+	var b bytes.Buffer
+	printStatusSummary(&b, statusSummary{addr: "192.168.1.150:8080", st: st})
+	if !strings.Contains(b.String(), "  MAC           Ethernet 02:35:c7:76:b7:9b, Wi-Fi 7c:e8:b1:c5:ca:6c\n") {
+		t.Fatalf("summary:\n%s", b.String())
+	}
+}

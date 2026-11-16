@@ -114,7 +114,11 @@ type podStatus struct {
 	SafeMode         bool    `json:"safe_mode"`
 	SafeReason       string  `json:"safe_reason"`
 	USB              *podUSB `json:"usb"` // firmware 3.9.0+
-	Lease            *struct {
+	// The MACs (firmware after 3.10.7, full form only). WiFiMAC is absent on a pod without Wi-Fi
+	// and null until the pod knows it (a Wi-Fi scan or a join tells it).
+	EthMAC  string          `json:"eth_mac"`
+	WiFiMAC json.RawMessage `json:"wifi_mac"`
+	Lease   *struct {
 		Held   bool   `json:"held"`
 		Holder string `json:"holder"`
 		LeftS  int    `json:"left_s"`
@@ -301,6 +305,9 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 		}
 	}
 	row("Network", describeNetwork(st))
+	if m := describeMACs(st); m != "" {
+		row("MAC", m)
+	}
 	if st.USB != nil {
 		row("USB", describeUSB(*st.USB))
 	}
@@ -334,6 +341,26 @@ func describeTargetPower(p targetPower) string {
 		return "off"
 	}
 	return strings.Join(on, ", ")
+}
+
+// describeMACs is the MAC row, for a network that hands out addresses only to registered
+// devices; "" with firmware that does not report them.
+func describeMACs(st podStatus) string {
+	var parts []string
+	if eth := strings.TrimSpace(st.EthMAC); eth != "" {
+		parts = append(parts, "Ethernet "+eth)
+	}
+	if raw := strings.TrimSpace(string(st.WiFiMAC)); raw != "" {
+		var wifi *string
+		if json.Unmarshal(st.WiFiMAC, &wifi) == nil {
+			if wifi != nil && *wifi != "" {
+				parts = append(parts, "Wi-Fi "+*wifi)
+			} else {
+				parts = append(parts, "Wi-Fi not known yet (`benchpod scan-wifi` tells it)")
+			}
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func describeNetwork(st podStatus) string {

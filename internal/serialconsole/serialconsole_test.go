@@ -1073,3 +1073,14 @@ func TestPromptWithoutEchoIsAcceptedAfterEchoGrace(t *testing.T) {
 		t.Fatalf("out=%q after %v", out, time.Since(start))
 	}
 }
+
+func TestParseSerialPodMACs(t *testing.T) {
+	p := parseSerialPod("/dev/cu.usbmodem1103", "  device : benchpod\n  mac    : 02:35:c7:76:b7:9b\n  wifimac: 7c:e8:b1:c5:ca:6c\n  ip     : 0.0.0.0\n")
+	if p.MAC != "02:35:c7:76:b7:9b" || p.WiFiMAC != "7c:e8:b1:c5:ca:6c" {
+		t.Fatalf("MAC %q, WiFiMAC %q", p.MAC, p.WiFiMAC)
+	}
+	old := parseSerialPod("/dev/cu.usbmodem1103", "  device : benchpod\n  mac    : 02:35:c7:76:b7:9b\n")
+	if old.WiFiMAC != "" {
+		t.Fatalf("older firmware: WiFiMAC %q", old.WiFiMAC)
+	}
+}
