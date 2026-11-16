@@ -52,10 +52,72 @@ func Resolve(ctx context.Context, api *serverapi.Client, credential, name string
 	for _, d := range devices {
 		names = append(names, d.Name)
 	}
+	where, hint := OrgHint(ctx, api, credential, func(d serverapi.DeviceResponse) bool {
+		return d.Name == name || d.ID == name
+	})
 	if len(names) == 0 {
-		return nil, fmt.Errorf("no pod named %q on embeddedci.com: this account has no pods", name)
+		return nil, fmt.Errorf("no pod named %q on embeddedci.com: %s has no pods%s", name, where, hint)
 	}
-	return nil, fmt.Errorf("no pod named %q on embeddedci.com (this account has: %s)", name, strings.Join(names, ", "))
+	return nil, fmt.Errorf("no pod named %q on embeddedci.com (%s has: %s)%s", name, where, strings.Join(names, ", "), hint)
+}
+
+// OrgHint says, for a pod that is not among the devices api lists, which organization was
+// searched (where: `organization "Acme" (acme)`, or "this account" when the server does not say)
+// and, in hint, how to reach the pod: the --org of another of the user's organizations that has
+// a device match accepts, else how to pick another organization. It is best effort: a failing
+// lookup only makes the message plainer.
+func OrgHint(ctx context.Context, api *serverapi.Client, credential string, match func(serverapi.DeviceResponse) bool) (where, hint string) {
+	where = "this account"
+	orgs, err := api.ListOrganizations(ctx, credential)
+	if err != nil || len(orgs.Organizations) == 0 {
+		return where, "; for a pod in another organization pass --org <id|slug|name> (or set BENCHPOD_ORG)"
+	}
+	searched, ok := orgs.Active()
+	if sel := strings.TrimSpace(api.Org); sel != "" {
+		searched, err = orgs.Find(sel)
+		ok = err == nil
+	}
+	if ok {
+		where = "organization " + searched.Label()
+	}
+	var found, others []string
+	unsure := false
+	for _, org := range orgs.Organizations {
+		if ok && org.ID == searched.ID {
+			continue
+		}
+		others = append(others, orgSelector(org))
+		devices, err := api.WithOrg(org.ID).ListDevices(ctx, credential)
+		if err != nil {
+			unsure = true // an API key, for one, sees its own organization only
+			continue
+		}
+		for _, d := range devices {
+			if match(d) {
+				found = append(found, orgSelector(org))
+				break
+			}
+		}
+	}
+	switch {
+	case len(found) == 1:
+		return where, fmt.Sprintf("; it is in your organization %s: pass --org %s (or set BENCHPOD_ORG=%s)", found[0], found[0], found[0])
+	case len(found) > 1:
+		return where, fmt.Sprintf("; it is in your organizations %s: pick one with --org (or BENCHPOD_ORG)", strings.Join(found, ", "))
+	case len(others) > 0 && unsure:
+		return where, fmt.Sprintf("; for a pod in another of your organizations (%s) pass --org (or set BENCHPOD_ORG)", strings.Join(others, ", "))
+	case len(others) > 0:
+		return where, fmt.Sprintf("; your other organizations (%s) do not have it either", strings.Join(others, ", "))
+	}
+	return where, ""
+}
+
+// orgSelector is the --org value that names org: its slug, else its id.
+func orgSelector(org serverapi.Organization) string {
+	if org.Slug != "" {
+		return org.Slug
+	}
+	return org.ID
 }
 
 // Command sends req to the pod and returns its reply data. A refusal by the pod comes back as a
@@ -75,14 +137,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 	}
 	resp, err := c.API.DeviceCommand(ctx, c.Credential, c.DeviceID, req, timeout)
 	if err != nil {
-		var apiErr *serverapi.APIError
-		if errors.As(err, &apiErr) {
-			return nil, &Error{Name: c.Name, Status: apiErr.Status, Code: apiErr.Code, Message: apiErr.Message}
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, fmt.Errorf("embeddedci.com: %w", err)
+		return nil, c.Explain(ctx, err)
 	}
 	if strings.TrimSpace(resp.Status) == "error" {
 		msg := strings.TrimSpace(resp.Error)
@@ -92,6 +147,20 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 		return nil, &tcpclient.PodError{Reason: msg}
 	}
 	return resp.Data, nil
+}
+
+// Explain turns a failed call about this pod into an error that says what happened: an *Error for
+// an answer from embeddedci.com (offline, lease, role, scope), ctx's error when it ended, else
+// the transport failure.
+func (c *Client) Explain(ctx context.Context, err error) error {
+	var apiErr *serverapi.APIError
+	if errors.As(err, &apiErr) {
+		return &Error{Name: c.Name, Status: apiErr.Status, Code: apiErr.Code, Message: apiErr.Message}
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return fmt.Errorf("embeddedci.com: %w", err)
 }
 
 // Label is how messages name the pod: "benchpod-a1b2c3 on embeddedci.com".
@@ -122,7 +191,9 @@ func (e *Error) Error() string {
 	case e.Code == "not_capable":
 		return fmt.Sprintf("%s cannot take commands through embeddedci.com: its firmware is too old; update it (web app or `benchpod flash-self`)", e.Name)
 	case e.Code == "forbidden_tier":
-		return "this change needs an organization owner or admin on embeddedci.com (API keys: the benchpod:admin scope)"
+		return fmt.Sprintf("this change needs an owner or admin of %s's organization on embeddedci.com (API keys: the benchpod:admin scope)", e.Name)
+	case e.Status == http.StatusForbidden && strings.Contains(e.Message, "missing the required scope"):
+		return fmt.Sprintf("the API key cannot do this: %s (create a key with that scope, or unset BENCHPOD_API_KEY to use your `benchpod login` session)", e.Message)
 	case e.Status == http.StatusUnauthorized:
 		return "embeddedci.com refused the sign-in; run `benchpod login` again (or check BENCHPOD_API_KEY)"
 	case e.Status == http.StatusForbidden || e.Status == http.StatusNotFound:
@@ -153,6 +224,9 @@ func authHint(err error) error {
 	var apiErr *serverapi.APIError
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized {
 		return fmt.Errorf("%w (run `benchpod login` again, or check BENCHPOD_API_KEY)", err)
+	}
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden && strings.Contains(apiErr.Message, "organization") {
+		return fmt.Errorf("%w (check --org or BENCHPOD_ORG: it must be one of your organizations)", err)
 	}
 	return err
 }

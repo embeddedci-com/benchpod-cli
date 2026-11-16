@@ -151,3 +151,68 @@ func TestTransportFailures(t *testing.T) {
 		}
 	}
 }
+
+// orgsServer has two organizations: acme (active, bench-a) and test-lab (benchpod-7a32b5).
+func orgsServer(t *testing.T, labListing int) *serverapi.Client {
+	t.Helper()
+	const acme, lab = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/organizations":
+			_ = json.NewEncoder(w).Encode(map[string]any{"active_organization_id": acme,
+				"organizations": []map[string]any{
+					{"organization_id": acme, "name": "Acme", "slug": "acme"},
+					{"organization_id": lab, "name": "Test Lab", "slug": "test-lab"}}})
+		case "/api/benchpod/devices":
+			org := r.Header.Get(serverapi.OrgHeader)
+			switch {
+			case org == "" || org == acme:
+				_ = json.NewEncoder(w).Encode(map[string]any{"devices": []map[string]any{{"id": "id-a", "name": "bench-a"}}})
+			case labListing != http.StatusOK:
+				jsonError(w, labListing, "user is not a member of the requested organization", "")
+			default:
+				_ = json.NewEncoder(w).Encode(map[string]any{"devices": []map[string]any{{"id": "id-7", "name": "benchpod-7a32b5"}}})
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	return serverapi.New(ts.URL)
+}
+
+func TestResolveNamesTheOrganization(t *testing.T) {
+	ctx := context.Background()
+	api := orgsServer(t, http.StatusOK)
+	_, err := Resolve(ctx, api, "tok", "benchpod-7a32b5")
+	want := `no pod named "benchpod-7a32b5" on embeddedci.com (organization "Acme" (acme) has: bench-a); ` +
+		`it is in your organization test-lab: pass --org test-lab (or set BENCHPOD_ORG=test-lab)`
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v\nwant  %s", err, want)
+	}
+	// With the hint followed, it resolves.
+	c, err := Resolve(ctx, api.WithOrg("test-lab"), "tok", "benchpod-7a32b5")
+	if err != nil || c.DeviceID != "id-7" {
+		t.Fatalf("--org test-lab: %+v %v", c, err)
+	}
+	// Searching test-lab for a pod in neither.
+	_, err = Resolve(ctx, api.WithOrg("Test Lab"), "tok", "nope")
+	if err == nil || !strings.Contains(err.Error(), `organization "Test Lab" (test-lab) has: benchpod-7a32b5`) ||
+		!strings.Contains(err.Error(), "your other organizations (acme) do not have it either") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestResolveOrgHintWhenOthersCannotBeListed(t *testing.T) {
+	_, err := Resolve(context.Background(), orgsServer(t, http.StatusForbidden), "ApiKey eci_x", "benchpod-7a32b5")
+	if err == nil || !strings.Contains(err.Error(), "for a pod in another of your organizations (test-lab) pass --org") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMissingScope(t *testing.T) {
+	e := &Error{Name: "p", Status: http.StatusForbidden, Message: "API key is missing the required scope: benchpod:control"}
+	if !strings.Contains(e.Error(), "the API key cannot do this: API key is missing the required scope: benchpod:control") {
+		t.Fatal(e.Error())
+	}
+}

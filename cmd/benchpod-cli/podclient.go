@@ -82,6 +82,17 @@ func cloudServerURL() string {
 	return defaultServerURL
 }
 
+// cloudOrg is --org (or BENCHPOD_ORG): the organization on embeddedci.com that cloud calls act
+// in, an id, slug or name. Empty is the account's active organization.
+var cloudOrg string
+
+// newServerAPI is a client for embeddedci.com at baseURL that acts in cloudOrg.
+func newServerAPI(baseURL string) *serverapi.Client {
+	api := serverapi.New(baseURL)
+	api.Org = cloudOrg
+	return api
+}
+
 // errNoCloudCredential is a missing sign-in for a cloud call.
 var errNoCloudCredential = errors.New("embeddedci.com needs a sign-in: run `benchpod login` (or set BENCHPOD_API_KEY)")
 
@@ -123,7 +134,7 @@ func credentialFor(ctx context.Context, api *serverapi.Client, tokenFlag, tokenP
 
 // resolveCloudPod finds the pod named name on the account and returns a client for it.
 func resolveCloudPod(ctx context.Context, name string) (*cloudpod.Client, error) {
-	api := serverapi.New(cloudServerURL())
+	api := newServerAPI(cloudServerURL())
 	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		return nil, err
@@ -202,7 +213,7 @@ var loadPodWiring = func(g *globalFlags, warn io.Writer) *podWiring {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), wiringLookupTimeout)
 	defer cancel()
-	api := serverapi.New(cloudServerURL())
+	api := newServerAPI(cloudServerURL())
 	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		if !errors.Is(err, errNoCloudCredential) {

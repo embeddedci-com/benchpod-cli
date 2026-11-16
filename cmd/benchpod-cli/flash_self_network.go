@@ -73,17 +73,18 @@ func lanVersions(ctx context.Context, lan lanSession) (podVersions, podStatusInf
 }
 
 // networkFlashAddr is the pod's network API for flash-self --network: its USB network adapter
-// for a USB connection, the address for a network one. The cloud is refused: the web app
-// updates a pod through embeddedci.com.
+// for a USB connection, the address for a network one. An explicit embeddedci: connection never
+// gets here (runFlashSelfCloud); a saved one is refused with how to use it.
 func networkFlashAddr(g *globalFlags) (string, error) {
 	spec, err := g.resolveTarget()
 	if err != nil {
 		return "", err
 	}
 	if spec.IsCloud() {
-		return "", fmt.Errorf("flash-self --network does not go through embeddedci.com (--connection %s%s): "+
-			"update a cloud pod from the web app (BenchPods, Update next to the pod, or the pod's Settings tab), "+
-			"or connect it over USB-C and run `benchpod flash-self --enter-dfu`", cloudConnPrefix, spec.Name)
+		// A saved embeddedci: default (an explicit one goes to runFlashSelfCloud).
+		return "", fmt.Errorf("flash-self --network uses the pod's own network API, and the saved connection is %s%s: "+
+			"pass --connection %s%s to update it through embeddedci.com, or a network address or usb", cloudConnPrefix, spec.Name,
+			cloudConnPrefix, spec.Name)
 	}
 	spec, err = g.networkTarget("flash-self --network")
 	if err != nil {

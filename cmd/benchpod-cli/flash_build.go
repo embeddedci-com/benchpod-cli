@@ -42,7 +42,7 @@ func (f *flashFlags) resolveBuild(g *globalFlags, download bool) (*serverapi.Bui
 	noop := func() {}
 	ctx, cancel := context.WithTimeout(context.Background(), buildLookupTimeout)
 	defer cancel()
-	api := serverapi.New(cloudServerURL())
+	api := newServerAPI(cloudServerURL())
 	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		return nil, noop, fmt.Errorf("flash: %w", err)
@@ -105,7 +105,7 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(flashTimeout)+time.Minute)
 	defer cancel()
 	defer installSignalHandler(ctx, cancel)()
-	api := serverapi.New(cloudServerURL())
+	api := newServerAPI(cloudServerURL())
 	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		return fmt.Errorf("flash: %w", err)

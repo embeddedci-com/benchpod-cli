@@ -61,7 +61,7 @@ func (f *visionServerFlags) credential(ctx context.Context) (*serverapi.Client, 
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve token path: %w", err)
 	}
-	api := serverapi.New(f.serverURL)
+	api := newServerAPI(f.serverURL)
 	cred, err := credentialFor(ctx, api, f.tokenFile, tokenPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("auth: %w", err)

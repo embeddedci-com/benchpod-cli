@@ -247,7 +247,7 @@ func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out
 	defer cancel()
 	defer installSignalHandler(ctx, cancel)()
 
-	api := serverapi.New(t.serverURL)
+	api := newServerAPI(t.serverURL)
 	cred, err := credentialFor(ctx, api, t.tokenFile, tokenPath)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
@@ -261,7 +261,7 @@ func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out
 		}
 		dev, err := findDeviceToDeregister(devices, "", t.deviceName)
 		if err != nil {
-			return err
+			return withOrgHint(ctx, api, cred, err, "", t.deviceName)
 		}
 		id, label = dev.ID, dev.Name
 	}

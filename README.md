@@ -212,8 +212,8 @@ Which command works over which connection:
 |---------------------|----------|
 | Network address     | Every pod command except the USB-only ones below. |
 | USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD), `install-blobs`, `cloud ca` and `cloud proxy`; without it the pod's Ethernet or Wi-Fi address, and the console where it still has the command. Firmware before 3.9.0: the console, as before. `lan-policy`, `sig-policy` and `identity` always use the console (physical presence). |
-| `embeddedci:<name>` | `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
-| USB only            | `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU. These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
+| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
+| USB only            | `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU (or, with `--connection embeddedci:<name>`, embeddedci.com). These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
 A command that cannot use the connection it is given says so and names what to use
 instead.
@@ -236,6 +236,23 @@ API takes, so the output is the same. It needs:
 
 `BENCHPOD_API_BASE` points the CLI at another embeddedci-server (default
 `https://www.embeddedci.com`), as it does for the SDK.
+
+#### Organizations
+
+embeddedci.com scopes pods to an organization. Without `--org` every cloud call acts in
+the organization active on your account (the last one you switched to in the web
+app), so `embeddedci:<name>` only finds that organization's pods. `--org` (or
+`BENCHPOD_ORG`) picks another of yours by id, slug or name, and goes to the server as
+the `X-Organization-Id` header on every signed-in request:
+
+```bash
+benchpod --org test-lab status --connection embeddedci:benchpod-7a32b5
+BENCHPOD_ORG=test-lab benchpod flash-self --network --connection embeddedci:benchpod-7a32b5
+```
+
+When a pod name is not found, the error names the organization that was searched and,
+when the pod is in another of your organizations, the `--org` that reaches it. An API
+key belongs to the organization it was created in.
 
 Commands that stream data or need a direct link to the pod do not go through
 embeddedci.com: `capture`, `stream`, `measure`, `test`, `flash --file`, `spi-flash`,
@@ -669,8 +686,30 @@ firmware** there are two paths, mirroring how the two pod MCUs boot:
 
   DFU stays the default: it needs nothing from the running firmware, so it also
   brings back a pod whose firmware does not start. If power is lost while the pod
-  writes its flash (a few seconds), only DFU recovers it. A pod on
-  embeddedci.com is updated from the web app instead.
+  writes its flash (a few seconds), only DFU recovers it.
+
+- **Through embeddedci.com** (`--connection embeddedci:<name>`): for a pod you
+  reach only over the cloud. The CLI hands the update to embeddedci.com, which
+  streams it to the pod over the pod's own cloud link (the path the web app's
+  Update button takes), and follows the job until the pod is back. With no
+  argument (or `--firmware-version <tag>`) embeddedci.com installs that published
+  release, firmware and blobs together (`--skip-blobs` and `--blobs-dir` are
+  ignored there, with a note). A file or URL (your own build, dev builds
+  included) is uploaded with its `.sig` when there is one; that installs the
+  firmware only, and the pod's signature policy decides whether it takes it.
+  `--dry-run` has the pod stage and verify the image, then drops it. Ctrl-C aborts
+  the update unless the pod is already writing its flash.
+
+  ```
+  benchpod flash-self --connection embeddedci:benchpod-7a32b5             # latest release
+  benchpod --org test-lab flash-self --connection embeddedci:benchpod-7a32b5 ./bench_pod_stm32.bin
+  benchpod flash-self --connection embeddedci:benchpod-7a32b5 --dry-run ./bench_pod_stm32.bin
+  ```
+
+  It needs an owner or admin of the pod's organization (API keys: the
+  `benchpod:admin` scope), the pod online on embeddedci.com and no other session
+  holding its lease; each refusal says which. `--org` picks the organization when
+  the pod is not in your active one (see [Organizations](#organizations)).
 
 The prebuilt firmware is fetched from the public
 [`embeddedci-com/benchpod-firmware`](https://github.com/embeddedci-com/benchpod-firmware)
@@ -706,6 +745,7 @@ and `token.json` for the embeddedci.com session.
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
 | `--tls`             | `auto`                           | TLS to the pod's LAN API: `auto` (8443 when the pod has it, pinned on first use), `on` (TLS only) or `off` (plaintext 8080). Also `BENCHPOD_TLS`. See [Connection](#connection). |
 | `--tls-ca`          | (none)                           | PEM file of CA certificates: verify the pod's certificate and name against them instead of pinning. Also `BENCHPOD_TLS_CA`. |
+| `--org`             | (the active organization)        | The embeddedci.com organization cloud calls act in: its id, slug or name. Also `BENCHPOD_ORG`. See [Organizations](#organizations). |
 | `--no-firmware-report` | `false`                       | Do not report firmware and blob updates to embeddedci.com (also `BENCHPOD_NO_FIRMWARE_REPORT=1`); see [Firmware-update reports](#firmware-update-reports). |
 
 ### Firmware-update reports
@@ -1418,8 +1458,9 @@ Erase a range or the whole part.
 ### `benchpod flash-self [firmware.bin | URL]`
 
 Flash the pod's own firmware over USB DFU (STM32) with dfu-util, then install its
-blobs. With no argument it fetches the latest release. See
-[Flashing the pod itself](#flashing-the-pod-itself-stm32-usb-dfu).
+blobs. With no argument it fetches the latest release. With `--network` it goes over
+the pod's network API, and with `--connection embeddedci:<name>` through
+embeddedci.com. See [Flashing the pod itself](#flashing-the-pod-itself-stm32-usb-dfu).
 
 | Flag                 | Default      | Purpose                                                       |
 |----------------------|--------------|---------------------------------------------------------------|
@@ -1434,6 +1475,7 @@ blobs. With no argument it fetches the latest release. See
 | `--skip-blobs`       | off          | Do not install the gateware and ESP32-C3 images afterwards.   |
 | `--blobs-dir`        | (next to the firmware) | Take the blobs from this directory.                 |
 | `--network`          | off          | Update over the pod's network API instead of USB DFU: its USB network adapter (firmware 3.9.0+) or the `--connection` address. Needs running firmware; the DFU-only flags do not apply. |
+| `--dry-run`          | off          | Through embeddedci.com (`--connection embeddedci:<name>`): the pod stages and verifies the image, then drops it; nothing is written. |
 
 It prints a `signature:` line for the release's `.sig` (see
 [dfu-util](#dfu-util-for-flash-self)) and exits non-zero when a downloaded image's signature
