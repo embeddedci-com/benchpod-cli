@@ -1425,6 +1425,11 @@ blob's signature is reported; for now a missing or failing one never stops it.
 When the pod does not list its blob slots (its `blob_status` command fails), it installs
 nothing and exits non-zero with the pod's reason.
 
+The ESP32-C3 image (`esp`) goes last. Firmware from the release after 3.10.x keeps no copy of it
+on the pod and writes it straight into the C3 instead: that takes about 2 minutes with the pod's
+Wi-Fi down, and the CLI waits for it (also over a Wi-Fi link that drops meanwhile). Pods without a
+built-in C3 (digital v3r3 and later) do not list `esp` and never get it.
+
 After it installs a gateware image over the network API, it checks that the pod runs
 the gateware its firmware carries. Going back from a newer build, the pod can keep
 running the newer gateware (its startup check ran before the new images were in);
@@ -1436,7 +1441,7 @@ does the same after it installs the blobs. When the reload fails, restarting the
 |-------------|-----------------|----------------------------------------------------------------|
 | `--release` | (the pod's)     | Take the blobs from this firmware release tag.                 |
 | `--dir`     | (none)          | Take the blobs from this directory (holding `blobs-manifest.json`), e.g. `stm32h563/build/blobs`. |
-| `--only`    | (all)           | Comma-separated slots to install: `gw0`, `gw1`, `gw2` (the sensor emulation image, gateware v54+), `esp`. |
+| `--only`    | (all)           | Comma-separated slots to install: `gw0`, `gw1`, `gw2` (the sensor emulation image, gateware v54+), `esp` (pods with a built-in ESP32-C3). |
 | `--force`   | off             | Install even the blobs the pod already holds.                  |
 
 ### `benchpod dfu`

@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
@@ -175,7 +177,67 @@ func (l lanBlobs) UploadSigned(ctx context.Context, target string, data []byte, 
 	if st.State == "error" {
 		return rep, fmt.Errorf("upload %s: commit: %s", target, valueOr(st.Error, "failed"))
 	}
+	if st.State == "applying" {
+		return rep, l.waitApplied(ctx, target)
+	}
 	return rep, nil
+}
+
+// How long an esp image may take to go into the ESP32-C3 (about 2 minutes on the bench), and how
+// often the pod is asked meanwhile. Variables for the tests.
+var (
+	espApplyWait = 6 * time.Minute
+	espApplyPoll = 2 * time.Second
+	espApplyNote = 30 * time.Second
+)
+
+// waitApplied follows an esp update that the pod writes into its ESP32-C3 (state "applying":
+// firmware that keeps no copy of the C3's image) until it reports "installed" or "error". The pod's
+// Wi-Fi is down meanwhile, so a connection over Wi-Fi drops: then it asks again on fresh
+// connections until the pod answers.
+func (l lanBlobs) waitApplied(ctx context.Context, target string) error {
+	fmt.Fprintf(os.Stderr, "  %s: the pod is writing it into the ESP32-C3 (about 2 minutes; the pod's Wi-Fi is down meanwhile)\n", target)
+	deadline := time.Now().Add(espApplyWait)
+	sess := l.lan
+	var fresh *lanSession
+	defer func() {
+		if fresh != nil {
+			fresh.s.Close()
+		}
+	}()
+	lastNote := time.Now()
+	for {
+		var st otaSession
+		err := sess.cmd(ctx, map[string]any{"cmd": "ota_status"}, &st)
+		switch {
+		case err == nil && st.State == "installed":
+			return nil
+		case err == nil && st.State == "applying":
+		case err == nil:
+			return fmt.Errorf("upload %s: writing it into the ESP32-C3: %s", target, valueOr(st.Error, st.State))
+		case sess.s == nil || sess.s.Broken():
+			// The link went with the C3 (Wi-Fi), or never came back: try a new connection.
+			if s, oerr := openLAN(ctx, l.addr); oerr == nil {
+				if fresh != nil {
+					fresh.s.Close()
+				}
+				fresh, sess = &s, s
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("upload %s: the pod did not finish writing it into the ESP32-C3 within %s "+
+				"(run `benchpod install-blobs --only %s` again once the pod answers)", target, espApplyWait, target)
+		}
+		if time.Since(lastNote) >= espApplyNote {
+			lastNote = time.Now()
+			fmt.Fprintf(os.Stderr, "  %s: still writing it into the ESP32-C3...\n", target)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(espApplyPoll):
+		}
+	}
 }
 
 // blobTargetFor picks the pod's USB network over its console when it is up (the console's
