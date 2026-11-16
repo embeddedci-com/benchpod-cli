@@ -70,11 +70,11 @@ func newRootCmd() *cobra.Command {
 			"cloud proxy; the rest over the pod's USB network adapter when it is up.\n" +
 			"Through embeddedci.com: status, ping, la voltage, la pullup, la status, la step,\n" +
 			"la pins, la dir, i2c, generate, sensor, lan-policy, sig-policy, cloud ca\n" +
-			"show/clear, cloud proxy and deregister.\n" +
+			"show/clear, cloud proxy, deregister and flash-self (embeddedci.com runs the update).\n" +
 			"Always over the USB console: set-wifi, show-network, clear-wifi, identity,\n" +
 			"install-blobs, bootsel, dfu, usb-bridge and usb-reattach; flash-self reflashes\n" +
-			"the pod over USB DFU. A command that cannot use the connection says so and\n" +
-			"names what to use instead.\n\n" +
+			"the pod over USB DFU unless --network or an embeddedci: connection. A command\n" +
+			"that cannot use the connection says so and names what to use instead.\n\n" +
 			"flash and spi-flash over the network take the pins you leave out from the pod's\n" +
 			"wiring profile on embeddedci.com when you are signed in and the pod is on your\n" +
 			"account.\n\n" +

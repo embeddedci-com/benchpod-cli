@@ -14,7 +14,7 @@ import (
 func TestStartOTAUpload(t *testing.T) {
 	var got struct {
 		path, query, contentType, sig, org string
-		body                                []byte
+		body                               []byte
 	}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got.path, got.query = r.URL.Path, r.URL.RawQuery
