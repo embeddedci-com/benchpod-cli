@@ -137,14 +137,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 	}
 	resp, err := c.API.DeviceCommand(ctx, c.Credential, c.DeviceID, req, timeout)
 	if err != nil {
-		var apiErr *serverapi.APIError
-		if errors.As(err, &apiErr) {
-			return nil, &Error{Name: c.Name, Status: apiErr.Status, Code: apiErr.Code, Message: apiErr.Message}
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, fmt.Errorf("embeddedci.com: %w", err)
+		return nil, c.Explain(ctx, err)
 	}
 	if strings.TrimSpace(resp.Status) == "error" {
 		msg := strings.TrimSpace(resp.Error)
@@ -154,6 +147,20 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 		return nil, &tcpclient.PodError{Reason: msg}
 	}
 	return resp.Data, nil
+}
+
+// Explain turns a failed call about this pod into an error that says what happened: an *Error for
+// an answer from embeddedci.com (offline, lease, role, scope), ctx's error when it ended, else
+// the transport failure.
+func (c *Client) Explain(ctx context.Context, err error) error {
+	var apiErr *serverapi.APIError
+	if errors.As(err, &apiErr) {
+		return &Error{Name: c.Name, Status: apiErr.Status, Code: apiErr.Code, Message: apiErr.Message}
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return fmt.Errorf("embeddedci.com: %w", err)
 }
 
 // Label is how messages name the pod: "benchpod-a1b2c3 on embeddedci.com".
@@ -185,6 +192,8 @@ func (e *Error) Error() string {
 		return fmt.Sprintf("%s cannot take commands through embeddedci.com: its firmware is too old; update it (web app or `benchpod flash-self`)", e.Name)
 	case e.Code == "forbidden_tier":
 		return "this change needs an organization owner or admin on embeddedci.com (API keys: the benchpod:admin scope)"
+	case e.Status == http.StatusForbidden && strings.Contains(e.Message, "missing the required scope"):
+		return fmt.Sprintf("the API key cannot do this: %s (create a key with that scope, or unset BENCHPOD_API_KEY to use your `benchpod login` session)", e.Message)
 	case e.Status == http.StatusUnauthorized:
 		return "embeddedci.com refused the sign-in; run `benchpod login` again (or check BENCHPOD_API_KEY)"
 	case e.Status == http.StatusForbidden || e.Status == http.StatusNotFound:
@@ -215,6 +224,9 @@ func authHint(err error) error {
 	var apiErr *serverapi.APIError
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized {
 		return fmt.Errorf("%w (run `benchpod login` again, or check BENCHPOD_API_KEY)", err)
+	}
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden && strings.Contains(apiErr.Message, "organization") {
+		return fmt.Errorf("%w (check --org or BENCHPOD_ORG: it must be one of your organizations)", err)
 	}
 	return err
 }

@@ -209,3 +209,10 @@ func TestResolveOrgHintWhenOthersCannotBeListed(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestMissingScope(t *testing.T) {
+	e := &Error{Name: "p", Status: http.StatusForbidden, Message: "API key is missing the required scope: benchpod:control"}
+	if !strings.Contains(e.Error(), "the API key cannot do this: API key is missing the required scope: benchpod:control") {
+		t.Fatal(e.Error())
+	}
+}
