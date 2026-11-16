@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -129,7 +128,7 @@ func runRegister(g *globalFlags, opts registerOptions) error {
 	defer cancel()
 	defer installSignalHandler(ctx, cancel)()
 
-	api := serverapi.New(serverURL)
+	api := newServerAPI(serverURL)
 	tokens, err := ensureTokens(ctx, api, tokenPath)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)

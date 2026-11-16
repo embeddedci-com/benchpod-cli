@@ -146,6 +146,13 @@ func (c *Client) setOrgHeader(ctx context.Context, req *http.Request, credential
 	return nil
 }
 
+// AuthorizeRequest sets a request built outside this package up like the client's own: the
+// credential's Authorization header and the Org selector.
+func (c *Client) AuthorizeRequest(ctx context.Context, req *http.Request, credential string) error {
+	req.Header.Set("Authorization", Authorization(credential))
+	return c.setOrgHeader(ctx, req, credential)
+}
+
 // WithOrg is a copy of c that acts in the organization sel (an id, slug or name) instead.
 func (c *Client) WithOrg(sel string) *Client {
 	return &Client{BaseURL: c.BaseURL, HTTP: c.HTTP, Org: sel}

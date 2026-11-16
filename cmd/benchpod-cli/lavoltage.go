@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
-	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -126,7 +125,7 @@ var accountDeviceForConnection = func(g *globalFlags) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	api := serverapi.New(cloudServerURL())
+	api := newServerAPI(cloudServerURL())
 	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		return ""
@@ -144,7 +143,7 @@ var accountDeviceForConnection = func(g *globalFlags) string {
 var saveLaMVToProfile = func(deviceID string, mv int) (changed bool, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	api := serverapi.New(cloudServerURL())
+	api := newServerAPI(cloudServerURL())
 	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		return false, fmt.Errorf("sign in: %w", err)

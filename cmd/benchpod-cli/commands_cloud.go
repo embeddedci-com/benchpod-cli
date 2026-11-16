@@ -120,7 +120,7 @@ func runLogin(serverURL, tokenFile string, noOpen bool) error {
 	defer cancel()
 	defer installSignalHandler(ctx, cancel)()
 
-	api := serverapi.New(serverURL)
+	api := newServerAPI(serverURL)
 
 	codeCtx, codeCancel := context.WithTimeout(ctx, 30*time.Second)
 	code, err := api.BeginDeviceLogin(codeCtx)

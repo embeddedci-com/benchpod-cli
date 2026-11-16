@@ -237,6 +237,23 @@ API takes, so the output is the same. It needs:
 `BENCHPOD_API_BASE` points the CLI at another embeddedci-server (default
 `https://www.embeddedci.com`), as it does for the SDK.
 
+#### Organizations
+
+embeddedci.com scopes pods to an organization. Without `--org` every cloud call acts in
+the organization active on your account (the last one you switched to in the web
+app), so `embeddedci:<name>` only finds that organization's pods. `--org` (or
+`BENCHPOD_ORG`) picks another of yours by id, slug or name, and goes to the server as
+the `X-Organization-Id` header on every signed-in request:
+
+```bash
+benchpod --org test-lab status --connection embeddedci:benchpod-7a32b5
+BENCHPOD_ORG=test-lab benchpod flash-self --network --connection embeddedci:benchpod-7a32b5
+```
+
+When a pod name is not found, the error names the organization that was searched and,
+when the pod is in another of your organizations, the `--org` that reaches it. An API
+key belongs to the organization it was created in.
+
 Commands that stream data or need a direct link to the pod do not go through
 embeddedci.com: `capture`, `stream`, `measure`, `test`, `flash --file`, `spi-flash`,
 `cloud ca set`, `register`, the USB-only commands and `discover`. Over a cloud
@@ -706,6 +723,7 @@ and `token.json` for the embeddedci.com session.
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
 | `--tls`             | `auto`                           | TLS to the pod's LAN API: `auto` (8443 when the pod has it, pinned on first use), `on` (TLS only) or `off` (plaintext 8080). Also `BENCHPOD_TLS`. See [Connection](#connection). |
 | `--tls-ca`          | (none)                           | PEM file of CA certificates: verify the pod's certificate and name against them instead of pinning. Also `BENCHPOD_TLS_CA`. |
+| `--org`             | (the active organization)        | The embeddedci.com organization cloud calls act in: its id, slug or name. Also `BENCHPOD_ORG`. See [Organizations](#organizations). |
 | `--no-firmware-report` | `false`                       | Do not report firmware and blob updates to embeddedci.com (also `BENCHPOD_NO_FIRMWARE_REPORT=1`); see [Firmware-update reports](#firmware-update-reports). |
 
 ### Firmware-update reports

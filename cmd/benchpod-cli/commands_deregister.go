@@ -94,7 +94,7 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 	defer cancel()
 	defer installSignalHandler(ctx, cancel)()
 
-	api := serverapi.New(serverURL)
+	api := newServerAPI(serverURL)
 	cred, err := credentialFor(ctx, api, tokenFile, tokenPath)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)

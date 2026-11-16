@@ -17,7 +17,6 @@ import (
 
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
-	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
@@ -632,7 +631,7 @@ var accountDevices = func() map[string]string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	api := serverapi.New(defaultServerURL)
+	api := newServerAPI(defaultServerURL)
 	tokens, err := ensureTokens(ctx, api, tokenPath)
 	if err != nil {
 		return nil

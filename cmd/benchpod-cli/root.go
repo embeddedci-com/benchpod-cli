@@ -22,6 +22,8 @@ type globalFlags struct {
 	tls            string // --tls: auto | on | off (tcpclient.DefaultTLSMode)
 	tlsCA          string // --tls-ca: verify the pod's certificate against these roots
 
+	org string // --org: the embeddedci.com organization cloud calls act in (cloudOrg)
+
 	noFirmwareReport bool // --no-firmware-report: do not tell embeddedci.com about firmware updates (fwreport.go)
 
 	usbAddr string // the pod's USB network address, once networkTarget found it (one probe per run)
@@ -59,8 +61,10 @@ func newRootCmd() *cobra.Command {
 			"a device path (/dev/tty..., COM3) or `usb` uses the pod's USB console, and its\n" +
 			"USB network adapter for the network commands (firmware 3.9.0+, no Wi-Fi set);\n" +
 			"embeddedci:<name> goes through embeddedci.com to the pod with that name on your\n" +
-			"account (signed in with `benchpod login`, or BENCHPOD_API_KEY). Omit it to use the\n" +
-			"default saved by `benchpod discover --save` or `benchpod set-connection`.\n\n" +
+			"account (signed in with `benchpod login`, or BENCHPOD_API_KEY). Omit --connection\n" +
+			"to use the default saved by `benchpod discover --save` or `benchpod set-connection`.\n" +
+			"--org (or BENCHPOD_ORG) picks which of your embeddedci.com organizations cloud\n" +
+			"calls act in, by id, slug or name; the default is the one active in the web app.\n\n" +
 			"Over the network: every pod command but the USB-only ones below. Over the USB\n" +
 			"console: status, la voltage, flash (SWD), lan-policy, sig-policy, cloud ca and\n" +
 			"cloud proxy; the rest over the pod's USB network adapter when it is up.\n" +
@@ -85,6 +89,8 @@ func newRootCmd() *cobra.Command {
 			g.timeout = viper.GetDuration("timeout")
 			g.tls = viper.GetString("tls")
 			g.tlsCA = viper.GetString("tls-ca")
+			g.org = strings.TrimSpace(viper.GetString("org"))
+			cloudOrg = g.org
 			mode, err := tcpclient.ParseTLSMode(g.tls)
 			if err != nil {
 				return usageErrorf("%v", err)
@@ -104,13 +110,15 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.tls, "tls", "auto",
 		"TLS to the pod's LAN API: auto (TLS on 8443 when the pod has it, pinned on first use), on (TLS only) or off (plaintext 8080)")
 	pf.StringVar(&g.tlsCA, "tls-ca", "", "PEM file of CA certificates: verify the pod's TLS certificate and name against them instead of pinning")
+	pf.StringVar(&g.org, "org", "",
+		"embeddedci.com organization for cloud calls (embeddedci:<name>, login-backed commands): its id, slug or name (default: the active organization in the web app; also BENCHPOD_ORG)")
 	pf.BoolVar(&g.noFirmwareReport, "no-firmware-report", false,
 		"do not report firmware and blob updates to embeddedci.com (also BENCHPOD_NO_FIRMWARE_REPORT=1)")
 
 	viper.SetEnvPrefix("BENCHPOD")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
-	for _, name := range []string{"connection", "config-file", "output-filename", "timeout", "tls", "tls-ca"} {
+	for _, name := range []string{"connection", "config-file", "output-filename", "timeout", "tls", "tls-ca", "org"} {
 		_ = viper.BindPFlag(name, pf.Lookup(name))
 	}
 

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
-	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 )
 
 // Firmware-update reports: after this CLI changes a pod's firmware (flash-self) or its blobs
@@ -92,7 +91,7 @@ const fwReportQueueMax = 20
 
 // fwReportPost sends one report. A variable so tests can replace it.
 var fwReportPost = func(ctx context.Context, ev fwEvent) error {
-	api := &serverapi.Client{BaseURL: cloudServerURL()}
+	api := newServerAPI(cloudServerURL())
 	cred, err := cloudCredential(ctx, api)
 	if err != nil {
 		return errNoCloudCredential // not signed in: nothing to send it with
@@ -103,7 +102,9 @@ var fwReportPost = func(ctx context.Context, ev fwEvent) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", serverapi.Authorization(cred))
+	if err := api.AuthorizeRequest(ctx, req, cred); err != nil {
+		return err
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
