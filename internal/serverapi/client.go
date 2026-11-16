@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -78,6 +79,14 @@ const (
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
+	// Org picks the organization authenticated requests act in: an organization id, or the slug
+	// or name of one of the user's organizations (looked up once). It goes as X-Organization-Id.
+	// Empty means the account's active organization, the server's default.
+	Org string
+
+	orgMu       sync.Mutex
+	orgFor      string // the Org value orgResolved was looked up for
+	orgResolved string
 }
 
 // New returns a Client targeting baseURL with a 30 s default HTTP timeout.
@@ -188,6 +197,9 @@ func (c *Client) RegisterDevice(ctx context.Context, accessToken, name, publicKe
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", Authorization(accessToken))
+	if err := c.setOrgHeader(ctx, req, accessToken); err != nil {
+		return nil, err
+	}
 
 	httpc := c.HTTP
 	if httpc == nil {
@@ -427,8 +439,13 @@ func podPolicyPath(deviceID, kind string) (string, error) {
 
 // doAuthedJSON performs a bearer-authenticated JSON request and decodes a 2xx body into out
 // (skipped when out is nil). Non-2xx responses are shaped into an error carrying the server's
-// `error` field when it sends one (the writeJSONError shape).
+// `error` field when it sends one (the writeJSONError shape). It acts in c.Org.
 func (c *Client) doAuthedJSON(ctx context.Context, method, path, accessToken string, body, out any) error {
+	return c.doJSON(ctx, method, path, accessToken, body, out, true)
+}
+
+// doJSON is doAuthedJSON; withOrg false leaves out the organization selector.
+func (c *Client) doJSON(ctx context.Context, method, path, accessToken string, body, out any, withOrg bool) error {
 	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
 		return errors.New("serverapi: BaseURL is empty")
 	}
@@ -452,6 +469,11 @@ func (c *Client) doAuthedJSON(ctx context.Context, method, path, accessToken str
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", Authorization(accessToken))
+	if withOrg {
+		if err := c.setOrgHeader(ctx, req, accessToken); err != nil {
+			return err
+		}
+	}
 
 	httpc := c.HTTP
 	if httpc == nil {
@@ -703,6 +725,9 @@ func (c *Client) DownloadBuildArtifact(ctx context.Context, accessToken string, 
 		return err
 	}
 	req.Header.Set("Authorization", Authorization(accessToken))
+	if err := c.setOrgHeader(ctx, req, accessToken); err != nil {
+		return err
+	}
 	httpc := c.HTTP
 	if httpc == nil {
 		httpc = http.DefaultClient
