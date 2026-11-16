@@ -1,0 +1,248 @@
+{
+  "_source": "embeddedci-python: PYTHONPATH=packages/embeddedci/src python -c \"import json, dataclasses; from embeddedci.benchpod import EXPANSION_CHIPS; print(json.dumps({'chips': [dataclasses.asdict(c) for c in EXPANSION_CHIPS]}, indent=2))\"",
+  "chips": [
+    {
+      "name": "tca9555",
+      "bus": "i2c",
+      "pins": 16,
+      "la_pins": 2,
+      "addrs": [
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39
+      ],
+      "voltages": [
+        1.8,
+        3.3
+      ],
+      "directions": "in/out",
+      "max_hz": 400000,
+      "since": "2.13.21",
+      "aliases": [
+        "tca9535"
+      ],
+      "note": "TI, 1.65-5.5 V"
+    },
+    {
+      "name": "pca9555",
+      "bus": "i2c",
+      "pins": 16,
+      "la_pins": 2,
+      "addrs": [
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39
+      ],
+      "voltages": [
+        3.3
+      ],
+      "directions": "in/out",
+      "max_hz": 400000,
+      "since": "2.13.21",
+      "aliases": [
+        "pca9535"
+      ],
+      "note": "NXP, 2.3-5.5 V: not at 1.8 V"
+    },
+    {
+      "name": "mcp23017",
+      "bus": "i2c",
+      "pins": 16,
+      "la_pins": 2,
+      "addrs": [
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39
+      ],
+      "voltages": [
+        1.8,
+        3.3
+      ],
+      "directions": "in/out",
+      "max_hz": 400000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "Microchip, 1.8-5.5 V"
+    },
+    {
+      "name": "pcf8574",
+      "bus": "i2c",
+      "pins": 8,
+      "la_pins": 2,
+      "addrs": [
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39
+      ],
+      "voltages": [
+        3.3
+      ],
+      "directions": "quasi",
+      "max_hz": 100000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "NXP/TI, 2.5-6 V: not at 1.8 V; 100 kHz"
+    },
+    {
+      "name": "pcf8574a",
+      "bus": "i2c",
+      "pins": 8,
+      "la_pins": 2,
+      "addrs": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63
+      ],
+      "voltages": [
+        3.3
+      ],
+      "directions": "quasi",
+      "max_hz": 100000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "the PCF8574 at addresses 0x38-0x3f"
+    },
+    {
+      "name": "pcf8575",
+      "bus": "i2c",
+      "pins": 16,
+      "la_pins": 2,
+      "addrs": [
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39
+      ],
+      "voltages": [
+        3.3
+      ],
+      "directions": "quasi",
+      "max_hz": 400000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "NXP/TI, 2.5-5.5 V: not at 1.8 V"
+    },
+    {
+      "name": "tca6416a",
+      "bus": "i2c",
+      "pins": 16,
+      "la_pins": 2,
+      "addrs": [
+        32,
+        33
+      ],
+      "voltages": [
+        1.8,
+        3.3
+      ],
+      "directions": "in/out",
+      "max_hz": 400000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "TI, 1.65-5.5 V, level-shifting (VCCI = the LA voltage)"
+    },
+    {
+      "name": "tca6424a",
+      "bus": "i2c",
+      "pins": 24,
+      "la_pins": 2,
+      "addrs": [
+        34,
+        35
+      ],
+      "voltages": [
+        1.8,
+        3.3
+      ],
+      "directions": "in/out",
+      "max_hz": 400000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "TI, 1.65-5.5 V, level-shifting (VCCI = the LA voltage)"
+    },
+    {
+      "name": "mcp23s17",
+      "bus": "spi",
+      "pins": 16,
+      "la_pins": 4,
+      "addrs": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "voltages": [
+        1.8,
+        3.3
+      ],
+      "directions": "in/out",
+      "max_hz": 6000000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "Microchip, SPI; several on one CS by hardware address (A0-A2)"
+    },
+    {
+      "name": "74hc595",
+      "bus": "spi",
+      "pins": 8,
+      "la_pins": 4,
+      "addrs": [],
+      "voltages": [
+        3.3
+      ],
+      "directions": "out",
+      "max_hz": 6000000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "shift-register chain, outputs only; CS to RCLK (latch), MISO a free pin"
+    },
+    {
+      "name": "74hc165",
+      "bus": "spi",
+      "pins": 8,
+      "la_pins": 5,
+      "addrs": [],
+      "voltages": [
+        3.3
+      ],
+      "directions": "in",
+      "max_hz": 6000000,
+      "since": "2.13.21",
+      "aliases": [],
+      "note": "shift-register chain, inputs only; CS to CLK INH, load= to SH/LD, MOSI a free pin"
+    }
+  ]
+}
