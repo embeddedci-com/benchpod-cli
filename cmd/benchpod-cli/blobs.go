@@ -212,8 +212,19 @@ func installBlobsList(ctx context.Context, console blobTarget, src blobSource, f
 		fmt.Fprintln(os.Stderr, "blobs: the pod already holds every blob this firmware goes with")
 		return nil, nil
 	}
+	todo = espLast(todo)
 	var done []blobEntry
+	reloaded := false
+	reload := func() {
+		if r, ok := console.(gatewareReloader); ok && !reloaded && installedGateware(done) {
+			r.ReloadStaleGateware(ctx, os.Stderr)
+		}
+		reloaded = true
+	}
 	for _, e := range todo {
+		if e.Name == "esp" {
+			reload() // before the C3 write: the pod's Wi-Fi is down during it
+		}
 		data, err := fetchBlob(ctx, src, e)
 		if err != nil {
 			return done, err
@@ -237,10 +248,23 @@ func installBlobsList(ctx context.Context, console blobTarget, src blobSource, f
 		fmt.Fprintf(os.Stderr, "blobs: %s installed (%.1f s)\n", e.Name, time.Since(start).Seconds())
 		done = append(done, e)
 	}
-	if r, ok := console.(gatewareReloader); ok && installedGateware(done) {
-		r.ReloadStaleGateware(ctx, os.Stderr)
-	}
+	reload()
 	return done, nil
+}
+
+// espLast moves the ESP32-C3 image to the end: firmware that keeps no copy of it writes it into
+// the C3 at once, about 2 minutes with the pod's Wi-Fi down, so nothing else should wait behind it.
+func espLast(todo []blobEntry) []blobEntry {
+	out := make([]blobEntry, 0, len(todo))
+	var esp []blobEntry
+	for _, e := range todo {
+		if e.Name == "esp" {
+			esp = append(esp, e)
+		} else {
+			out = append(out, e)
+		}
+	}
+	return append(out, esp...)
 }
 
 // podFirmwareRelease is the release tag of the firmware a pod runs ("v3.4.0"), "" if unknown.
