@@ -1339,8 +1339,32 @@ embeddedci.com always verifies and resets: `--no-verify`, `--no-reset`,
 | `--openocd`                | (`PATH`) | Path to the `openocd` binary.                                          |
 | `--command`, `-c`          | (none)  | Extra OpenOCD command, repeatable, appended last.                       |
 | `--openocd-arg`            | (none)  | Extra raw OpenOCD argument, repeatable, appended last.                  |
+| `--rx`                     | (profile `uart_rx`) | ESP32: LA pin on the target's TXD0.                         |
+| `--tx`                     | (profile `uart_tx`) | ESP32: LA pin on the target's RXD0.                         |
+| `--boot`                   | (profile signal `BOOT`, `IO0` or `IO9`) | ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain. |
 
 Pass `--target` (with `--file` or `--build`) or at least one `-c`/`--openocd-arg`.
+
+#### ESP32 targets
+
+With `--target esp32` (or `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, ...) the pod flashes an
+ESP32-family target through the chip's UART ROM bootloader instead of SWD, the way esptool does:
+no OpenOCD, no esptool, no USB cable to the target. The usual flags keep their meaning: `--file`
+is a `.bin` (written at `--load-address`, default 0) or an ESP-IDF `build/flasher_args.json`,
+`--nreset` says EN is on the pod's reset pin (DUT header J1 pin 22), and `--no-reset` leaves the
+target in its loader. Only `--rx` (the target's TXD0), `--tx` (RXD0) and `--boot` (IO0, IO9 on the
+C3/C6) are new. Wire GND too; 3.3 V I/O.
+
+```bash
+benchpod flash --target esp32s3 --file build/flasher_args.json --boot 6 --nreset
+benchpod flash --target esp32 --file build/app.bin --load-address 0x10000 --rx 3 --tx 4 --boot la6 --nreset
+```
+
+Each region is uploaded into the pod, written at 460800 baud and checked against the chip's MD5;
+at the end the target is reset into the new image. EN may also be a wiring-profile signal named
+`EN`. Needs the pod's network (its address, or `usb` with USB networking) and firmware with the
+`esp_flash` command. Over embeddedci.com use the Python SDK (`bp.flash(target="esp32", ...)`) or
+the MCP server.
 
 ### `benchpod spi-flash`
 
