@@ -693,7 +693,8 @@ firmware** there are two paths, mirroring how the two pod MCUs boot:
   streams it to the pod over the pod's own cloud link (the path the web app's
   Update button takes), and follows the job until the pod is back. With no
   argument (or `--firmware-version <tag>`) embeddedci.com installs that published
-  release, firmware and blobs together. A file or URL (your own build, dev builds
+  release, firmware and blobs together (`--skip-blobs` and `--blobs-dir` are
+  ignored there, with a note). A file or URL (your own build, dev builds
   included) is uploaded with its `.sig` when there is one; that installs the
   firmware only, and the pod's signature policy decides whether it takes it.
   `--dry-run` has the pod stage and verify the image, then drops it. Ctrl-C aborts

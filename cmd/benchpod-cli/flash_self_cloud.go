@@ -60,8 +60,9 @@ func runFlashSelfCloud(g *globalFlags, f *flashSelfFlags, changed func(string) b
 	// checks it and installs the blobs that go with it. A file or URL is uploaded as is.
 	release := arg == "" && strings.TrimSpace(f.firmwareURL) == ""
 	if release && (changed("skip-blobs") || changed("blobs-dir")) {
-		return errors.New("--skip-blobs and --blobs-dir do not apply to a release installed through embeddedci.com: " +
-			"it installs the release's firmware and blobs together")
+		// The server has no way to install a release without its blobs: say so and go on.
+		fmt.Fprintln(os.Stderr, "flash-self: note: embeddedci.com installs a release's firmware and blobs together; "+
+			"ignoring --skip-blobs and --blobs-dir")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(flashSelfTimeout))

@@ -133,9 +133,26 @@ func TestFlashSelfCloudLatestRelease(t *testing.T) {
 	if o.aborts != 1 {
 		t.Errorf("the dry run's staged image was not dropped (%d aborts)", o.aborts)
 	}
-	err := runFlashSelfCloud(cloudFlashGlobals, &flashSelfFlags{}, func(n string) bool { return n == "blobs-dir" }, nil, "benchpod-7a32b5")
-	if err == nil || !strings.Contains(err.Error(), "--blobs-dir do not apply to a release") {
-		t.Fatalf("err = %v", err)
+}
+
+// --skip-blobs (or --blobs-dir) with a release is noted and ignored: the server installs the
+// release's blobs with it, and there is nothing to skip on its side.
+func TestFlashSelfCloudReleaseIgnoresSkipBlobs(t *testing.T) {
+	o := &otaServer{t: t, phases: []map[string]any{{"phase": "done", "version_after": "3.10.6"}}}
+	o.start()
+	var err error
+	out := captureStderr(t, func() {
+		err = runFlashSelfCloud(cloudFlashGlobals, &flashSelfFlags{network: true, firmwareVer: "v3.10.6", skipBlobs: true},
+			func(n string) bool { return n == "skip-blobs" }, nil, "benchpod-7a32b5")
+	})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if o.query != "release=v3.10.6" {
+		t.Errorf("query %q", o.query)
+	}
+	if strings.Count(out, "ignoring --skip-blobs and --blobs-dir") != 1 {
+		t.Errorf("want one note about the ignored flags:\n%s", out)
 	}
 }
 
