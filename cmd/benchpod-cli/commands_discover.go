@@ -435,6 +435,11 @@ func printReport(in reportInput) {
 					describeSerialRegistration(p))
 			}
 			_ = w.Flush()
+			for _, p := range in.serialPods {
+				if m := describeSerialMACs(p); m != "" {
+					fmt.Fprintf(out, "  %s: %s\n", p.Device, m)
+				}
+			}
 		}
 		fmt.Fprintln(out)
 	}
@@ -695,6 +700,30 @@ func describeBoard(p serialconsole.SerialPod) string {
 		return board + "  fw " + p.Firmware
 	}
 	return board
+}
+
+// describeSerialMACs is the MAC line of a USB pod, for a network that hands out addresses only to
+// registered devices: "MAC Ethernet aa:..., Wi-Fi bb:...", "" when the console printed none.
+func describeSerialMACs(p serialconsole.SerialPod) string {
+	eth := strings.TrimSpace(p.MAC)
+	if eth == "-" {
+		eth = ""
+	}
+	wifi := strings.TrimSpace(p.WiFiMAC)
+	var parts []string
+	if eth != "" {
+		parts = append(parts, "Ethernet "+eth)
+	}
+	if wifi != "" {
+		if strings.HasPrefix(wifi, "not known") {
+			wifi = "not known yet (`benchpod scan-wifi` tells it)"
+		}
+		parts = append(parts, "Wi-Fi "+wifi)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "MAC " + strings.Join(parts, ", ")
 }
 
 func describePodIP(p serialconsole.SerialPod) string {

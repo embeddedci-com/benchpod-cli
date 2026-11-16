@@ -20,7 +20,11 @@ type SerialPod struct {
 	Firmware string // "v1.4.2", from the same line
 	IP       string // the pod's address, "" or "0.0.0.0" when it has no lease
 	MAC      string // wired MAC
-	Status   string // raw `status` output
+	// WiFiMAC is the MAC the pod uses on Wi-Fi (the console's `wifimac` line, firmware after
+	// 3.10.7): "" when the line is missing (older firmware, or no Wi-Fi), "not known yet ..."
+	// until a scan or a join told it.
+	WiFiMAC string
+	Status  string // raw `status` output
 
 	// Registered reports whether the pod already holds a cloud provisioning — i.e. it was
 	// claimed into an account, possibly by somebody else before it was shipped. This comes
@@ -122,10 +126,11 @@ func podIdentity(p SerialPod) string {
 // v1.4.2" — so it is split on the "fw" token.
 func parseSerialPod(device, raw string) SerialPod {
 	p := SerialPod{
-		Device: device,
-		IP:     statusField(raw, "ip"),
-		MAC:    statusField(raw, "mac"),
-		Status: raw,
+		Device:  device,
+		IP:      statusField(raw, "ip"),
+		MAC:     statusField(raw, "mac"),
+		WiFiMAC: statusField(raw, "wifimac"),
+		Status:  raw,
 	}
 	board := statusField(raw, "board")
 	if i := strings.Index(board, "fw "); i >= 0 {

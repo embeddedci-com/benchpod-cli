@@ -877,6 +877,10 @@ LAN address when the pod has one, and `usb` when it was only heard on its USB li
 `10.237.x.y` address only works while the pod is plugged into this computer, so it is
 never saved; `usb` finds the pod again on any port.
 
+Each pod on USB also gets a `MAC` line: its Ethernet MAC and, on firmware after 3.10.7 with
+Wi-Fi, the MAC it uses on Wi-Fi (`not known yet` until a `benchpod scan-wifi` or a join). Give
+them to your network admin when the network hands out addresses only to registered devices.
+
 | Flag              | Default | Purpose                                                         |
 |-------------------|---------|-----------------------------------------------------------------|
 | `--save`          | off     | Save the pod as the default connection when exactly one is found: its Ethernet or Wi-Fi address first, `usb` for a pod only on its USB link, else its USB console device. |
@@ -913,8 +917,14 @@ BenchPod at 192.168.1.220:8080
   I/O voltage   3.3 V
   Target power  off
   Network       192.168.1.220 (ready), Wi-Fi connected
+  MAC           Ethernet 02:35:c7:76:b7:9b, Wi-Fi 7c:e8:b1:c5:ca:6c
   Cloud         registered, connected, on your account as benchpod-baea06
 ```
+
+The `MAC` line (firmware after 3.10.7) has the Ethernet MAC and, on a pod with Wi-Fi, the MAC it
+uses on Wi-Fi, or `not known yet` until a `benchpod scan-wifi` or a join tells the pod. Through
+embeddedci.com the pod sends a shorter status without them: the pod's Settings tab on the web
+shows them.
 
 | Flag     | Default | Purpose                                                       |
 |----------|---------|---------------------------------------------------------------|
