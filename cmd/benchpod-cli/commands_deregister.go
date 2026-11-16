@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/cloudpod"
 	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
@@ -120,7 +121,7 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 		}
 		dev, fErr := findDeviceToDeregister(devices, pubKey, deviceName)
 		if fErr != nil {
-			return fErr
+			return withOrgHint(ctx, api, cred, fErr, pubKey, deviceName)
 		}
 		target, label = dev.ID, dev.Name
 	}
@@ -156,6 +157,20 @@ func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID st
 	fmt.Fprintf(os.Stderr, "Deregistered pod %q (id %s). Its data is kept; register it again to restore it.\n",
 		label, device.ID)
 	return nil
+}
+
+// withOrgHint adds to err, a pod missing from the device list, which organization was searched
+// and how to reach the pod in another one (cloudpod.OrgHint).
+func withOrgHint(ctx context.Context, api *serverapi.Client, cred string, err error, publicKey, name string) error {
+	hintCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	where, hint := cloudpod.OrgHint(hintCtx, api, cred, func(d serverapi.DeviceResponse) bool {
+		if publicKey != "" {
+			return strings.TrimSpace(d.PublicKey) == publicKey
+		}
+		return d.Name == name
+	})
+	return fmt.Errorf("%w (searched %s)%s", err, where, hint)
 }
 
 // findDeviceToDeregister picks the device to detach out of the account's device list, by public

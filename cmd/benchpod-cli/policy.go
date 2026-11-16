@@ -261,7 +261,7 @@ func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out
 		}
 		dev, err := findDeviceToDeregister(devices, "", t.deviceName)
 		if err != nil {
-			return err
+			return withOrgHint(ctx, api, cred, err, "", t.deviceName)
 		}
 		id, label = dev.ID, dev.Name
 	}

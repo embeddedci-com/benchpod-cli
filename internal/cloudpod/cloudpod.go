@@ -52,10 +52,72 @@ func Resolve(ctx context.Context, api *serverapi.Client, credential, name string
 	for _, d := range devices {
 		names = append(names, d.Name)
 	}
+	where, hint := OrgHint(ctx, api, credential, func(d serverapi.DeviceResponse) bool {
+		return d.Name == name || d.ID == name
+	})
 	if len(names) == 0 {
-		return nil, fmt.Errorf("no pod named %q on embeddedci.com: this account has no pods", name)
+		return nil, fmt.Errorf("no pod named %q on embeddedci.com: %s has no pods%s", name, where, hint)
 	}
-	return nil, fmt.Errorf("no pod named %q on embeddedci.com (this account has: %s)", name, strings.Join(names, ", "))
+	return nil, fmt.Errorf("no pod named %q on embeddedci.com (%s has: %s)%s", name, where, strings.Join(names, ", "), hint)
+}
+
+// OrgHint says, for a pod that is not among the devices api lists, which organization was
+// searched (where: `organization "Acme" (acme)`, or "this account" when the server does not say)
+// and, in hint, how to reach the pod: the --org of another of the user's organizations that has
+// a device match accepts, else how to pick another organization. It is best effort: a failing
+// lookup only makes the message plainer.
+func OrgHint(ctx context.Context, api *serverapi.Client, credential string, match func(serverapi.DeviceResponse) bool) (where, hint string) {
+	where = "this account"
+	orgs, err := api.ListOrganizations(ctx, credential)
+	if err != nil || len(orgs.Organizations) == 0 {
+		return where, "; for a pod in another organization pass --org <id|slug|name> (or set BENCHPOD_ORG)"
+	}
+	searched, ok := orgs.Active()
+	if sel := strings.TrimSpace(api.Org); sel != "" {
+		searched, err = orgs.Find(sel)
+		ok = err == nil
+	}
+	if ok {
+		where = "organization " + searched.Label()
+	}
+	var found, others []string
+	unsure := false
+	for _, org := range orgs.Organizations {
+		if ok && org.ID == searched.ID {
+			continue
+		}
+		others = append(others, orgSelector(org))
+		devices, err := api.WithOrg(org.ID).ListDevices(ctx, credential)
+		if err != nil {
+			unsure = true // an API key, for one, sees its own organization only
+			continue
+		}
+		for _, d := range devices {
+			if match(d) {
+				found = append(found, orgSelector(org))
+				break
+			}
+		}
+	}
+	switch {
+	case len(found) == 1:
+		return where, fmt.Sprintf("; it is in your organization %s: pass --org %s (or set BENCHPOD_ORG=%s)", found[0], found[0], found[0])
+	case len(found) > 1:
+		return where, fmt.Sprintf("; it is in your organizations %s: pick one with --org (or BENCHPOD_ORG)", strings.Join(found, ", "))
+	case len(others) > 0 && unsure:
+		return where, fmt.Sprintf("; for a pod in another of your organizations (%s) pass --org (or set BENCHPOD_ORG)", strings.Join(others, ", "))
+	case len(others) > 0:
+		return where, fmt.Sprintf("; your other organizations (%s) do not have it either", strings.Join(others, ", "))
+	}
+	return where, ""
+}
+
+// orgSelector is the --org value that names org: its slug, else its id.
+func orgSelector(org serverapi.Organization) string {
+	if org.Slug != "" {
+		return org.Slug
+	}
+	return org.ID
 }
 
 // Command sends req to the pod and returns its reply data. A refusal by the pod comes back as a
