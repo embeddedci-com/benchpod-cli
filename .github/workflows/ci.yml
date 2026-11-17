@@ -38,8 +38,11 @@ jobs:
           BENCHPOD_FIRMWARE_DIR: ${{ github.workspace }}/benchpod-firmware
 
   build:
-    # Same runner as release so the macOS cgo build is exercised on every PR.
-    runs-on: macos-latest
+    # Linux, so a PR never waits on a macOS runner (they were often not assigned within GitHub's
+    # 15 minutes, which cancelled the job). The darwin binaries need cgo + IOKit, so they are only
+    # built by the release job on macOS; here the whole GoReleaser config is checked and the
+    # pure-Go Linux and Windows binaries are snapshot-built.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,5 +55,9 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.19.0
-          # sign: cosign keyless needs the release job's OIDC token.
-          args: release --snapshot --clean --skip=publish,sign
+          args: check
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          args: build --snapshot --clean --id linux-windows
