@@ -25,10 +25,11 @@ const (
 	forbiddenHint = "API keys need the benchpod:admin scope"
 )
 
-// laVoltageUnsetHint answers the firmware's "la voltage not set; set it with la_voltage (mv 1800
-// or 3300) first", which names the raw JSON command rather than what a CLI user runs.
-const laVoltageUnsetHint = "set the DUT's I/O voltage first: `benchpod la voltage 3.3V` (or 1.8V), " +
-	"or on the web app's Wiring tab"
+// laVoltageUnsetHint answers the firmware's "la voltage not set; ..." (it names the raw JSON command
+// or the profile key rather than what a CLI user runs). The pod and the tools take the voltage from
+// the wiring profile, so the lasting fix is to set it there.
+const laVoltageUnsetHint = "the wiring profile sets no I/O voltage: set it in the profile (the I/O voltage " +
+	"at the top of the Pins pane in the web or desktop app), or for now `benchpod la voltage 3.3V` (or 1.8V)"
 
 // pinConflictRE matches the firmware's "pin conflict: LA%u is in use by %s; %s" (la_pins.c).
 // A sensor pin names its function too: "is in use by sensor:env (i2c_sda); ...", and an I2C

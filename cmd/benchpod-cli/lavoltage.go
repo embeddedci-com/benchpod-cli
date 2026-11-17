@@ -35,8 +35,8 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 			"current setting. Works over the network, over USB (--connection usb) and through\n" +
 			"embeddedci.com (--connection embeddedci:<name>).\n\n" +
 			"The pod forgets the voltage on a restart. Firmware 3.10.8 and later keeps wiring\n" +
-			"profiles on the pod: the profile's I/O voltage is applied when the DUT powers on, and\n" +
-			"this command saves nothing. With older firmware, when this machine is signed in\n" +
+			"profiles on the pod: the profile's I/O voltage is applied when the DUT powers on and\n" +
+			"(firmware 3.10.10+) on the first LA operation, and this command saves nothing. With older firmware, when this machine is signed in\n" +
 			"(`benchpod login`) and the pod is registered to that account, setting it over\n" +
 			"the network or embeddedci.com also saves it to the pod's wiring profile on\n" +
 			"embeddedci.com, which the server applies on every connect. Over USB it is set\n" +
@@ -100,7 +100,7 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 		fmt.Fprintf(warn, "Warning: the bank's power mux reports %s, not %s\n", formatMV(rep.ReadbackMV), formatMV(rep.MV))
 	}
 	if mv != 0 && podStoresWiring(g) {
-		fmt.Fprintln(out, "Not saved: the I/O voltage in the pod's wiring profile is applied when the DUT powers on (change it there with `benchpod wiring save`).")
+		fmt.Fprintln(out, "Not saved: the pod uses the I/O voltage in its wiring profile after a restart (change it there with `benchpod wiring save`, or in the Pins pane).")
 		return nil
 	}
 	if mv != 0 {

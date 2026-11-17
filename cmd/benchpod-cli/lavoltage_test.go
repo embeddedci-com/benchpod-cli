@@ -183,7 +183,7 @@ func TestLAVoltageSavesNothingWhenThePodStoresProfiles(t *testing.T) {
 	if err := runLAVoltage(&globalFlags{connection: addr}, 3300, &out, &warn); err != nil {
 		t.Fatal(err)
 	}
-	if len(*saves) != 0 || !strings.Contains(out.String(), "Not saved: the I/O voltage in the pod's wiring profile") {
+	if len(*saves) != 0 || !strings.Contains(out.String(), "Not saved: the pod uses the I/O voltage in its wiring profile") {
 		t.Fatalf("saves %v out %q", *saves, out.String())
 	}
 }
