@@ -88,7 +88,7 @@ func TestFirmwareRefusalsKeepTheirPrefixes(t *testing.T) {
 func TestTheLAVoltageRefusalNamesTheCLICommand(t *testing.T) {
 	pe := &tcpclient.PodError{Reason: fwrefusals.Example("la_voltage_unset")}
 	err := withRefusalHint(fmt.Errorf("flash: %w", pe))
-	if !strings.Contains(err.Error(), "benchpod la voltage 3.3V") || !strings.Contains(err.Error(), "Wiring tab") {
+	if !strings.Contains(err.Error(), "benchpod la voltage 3.3V") || !strings.Contains(err.Error(), "Pins pane") {
 		t.Fatalf("got %v", err)
 	}
 	if exitCode(err) != exitRefused {

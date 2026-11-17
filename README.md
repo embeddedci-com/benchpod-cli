@@ -336,7 +336,7 @@ benchpod status            # readable summary
 benchpod status --json     # the pod's raw status reply
 
 # Hardware (network):
-benchpod la voltage 3.3V                          # the DUT's I/O voltage; LA operations need it (network or USB)
+benchpod la voltage 3.3V                          # the DUT's I/O voltage for now (it normally comes from the wiring profile)
 benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --output csv      # ADC snapshot
