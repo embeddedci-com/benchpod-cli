@@ -252,7 +252,7 @@ func newI2CStartCmd(g *globalFlags) *cobra.Command {
 				}
 			}
 			if sda == "" || scl == "" {
-				return usageErrorf("--sda and --scl are required (or set i2c_sda and i2c_scl in the pod's wiring profile on embeddedci.com)")
+				return usageErrorf("--sda and --scl are required (or set i2c_sda and i2c_scl in the pod's wiring profile)")
 			}
 			sdaPin, err := r.pin("--sda", sda)
 			if err != nil {

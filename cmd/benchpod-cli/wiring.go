@@ -453,6 +453,27 @@ func newExplainCmd() *cobra.Command {
 // loadPodWiringFromPod reads the pod's own profile (--wiring-profile, else its default) for the
 // flags a command leaves out. ok false: the pod's firmware stores no profiles, so the caller
 // falls back to embeddedci.com.
+// podStoresWiring says whether the pod behind g's connection keeps its wiring profiles itself
+// (firmware 3.10.8+). Then nothing is saved to embeddedci.com on the side. A variable so tests can
+// replace it.
+var podStoresWiring = func(g *globalFlags) bool {
+	spec, err := g.resolveTarget()
+	if err != nil {
+		return false
+	}
+	if spec = g.preferUSBNetwork(spec, "wiring"); spec.IsSerial() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wiringLookupTimeout)
+	defer cancel()
+	t, err := openPodTarget(ctx, spec)
+	if err != nil {
+		return false
+	}
+	_, err = wiringStoreList(ctx, t.client)
+	return err == nil
+}
+
 func loadPodWiringFromPod(g *globalFlags, warn io.Writer) (*podWiring, bool) {
 	spec, err := g.resolveTarget()
 	if err != nil {
