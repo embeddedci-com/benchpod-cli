@@ -170,3 +170,20 @@ func TestLAVoltageArgIsAUsageError(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 }
+
+// A pod that keeps its wiring profiles itself (3.10.8+) applies the profile's I/O voltage at DUT
+// power-on: setting the bank saves nothing to embeddedci.com.
+func TestLAVoltageSavesNothingWhenThePodStoresProfiles(t *testing.T) {
+	addr, _ := fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
+	saves := stubLAVoltageProfile(t, "dev-1", true, nil)
+	saved := podStoresWiring
+	t.Cleanup(func() { podStoresWiring = saved })
+	podStoresWiring = func(*globalFlags) bool { return true }
+	var out, warn bytes.Buffer
+	if err := runLAVoltage(&globalFlags{connection: addr}, 3300, &out, &warn); err != nil {
+		t.Fatal(err)
+	}
+	if len(*saves) != 0 || !strings.Contains(out.String(), "Not saved: the I/O voltage in the pod's wiring profile") {
+		t.Fatalf("saves %v out %q", *saves, out.String())
+	}
+}

@@ -195,7 +195,7 @@ func (w *podWiring) channel(name string) (int, bool) {
 }
 
 // wiringSource names where defaulted pins came from, in log lines.
-const wiringSource = "the pod's wiring profile on embeddedci.com"
+const wiringSource = "the pod's wiring profile"
 
 // wiringLookupTimeout bounds the whole profile lookup, so a slow server never holds up a command
 // that has its flags anyway.

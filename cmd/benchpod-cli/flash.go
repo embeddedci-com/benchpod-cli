@@ -110,7 +110,7 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 			"none is needed here; on the network or USB the file is downloaded and flashed by the\n" +
 			"local OpenOCD. Both need `benchpod login` or BENCHPOD_API_KEY.\n\n" +
 			"--swclk, --swdio, --nreset and --target default to swd_swclk, swd_swdio,\n" +
-			"swd_nreset and swd_target in the pod's wiring profile on embeddedci.com when this\n" +
+			"swd_nreset and swd_target in the pod's wiring profile when this\n" +
 			"machine is signed in (`benchpod login` or BENCHPOD_API_KEY), the pod is on that\n" +
 			"account and the connection is a network address. Flags always win; the log says\n" +
 			"where each value came from. Without a profile, --swclk and --swdio are required.",
@@ -196,7 +196,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 		}
 	}
 	if strings.TrimSpace(f.swclk) == "" || strings.TrimSpace(f.swdio) == "" {
-		return fmt.Errorf("--swclk and --swdio are required (or set swd_swclk and swd_swdio in the pod's wiring profile on embeddedci.com)")
+		return fmt.Errorf("--swclk and --swdio are required (or set swd_swclk and swd_swdio in the pod's wiring profile)")
 	}
 	swclk, err := parseLAPin(f.swclk)
 	if err != nil {
