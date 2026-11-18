@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"github.com/embeddedci-com/benchpod-cli/internal/spiflash"
 	"github.com/spf13/cobra"
 )
@@ -97,7 +98,7 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 			if calibrated != nil {
 				// Firmware before 3.9.1 ignores the volts and would play its default
 				// full-scale 8-bit waveform instead: check before sending.
-				status, err := pod.client.Command(ctx, map[string]any{"cmd": "status"})
+				status, err := pod.client.Command(ctx, features.StatusRequest())
 				if err != nil {
 					return fmt.Errorf("generate: status: %w", err)
 				}
@@ -107,7 +108,7 @@ func newGenerateCmd(g *globalFlags) *cobra.Command {
 				}
 				if !ok {
 					return fmt.Errorf("generate: --amplitude-v/--amplitude-ma need firmware 3.9.1 or newer " +
-						"(the pod does not list generate16); update it with `benchpod flash-self`, or use --amplitude/--offset levels")
+						"(the pod has no generate16); update it with `benchpod flash-self`, or use --amplitude/--offset levels")
 				}
 				delete(req, "amplitude")
 				delete(req, "offset")

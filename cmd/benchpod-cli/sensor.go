@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"github.com/embeddedci-com/benchpod-cli/internal/sensors"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
@@ -277,7 +278,7 @@ func sensorPod(g *globalFlags, what string) (context.Context, context.CancelFunc
 	if err != nil {
 		return nil, func() {}, nil, err
 	}
-	status, err := t.client.Command(ctx, map[string]any{"cmd": "status"})
+	status, err := t.client.Command(ctx, features.StatusRequest())
 	if err != nil {
 		cancel()
 		return nil, func() {}, nil, fmt.Errorf("%s: status: %w", what, err)

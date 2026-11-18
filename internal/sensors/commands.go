@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 )
 
 const (
@@ -197,18 +199,9 @@ func Values(pairs []string) (map[string]any, error) {
 	return out, nil
 }
 
-// HasCapability reports whether a status reply lists cap in its caps.
+// HasCapability reports whether the pod whose status reply this is has cap (features.Has: the
+// features table when the reply has features_rev, else its caps list).
 func HasCapability(status json.RawMessage, cap string) bool {
-	var s struct {
-		Caps []string `json:"caps"`
-	}
-	if json.Unmarshal(status, &s) != nil {
-		return false
-	}
-	for _, c := range s.Caps {
-		if strings.EqualFold(c, cap) {
-			return true
-		}
-	}
-	return false
+	ok, err := features.Has(status, cap)
+	return err == nil && ok
 }
