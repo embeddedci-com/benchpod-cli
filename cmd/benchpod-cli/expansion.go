@@ -132,7 +132,7 @@ func newExpansionCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&sda, "sda", "", "LA pin for SDA when no I2C session is open (default: i2c_sda from the pod's wiring profile)")
 	cmd.Flags().StringVar(&scl, "scl", "", "LA pin for SCL when no I2C session is open (default: i2c_scl from the pod's wiring profile)")
 	cmd.Flags().IntVar(&hz, "hz", 0, "SCL rate in Hz when a session is opened (default: the chip's limit, 400 kHz or 100 kHz)")
-	cmd.Flags().StringVar(&pullups, "pullups", "pod", "pod (the pod's pull-ups on LA1-LA6, switched on first) or external (the breakout's)")
+	cmd.Flags().StringVar(&pullups, "pullups", "pod", "pod (the pod's pull-ups on LA1-LA6, which must be on: benchpod la pullup 1 on) or external (the breakout's)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
 }
