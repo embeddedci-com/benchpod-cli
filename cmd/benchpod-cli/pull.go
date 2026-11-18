@@ -30,11 +30,11 @@ var pullTableV3 = map[int]pullHW{
 // firmware.
 func pullRefusal(la int, want string, hw pullHW, ok bool) error {
 	if !ok {
-		return &tcpclient.PodError{Cmd: "la", Reason: fmt.Sprintf("LA%d has no pull resistor on this board", la),
+		return &tcpclient.PodError{Reason: fmt.Sprintf("LA%d has no pull resistor on this board", la),
 			Code: "BP0023", Args: map[string]any{"la": la}}
 	}
 	have := hw.dirs[0]
-	return &tcpclient.PodError{Cmd: "la", Reason: fmt.Sprintf("LA%d supports pull-%s only on this board", la, have),
+	return &tcpclient.PodError{Reason: fmt.Sprintf("LA%d supports pull-%s only on this board", la, have),
 		Code: "BP0024", Args: map[string]any{"la": la, "want": want, "have": have}}
 }
 
