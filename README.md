@@ -1836,7 +1836,8 @@ The same as `show`, for redirecting into a file a repository keeps: `benchpod wi
 ### `benchpod wiring save FILE`
 
 Store a `.json` profile on the pod. A version 1 file (or one without a `version`) is upgraded first:
-what it leaves out takes the reference bench's values (the EmbeddedCI NUCLEO-F446RE wiring). Saving
+what it leaves out takes the old default pins' values (UART RX LA5 and TX LA4, I2C SDA LA1 and SCL LA2,
+SWD LA11/LA12, 3.3 V, internal 5 V; not the wiring of any particular bench). Saving
 never changes which profile is the default; the pod's first profile becomes its default.
 
 | Flag      | Default                 | Purpose |
@@ -1855,7 +1856,7 @@ Delete a stored profile. The default cannot be deleted (`BP0013`): make another 
 
 ### `benchpod wiring upgrade FILE`
 
-Rewrite a version 1 wiring file as version 2, writing out the reference bench's values for what it
+Rewrite a version 1 wiring file as version 2, writing out the old default pins' values for what it
 leaves out, so the file means the same with SDK 3.0 and later. The old file is kept as `FILE.v1.bak`.
 No flags.
 
