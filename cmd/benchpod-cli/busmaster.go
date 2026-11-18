@@ -281,7 +281,7 @@ func newI2CStartCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&sda, "sda", "", "LA pin for SDA, 1-14 or a wiring name (default: i2c_sda from the pod's wiring profile)")
 	cmd.Flags().StringVar(&scl, "scl", "", "LA pin for SCL, 1-14 or a wiring name (default: i2c_scl from the pod's wiring profile)")
 	cmd.Flags().IntVar(&hz, "hz", 100000, "SCL rate in Hz, 10000 to 1000000; the pod never runs faster")
-	cmd.Flags().StringVar(&pullups, "pullups", "pod", "pod (the pod's pull-ups on LA1-LA6, switched on first) or external (the board's)")
+	cmd.Flags().StringVar(&pullups, "pullups", "pod", "pod (the pod's pull-ups on LA1-LA6, which must be on: benchpod la pullup 1 on) or external (the board's)")
 	return cmd
 }
 
