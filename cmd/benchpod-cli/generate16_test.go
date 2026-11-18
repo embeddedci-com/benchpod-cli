@@ -54,7 +54,7 @@ func TestGenerateCalibratedNeedsFirmware391(t *testing.T) {
 		"--offset-v", "2.5", "--connection", addr}); code == exitOK {
 		t.Fatal("generate with volts accepted on a pod without generate16")
 	}
-	if st := <-got; st != `{"cmd":"status"}` {
+	if st := <-got; st != `{"caps":false,"cmd":"status"}` {
 		t.Fatalf("request = %s", st)
 	}
 	select {

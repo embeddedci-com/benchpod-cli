@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 )
 
 // Firmware limits per command.
@@ -290,20 +292,10 @@ func isSPIBusy(err error) bool {
 	return strings.Contains(m, "spi busy") || strings.Contains(m, "swd or spi busy")
 }
 
-// HasCap reports whether a status reply lists capability name.
+// HasCap reports whether the pod whose status reply this is has capability name: from the
+// features table when the reply has features_rev, else from its caps list (features.Has).
 func HasCap(status json.RawMessage, name string) (bool, error) {
-	var st struct {
-		Caps []string `json:"caps"`
-	}
-	if err := json.Unmarshal(status, &st); err != nil {
-		return false, fmt.Errorf("decode status: %w", err)
-	}
-	for _, c := range st.Caps {
-		if c == name {
-			return true, nil
-		}
-	}
-	return false, nil
+	return features.Has(status, name)
 }
 
 // EncodeB64 is unpadded base64url (RFC 4648 section 5), what the firmware takes.

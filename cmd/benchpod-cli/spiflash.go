@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"github.com/embeddedci-com/benchpod-cli/internal/spiflash"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
@@ -148,7 +149,7 @@ func runSPIWith(ctx context.Context, client *tcpclient.Client, cfg spiflash.Conf
 	}
 	defer sess.Close()
 
-	status, err := sess.Command(ctx, map[string]any{"cmd": "status"})
+	status, err := sess.Command(ctx, features.StatusRequest())
 	if err != nil {
 		return fmt.Errorf("spi-flash %s: status: %w", name, err)
 	}
@@ -157,7 +158,7 @@ func runSPIWith(ctx context.Context, client *tcpclient.Client, cfg spiflash.Conf
 		return fmt.Errorf("spi-flash %s: %w", name, err)
 	}
 	if !ok {
-		return fmt.Errorf("spi-flash: this pod has no SPI master (no %q in its caps); it needs gateware v45 or newer", spiflash.Cap)
+		return fmt.Errorf("spi-flash: this pod has no SPI master (capability %q); it needs gateware v45 or newer", spiflash.Cap)
 	}
 
 	err = spiflash.Session(ctx, sess, cleanupCommander{sess, client}, cfg, nreset, func(ctx context.Context, p *spiflash.Pod, s spiflash.Started) error {
