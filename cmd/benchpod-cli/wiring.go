@@ -29,9 +29,9 @@ const (
 	wiringTimeout = 20 * time.Second
 )
 
-// referenceBench is what a version 1 profile fills in (the EmbeddedCI reference bench, a
-// NUCLEO-F446RE): the defaults profiles had before version 2.
-var referenceBench = map[string]any{
+// defaultPins is what a version 1 profile fills in: the default pins profiles had before
+// version 2 (not the wiring of any particular bench).
+var defaultPins = map[string]any{
 	"la_mv": 3300, "efuse": 1, "uart_rx": 5, "uart_tx": 4, "i2c_sda": 1, "i2c_scl": 2,
 	"i2c_addr": "0x76", "swd_swclk": 11, "swd_swdio": 12,
 }
@@ -141,7 +141,7 @@ func wiringPut(ctx context.Context, c podCommander, name string, profile []byte,
 }
 
 // upgradeProfile turns a version 1 profile (or one without a version) into version 2 by writing
-// out the reference bench's values for what it leaves out. changed says whether it was version 1.
+// out the old default pins' values for what it leaves out. changed says whether it was version 1.
 func upgradeProfile(p map[string]any) (map[string]any, bool, error) {
 	v, has := p["version"]
 	n, _ := v.(float64)
@@ -152,7 +152,7 @@ func upgradeProfile(p map[string]any) (map[string]any, bool, error) {
 		return nil, false, fmt.Errorf("version must be 1 or 2, got %v", v)
 	}
 	out := map[string]any{}
-	for k, val := range referenceBench {
+	for k, val := range defaultPins {
 		out[k] = val
 	}
 	for k, val := range p {
@@ -216,7 +216,7 @@ func newWiringCmd(g *globalFlags) *cobra.Command {
 		Use:   "save FILE",
 		Short: "Store a .json profile on the pod (--name, default: the pod's default profile)",
 		Long: "Store a wiring profile on the pod. A version 1 file (or one without a version) is upgraded\n" +
-			"first: what it leaves out takes the reference bench's values. A new name refuses to replace a\n" +
+			"first: what it leaves out takes the old default pins' values. A new name refuses to replace a\n" +
 			"profile that exists unless --force. Saving never changes which profile is the default.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -243,7 +243,7 @@ func newWiringCmd(g *globalFlags) *cobra.Command {
 	}
 	upgrade := &cobra.Command{
 		Use:   "upgrade FILE",
-		Short: "Rewrite a version 1 wiring file as version 2 (the reference bench's values written out)",
+		Short: "Rewrite a version 1 wiring file as version 2 (the old default pins' values written out)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWiringUpgrade(args[0], cmd.OutOrStdout())
@@ -327,7 +327,7 @@ func runWiringSave(g *globalFlags, path, name string, force bool, out, warn io.W
 		return usageErrorf("wiring save: %s: %v", path, err)
 	}
 	if upgraded {
-		fmt.Fprintf(warn, "Note: %s is a version 1 profile; the reference bench's values were written out for what it leaves out (`benchpod wiring upgrade %s` rewrites the file).\n", path, path)
+		fmt.Fprintf(warn, "Note: %s is a version 1 profile; the old default pins' values were written out for what it leaves out (`benchpod wiring upgrade %s` rewrites the file).\n", path, path)
 	}
 	body, _ := json.Marshal(p)
 	ctx, cancel, t, err := wiringTarget(g)
