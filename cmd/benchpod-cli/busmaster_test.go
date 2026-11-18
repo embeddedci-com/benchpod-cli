@@ -233,8 +233,19 @@ func TestI2CPullupRefusalNamesTheCLICommand(t *testing.T) {
 		return nil, ""
 	}
 	_, err := runBus(t, g, newI2CCmd(g), "start", "--sda", "1", "--scl", "2")
-	if err == nil || !strings.Contains(err.Error(), "benchpod la pullup 1 on") || !strings.Contains(err.Error(), "--pullups external") ||
+	if err == nil || !strings.Contains(err.Error(), "benchpod la pull 1 up") || !strings.Contains(err.Error(), "--pullups external") ||
 		strings.Contains(err.Error(), `{"cmd"`) {
+		t.Fatalf("err = %v", err)
+	}
+	// firmware with la_pull_dir names the pull form
+	pod.reply = func(req map[string]any) (any, string) {
+		if req["cmd"] == "i2c_start" {
+			return nil, `I2C needs pull-ups: switch on LA2's with {"cmd":"la","la":2,"pull":"up"}, or pass "pullups":"external"`
+		}
+		return nil, ""
+	}
+	_, err = runBus(t, g, newI2CCmd(g), "start", "--sda", "1", "--scl", "2")
+	if err == nil || !strings.Contains(err.Error(), "benchpod la pull 2 up") || strings.Contains(err.Error(), `{"cmd"`) {
 		t.Fatalf("err = %v", err)
 	}
 }

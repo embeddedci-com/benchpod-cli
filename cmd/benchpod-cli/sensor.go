@@ -406,7 +406,7 @@ func newSensorStartCmd(g *globalFlags) *cobra.Command {
 			"target has no data-ready pin); UART tx (pod to DUT RX) and rx; analog output=dac\n" +
 			"(default) or output=current. A channel is 1-14 (or la4); another word is a name in\n" +
 			"the wiring profile on embeddedci.com, resolved here. Set the LA voltage and,\n" +
-			"for I2C, the pull-ups first (`benchpod la pullup`). Starting an instance that runs\n" +
+			"for I2C, the pull-ups first (`benchpod la pull PIN up`). Starting an instance that runs\n" +
 			"replaces it; the sensor keeps running after this command, until `benchpod sensor stop`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

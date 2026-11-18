@@ -62,7 +62,8 @@ var pinReleaseHints = []struct {
 
 // i2cPullupRE matches i2c_start's "I2C needs pull-ups: switch on LA1's with
 // {"cmd":"la","la":1,"pullup":"on"}, or pass "pullups":"external"".
-var i2cPullupRE = regexp.MustCompile(`^(I2C needs pull-ups): switch on LA(\d+)'s with \{"cmd":"la","la":\d+,"pullup":"on"\}`)
+// Firmware with la_pull_dir names {"cmd":"la","la":1,"pull":"up"} instead.
+var i2cPullupRE = regexp.MustCompile(`^(I2C needs pull-ups): switch on LA(\d+)'s with \{"cmd":"la","la":\d+,"(?:pullup":"on|pull":"up)"\}`)
 
 // translateRefusal rewords a refusal whose firmware text names a raw JSON command: it returns the
 // text to show and the hint to add ("" for none). Other refusals come back unchanged with no hint.
@@ -72,7 +73,7 @@ func translateRefusal(msg string) (shown, hint string) {
 		return msg, laVoltageUnsetHint
 	}
 	if m := i2cPullupRE.FindStringSubmatch(msg); m != nil {
-		return m[1], fmt.Sprintf("switch LA%s's on with `benchpod la pullup %s on`, or pass --pullups external "+
+		return m[1], fmt.Sprintf("pull LA%s up with `benchpod la pull %s up`, or pass --pullups external "+
 			"when the board has its own", m[2], m[2])
 	}
 	if strings.HasSuffix(msg, "need gateware v55+: update the pod's firmware") ||
