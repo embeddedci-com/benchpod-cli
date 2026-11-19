@@ -171,6 +171,7 @@ type ciFixture struct {
 	leaseErr       error
 	connErr        error
 	join           *tcpclient.LeaseJoin
+	withUpload     bool // the run uploads (to BENCHPOD_API_BASE) as the real command does
 }
 
 func newCIFixture(t *testing.T, yaml string) *ciFixture {
@@ -197,6 +198,12 @@ func (f *ciFixture) run() (*ciExit, *ci.Run) {
 		f.t.Fatal(err)
 	}
 	r := &ciRunner{cfg: cfg, opts: f.opts, steps: steps, stdout: &f.stdout, stderr: &f.stderr}
+	if f.withUpload {
+		r.signedIn = ciSignedIn
+		r.upload = func(ctx context.Context, dir string) (*ci.Uploaded, error) {
+			return uploadRunFolder(ctx, dir, &f.stderr)
+		}
+	}
 	r.connect = func(context.Context) (*ciConnected, error) {
 		if f.connErr != nil {
 			return nil, f.connErr

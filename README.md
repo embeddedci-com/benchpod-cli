@@ -727,8 +727,9 @@ flow the firmware `make flash-dfu` target uses).
 `benchpod ci` runs a whole hardware-in-the-loop suite from one file committed next to the
 tests, `benchpod-ci.yaml`: flash the DUT, check that it boots, measure its current, run
 pytest and any other test command, and record everything in a run folder. The same
-command runs on a laptop and in a CI job. The run never needs embeddedci.com (uploading
-runs there comes in a later version).
+command runs on a laptop and in a CI job. The run never needs embeddedci.com; when you are
+signed in it is uploaded there at the end, so the Builds page shows it next to the build and
+compares it with earlier runs.
 
 ```bash
 benchpod ci                                   # runs ./benchpod-ci.yaml on the default pod
@@ -738,6 +739,10 @@ benchpod ci --firmware build/app.elf          # another image than firmware.file
 benchpod ci --repeat 10 --keep-going          # a soak run
 benchpod ci validate                          # check the file, drive nothing
 benchpod ci diff embeddedci-runs/<a> embeddedci-runs/<b>
+benchpod ci list --suite process-node-hil     # runs on embeddedci.com
+benchpod ci show <run id>
+benchpod ci diff <run id>                     # with the previous run of its suite and DUT
+benchpod ci upload embeddedci-runs/<run>      # a run made offline
 ```
 
 ### What a run does
@@ -820,6 +825,23 @@ Default: `./embeddedci-runs/<start time UTC>-<suite>/`, or `--out DIR`.
 
 Secrets (passwords, tokens, keys) are removed from traces before they are written.
 
+### Uploading runs
+
+At the end of a run the CLI uploads the run folder to embeddedci.com, as the file's `upload:`
+says: `auto` (the default) when this machine is signed in (`benchpod login`, or
+`BENCHPOD_API_KEY` with the `benchpod:control` or `jobs:submit` scope), `true` always (a run
+without a sign-in stops before it touches the pod), `false` never. `--no-upload` skips it for
+one run. The summary ends with the run's URL, and run.json gets `uploaded` (the run's `id`
+and `url` on embeddedci.com; `run_id` stays the local id).
+
+What goes up: run.json, junit.xml, the logs, and the traces the keep policy keeps: with
+`keep.traces: failed` (the default) only those of failed and errored cases, with `all` every
+case's, with `none` none, plus the attachments those traces point to. `parts/` is already
+merged into run.json and stays local. embeddedci.com takes a run.json of up to 20 MB, files of
+up to 64 MB and 512 MB per run; traces, attachments and logs are kept there for 30 days, the
+run itself for good. A failed upload is a warning: the run's exit code stays what the tests
+made it, and `benchpod ci upload <run folder>` sends it later.
+
 ### `benchpod-ci.yaml` reference
 
 ```yaml
@@ -839,7 +861,7 @@ env:
 timeout: 20m                     # the whole run (default 60m)
 keep: {traces: failed}           # all | failed | none
 cleanup: default                 # or none, or a list: [dac_stop, power_off, sensors_off, pulls_off]
-upload: auto                     # auto | true | false (read now, used once uploads exist)
+upload: auto                     # auto (when signed in) | true | false
 baseline: main                   # read now, used once runs are compared on embeddedci.com
 steps:
   - id: boot                     # stable id: the case id across runs (default: from name)
@@ -2248,7 +2270,7 @@ a run does, the file's reference and the exit codes.
 | `--firmware`   | (`firmware.file`) | Flash this image instead, or `build:<id>` for a build uploaded to embeddedci.com. |
 | `--step`       | (all)   | Run only this step id; repeatable or comma-separated. |
 | `--out`        | (`./embeddedci-runs/<UTC time>-<suite>`) | The run folder. |
-| `--no-upload`  | off     | Do not upload the run to embeddedci.com (uploads come in a later version; runs stay local for now). |
+| `--no-upload`  | off     | Do not upload the run to embeddedci.com, whatever the file's `upload:` says. |
 | `--keep-going` | off     | Go on after a required step fails. |
 | `--repeat`     | `1`     | Run the steps N times (the firmware is flashed once); each case records its attempt. |
 | `--json`       | off     | Print run.json on stdout instead of the summary (step output goes to stderr). |
@@ -2286,14 +2308,17 @@ for `benchpod ci` (`4` when `require` is not met).
 | `--pod`        | (none)  | Also check this pod, read only. |
 | `--json`       | off     | Print the result as JSON. |
 
-### `benchpod ci diff <a> <b>`
+### `benchpod ci diff <a> [<b>]`
 
-Compare two local runs, each a run folder or its `run.json`: `a` the older, `b` the newer.
-The rules are the same as the run compare on embeddedci.com, so both show the same diff for
-the same two runs. Two runs compare when they have the same suite and DUT, are both valid and
-used the same wiring; otherwise the output says why they are incomparable and lists only the
-inputs that changed. A different pod, board or connection is compared and flagged. The
-output lists:
+Compare two runs: `a` the older, `b` the newer. Two run folders (or run.json files) are
+compared here; run ids are compared by embeddedci.com. `benchpod ci diff <id>` compares that
+run with the previous valid run of its suite and DUT on any branch (`--baseline main`: the
+last one on that branch), `benchpod ci diff <a> <b>` the two runs.
+
+The rules are the same here and on embeddedci.com, so both show the same diff for the same two
+runs. Two runs compare when they have the same suite and DUT, are both valid and used the same
+wiring; otherwise the output says why they are incomparable and lists only the inputs that
+changed. A different pod, board or connection is compared and flagged. The output lists:
 
 - the inputs that changed: every field of `inputs` that differs (firmware hash, tests commit,
   pod firmware, tool versions, ...), except the GitHub run and the wiring snapshot;
@@ -2307,12 +2332,52 @@ output lists:
 - cases that took 50 % and 200 ms longer, and pod commands whose median latency (the cases'
   medians weighted by their call counts) went up 50 % and 2 ms.
 
-`--json` prints the same JSON as embeddedci.com's compare, with `found` (always true here)
-and `a_run`, a summary of run `a`.
+`--json` prints the same JSON as embeddedci.com's compare, with `found` (false when there is
+no earlier run to compare with) and `a_run`, a summary of run `a`.
+
+| Flag         | Default | Purpose |
+|--------------|---------|---------|
+| `--json`     | off     | Print the diff as JSON (the shape embeddedci.com's compare returns). |
+| `--baseline` | (the previous run) | With one run id: compare with the last valid run of its suite and DUT on this branch. |
+
+### `benchpod ci upload <run folder>`
+
+Upload a run folder to embeddedci.com: a run made offline, with `--no-upload`, or whose
+upload failed. It sends what a run uploads at its end (see [Uploading runs](#uploading-runs))
+and writes `uploaded` into run.json. A run that is uploaded already is refused unless
+`--again` (it then becomes a second run there). Needs `benchpod login` or `BENCHPOD_API_KEY`.
+
+| Flag      | Default | Purpose |
+|-----------|---------|---------|
+| `--again` | off     | Upload a run that is uploaded already. |
+
+### `benchpod ci list`
+
+List the organization's runs on embeddedci.com, newest first: start time, suite, DUT,
+outcome, passed and failed counts, the tests' branch and the run id (and the pod, when the
+organization has more than one). With more runs than `--limit` it prints the `--before` value
+for the next page.
+
+| Flag       | Default | Purpose |
+|------------|---------|---------|
+| `--suite`  | (all)   | Only this suite. |
+| `--dut`    | (all)   | Only this DUT. |
+| `--build`  | (all)   | Only the runs of this build (its id on embeddedci.com). |
+| `--pod`    | (all)   | Only the runs on this pod (its name or id). |
+| `--ref`    | (all)   | Only the runs of tests on this branch. |
+| `--before` | (newest) | The page after this time (the previous page's `next_before`). |
+| `--limit`  | `20`    | How many runs, at most 200. |
+| `--json`   | off     | Print the server's reply as JSON. |
+
+### `benchpod ci show <run id|run folder>`
+
+Show one run, from embeddedci.com by its id or from a local run folder or run.json: suite,
+DUT, outcome and counts, its URL, the pod, firmware and tests commit, the failed cases with
+their messages, and every measurement with its limits.
 
 | Flag     | Default | Purpose |
 |----------|---------|---------|
-| `--json` | off     | Print the diff as JSON (the shape embeddedci.com's compare returns). |
+| `--json` | off     | Print the run as JSON (from embeddedci.com: the stored run.json with its id, URL, build and files). |
 
 ## Development
 

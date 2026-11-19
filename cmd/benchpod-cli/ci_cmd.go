@@ -33,7 +33,8 @@ func newCICmd(g *globalFlags) *cobra.Command {
 		Use:   "ci",
 		Short: "Run a CI suite from benchpod-ci.yaml: flash, boot checks, power checks, pytest and other test commands",
 		Long: "Run the CI suite a benchpod-ci.yaml file defines, on one pod, and record it in a\n" +
-			"run folder (run.json, junit.xml, logs, traces). `benchpod ci` is `benchpod ci run`.\n\n" +
+			"run folder (run.json, junit.xml, logs, traces), uploaded to embeddedci.com at the end\n" +
+			"when signed in (the file's upload:, --no-upload). `benchpod ci` is `benchpod ci run`.\n\n" +
 			"The pod: --pod (a name or any --connection value), else the default connection, else\n" +
 			"the one pod on the LAN or USB network link (with several, the first one not in use).\n" +
 			"The run holds the pod's lease from start to end, so the web app and other sessions\n" +
@@ -53,7 +54,7 @@ func newCICmd(g *globalFlags) *cobra.Command {
 	ro := &ciOptions{}
 	addCIRunFlags(run, ro)
 	run.RunE = func(c *cobra.Command, _ []string) error { return runCICommand(g, ro, c) }
-	cmd.AddCommand(run, newCIValidateCmd(g), newCIDiffCmd())
+	cmd.AddCommand(run, newCIValidateCmd(g), newCIDiffCmd(), newCIUploadCmd(), newCIListCmd(), newCIShowCmd())
 	return cmd
 }
 
@@ -64,7 +65,7 @@ func addCIRunFlags(cmd *cobra.Command, o *ciOptions) {
 	f.StringVar(&o.firmware, "firmware", "", "flash this image instead of firmware.file, or build:<id> for a build uploaded to embeddedci.com")
 	f.StringArrayVar(&o.steps, "step", nil, "run only this step id (repeatable, or comma-separated)")
 	f.StringVar(&o.out, "out", "", "the run folder (default: ./embeddedci-runs/<UTC time>-<suite>)")
-	f.BoolVar(&o.noUpload, "no-upload", false, "do not upload the run to embeddedci.com (uploads come in a later version; runs stay local for now)")
+	f.BoolVar(&o.noUpload, "no-upload", false, "do not upload the run to embeddedci.com (the file's upload: says when it is; auto uploads when signed in)")
 	f.BoolVar(&o.keepGoing, "keep-going", false, "go on after a required step fails")
 	f.IntVar(&o.repeat, "repeat", 1, "run the steps N times (the firmware is flashed once); each case records its attempt")
 	f.BoolVar(&o.json, "json", false, "print run.json on stdout instead of the summary")
@@ -94,6 +95,10 @@ func runCICommand(g *globalFlags, o *ciOptions, cmd *cobra.Command) error {
 	r.connect = func(ctx context.Context) (*ciConnected, error) { return connectCIPod(g, o.pod, cfg.Wiring) }
 	r.takeLease = func(ctx context.Context, c *ciConnected, join *tcpclient.LeaseJoin) (ciLease, error) {
 		return takeCILease(ctx, c, join, o.wait, r.stderr)
+	}
+	r.signedIn = ciSignedIn
+	r.upload = func(ctx context.Context, dir string) (*ci.Uploaded, error) {
+		return uploadRunFolder(ctx, dir, r.stderr)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -327,42 +332,6 @@ func validatePod(g *globalFlags, cfg *ci.Config, podFlag string, res *ciValidate
 }
 
 // ── benchpod ci diff ────────────────────────────────────────────────────────
-
-func newCIDiffCmd() *cobra.Command {
-	var asJSON bool
-	cmd := &cobra.Command{
-		Use:   "diff <a> <b>",
-		Short: "Compare two local runs (run folders or run.json files): cases, measurements, timings, inputs",
-		Long: "Compare run a (the older) with run b: which cases newly fail, were fixed, still fail,\n" +
-			"are new, removed or newly skipped; each measurement in both with its change and whether\n" +
-			"it drifted past its drift or failed its limit; cases and pod commands that got slower;\n" +
-			"and the inputs that changed (firmware, pod, tools, tests commit).\n\n" +
-			"Runs compare when they have the same suite and dut, are both valid and used the same\n" +
-			"wiring; otherwise the diff says why they are incomparable. A different pod, board or\n" +
-			"connection is compared and flagged.",
-		Args: cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := ci.ReadRun(args[0])
-			if err != nil {
-				return &ciExit{code: ci.ExitSetup, msg: err.Error()}
-			}
-			b, err := ci.ReadRun(args[1])
-			if err != nil {
-				return &ciExit{code: ci.ExitSetup, msg: err.Error()}
-			}
-			d := ci.Compare(a, b)
-			if asJSON {
-				data, _ := json.MarshalIndent(d, "", "  ")
-				fmt.Fprintln(cmd.OutOrStdout(), string(data))
-				return nil
-			}
-			d.WriteText(cmd.OutOrStdout())
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the diff as JSON")
-	return cmd
-}
 
 // ciCommandExit maps the error of a `benchpod ci` command to its exit code: the ci codes, with a
 // usage error as 1 (file/usage/setup) instead of the CLI's usual 2.

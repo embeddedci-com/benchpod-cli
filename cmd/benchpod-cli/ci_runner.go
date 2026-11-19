@@ -54,6 +54,9 @@ type ciRunner struct {
 	// connect reaches the pod; takeLease takes its lease. Variables of the runner so tests fake them.
 	connect   func(ctx context.Context) (*ciConnected, error)
 	takeLease func(ctx context.Context, c *ciConnected, join *tcpclient.LeaseJoin) (ciLease, error)
+	// signedIn says whether a credential for embeddedci.com exists; upload sends the run folder.
+	signedIn func(ctx context.Context) (bool, error)
+	upload   func(ctx context.Context, dir string) (*ci.Uploaded, error)
 
 	stdout, stderr io.Writer
 
@@ -127,6 +130,16 @@ func (r *ciRunner) execute(ctx context.Context) *ciExit {
 
 	runCtx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
 	defer cancel()
+
+	if r.uploadMode() == "true" && r.signedIn != nil {
+		if ok, err := r.signedIn(runCtx); !ok {
+			why := "it needs a sign-in to embeddedci.com: run `benchpod login` or set BENCHPOD_API_KEY"
+			if err != nil {
+				why = err.Error()
+			}
+			return r.finish(setupErr("upload: true, but %s (or pass --no-upload)", why))
+		}
+	}
 
 	if exit := r.prepareFirmware(runCtx); exit != nil {
 		return r.finish(exit)
@@ -619,16 +632,59 @@ func (r *ciRunner) finish(setup *ciExit) *ciExit {
 			r.warnf("write junit.xml: %v", err)
 		}
 	}
+	uploadNote := r.uploadRun(setup)
 	if r.opts.json {
 		data, _ := json.MarshalIndent(r.run, "", "  ")
 		fmt.Fprintln(r.stdout, string(data))
 	} else {
 		r.printSummary(setup)
+		if uploadNote != "" {
+			fmt.Fprintln(r.stdout, uploadNote)
+		}
 	}
 	if setup != nil {
 		return setup
 	}
 	return &ciExit{code: ci.ExitCode(r.run.Results.Outcome)}
+}
+
+// uploadMode is auto, true or false: --no-upload, else the file's upload.
+func (r *ciRunner) uploadMode() string {
+	if r.opts.noUpload {
+		return "false"
+	}
+	return firstNonEmptyStr(r.cfg.Upload, "auto")
+}
+
+// uploadRun uploads the finished run folder (upload: auto when signed in, true always) and
+// returns the line for the summary. A failed upload is a warning: it never changes the exit code.
+func (r *ciRunner) uploadRun(setup *ciExit) string {
+	mode := r.uploadMode()
+	if mode == "false" || r.upload == nil {
+		return ""
+	}
+	if setup != nil && strings.HasPrefix(setup.msg, "upload: true") {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	if mode == "auto" && r.signedIn != nil {
+		ok, err := r.signedIn(ctx)
+		if err != nil {
+			r.warnf("upload: %v; the run stays local (upload it later with `benchpod ci upload %s`)", err, r.dir)
+			return ""
+		}
+		if !ok {
+			return "Not uploaded (not signed in to embeddedci.com; `benchpod login`, then `benchpod ci upload <run folder>`)."
+		}
+	}
+	u, err := r.upload(ctx, r.dir)
+	if err != nil {
+		r.warnf("upload failed: %v; the run stays local (try again with `benchpod ci upload %s`)", err, r.dir)
+		return ""
+	}
+	r.run.Uploaded = u
+	return "Run URL: " + u.URL
 }
 
 func (r *ciRunner) printSummary(setup *ciExit) {
