@@ -722,6 +722,195 @@ needs a RESET press instead. The firmware side is the `dfu`
 console command, which jumps to the STM32 system-memory bootloader (the same
 flow the firmware `make flash-dfu` target uses).
 
+## CI runs: `benchpod ci`
+
+`benchpod ci` runs a whole hardware-in-the-loop suite from one file committed next to the
+tests, `benchpod-ci.yaml`: flash the DUT, check that it boots, measure its current, run
+pytest and any other test command, and record everything in a run folder. The same
+command runs on a laptop and in a CI job. The run never needs embeddedci.com (uploading
+runs there comes in a later version).
+
+```bash
+benchpod ci                                   # runs ./benchpod-ci.yaml on the default pod
+benchpod ci -f nrf/benchpod-ci.yaml --pod benchpod-a1b2c3
+benchpod ci --step boot --step hil            # only these steps
+benchpod ci --firmware build/app.elf          # another image than firmware.file
+benchpod ci --repeat 10 --keep-going          # a soak run
+benchpod ci validate                          # check the file, drive nothing
+benchpod ci diff embeddedci-runs/<a> embeddedci-runs/<b>
+```
+
+### What a run does
+
+1. Reads and checks the file (every problem is reported with its line).
+2. Runs `firmware.build` when the run flashes, and hashes the image.
+3. Picks the pod: `--pod` (a pod name or any `--connection` value: an address, `usb`,
+   `embeddedci:<name>`), else the default connection (`--connection`,
+   `BENCHPOD_CONNECTION`, the saved `set-connection` target), else the pods on the LAN and
+   USB network links: the only one, or with several the first one nobody is using. Pods on
+   embeddedci.com are only used when named (`--pod embeddedci:<name>`).
+4. Takes the pod's lease for the whole run (below), then checks `require` and records the
+   pod's firmware, gateware, board, calibration and wiring profile.
+5. Runs the steps in order. A step marked `required: true` that fails stops the run (the
+   steps after it are recorded as skipped); every other step runs whatever happened before.
+6. Cleans up, always, also after a failure or Ctrl-C: by default DAC output stopped, both
+   target-power rails off, emulated sensors stopped, pull resistors off.
+7. Checks the run's health (the pod still answers and did not reboot, the lease held),
+   writes the run folder and prints a summary with the failed cases.
+
+### The pod lease
+
+While a run holds the pod, the web app, the desktop app, MCP sessions and other runs get a
+"busy" answer for anything that drives it (reading its status keeps working). On the LAN and
+USB the lease lives in the pod itself (firmware with the `lease` feature); through
+embeddedci.com it is the server's device lease. It is renewed every 100 seconds and released
+at the end, also on Ctrl-C; if the CLI dies it expires on its own after 5 minutes. Every command the run sends to the pod carries the lease's id, and so do the commands of its
+pytest and run steps (the SDK reads `BENCHPOD_LEASE`).
+
+A pod that is in use when the run starts ends it at once with exit code 4 and who holds it;
+`--wait 10m` waits for it instead. A pod whose firmware has no lease gets one warning and the
+run goes on without one. A lease lost during the run (someone stopped the run from the web
+app, the pod rebooted) makes the run invalid (exit code 4): the steps left are skipped and
+cleanup still runs, without the lease (if another session took the pod meanwhile, the pod
+refuses it, and `logs/cleanup.log` says so).
+
+`benchpod status --json` shows the pod's lease as `local_lease` (holder, purpose, seconds left).
+
+### pytest and run steps: what they get
+
+pytest and `run` steps run as child processes in the file's directory, with the file's `env`
+and these variables, so the tests drive the same pod under the same lease:
+
+| Variable | Value |
+|---|---|
+| `EMBEDDEDCI_RUN_DIR` | the run folder (absolute) |
+| `EMBEDDEDCI_RUN_ID` | the run id |
+| `EMBEDDEDCI_RUN_STEP` | the step id |
+| `EMBEDDEDCI_RUN_T0` | the run's start, Unix seconds, so traces share one timeline |
+| `EMBEDDEDCI_KEEP_TRACES` | `all`, `failed` or `none` (the file's `keep.traces`) |
+| `BENCHPOD_CONNECTION` | the chosen pod's connection |
+| `BENCHPOD_HW_ADDR` | its `host:port` when it is on the LAN or USB network link, else unset |
+| `BENCHPOD_WIRING_PROFILE` | the wiring profile the run uses |
+| `BENCHPOD_LEASE` | the lease id the run holds; the SDK joins that lease instead of taking its own |
+
+With `EMBEDDEDCI_RUN_DIR` and `EMBEDDEDCI_RUN_STEP` set, the embeddedci pytest plugin writes
+its results to `parts/<step>.json` (cases with their traces and `measure()` values) and the
+run merges them. With an SDK too old for that, the cases come from pytest's own JUnit XML
+(passed with `--junitxml`), and without either, from pytest's exit status. A pytest step
+first checks that `import embeddedci` works in its interpreter (`python3`, or the step's
+`python:`, which can be several words such as `uv run python`) and says how to install it if
+not.
+
+A `run` step passes or fails on its exit status; with `results:` its cases come from a JUnit
+XML file the command writes (`junit:<path>`, relative to the file) or from `go test -json`
+on its standard output (`gotest-json`).
+
+### The run folder
+
+Default: `./embeddedci-runs/<start time UTC>-<suite>/`, or `--out DIR`.
+
+| Path | What |
+|---|---|
+| `run.json` | the record: the suite and DUT, inputs (firmware hash, tests commit, pod, wiring snapshot, tool versions, GitHub run), health, every case with its outcome, duration, message, measurements and pod-call statistics |
+| `junit.xml` | the same cases as JUnit XML, for any CI that reads it |
+| `logs/<step>.log` | each step's output (capped at 8 MB); `logs/cleanup.log` |
+| `trace/<case>.ndjson` | the pod calls of a case, one JSON object per line (kept per `keep.traces`) |
+| `att/` | large request and reply payloads a trace points to |
+| `parts/<step>.json` | what the pytest plugin wrote for a step |
+
+Secrets (passwords, tokens, keys) are removed from traces before they are written.
+
+### `benchpod-ci.yaml` reference
+
+```yaml
+version: 1
+suite: process-node-hil          # required: the name runs are stored and compared under
+dut: process-node                # required: the board on the pod; "none" for a pod-only suite
+wiring: process-node             # the pod's stored wiring profile (default: the pod's default)
+require:
+  pod_firmware: ">=3.10.12"      # not met: the run is invalid (exit 4) and nothing is driven
+firmware:
+  build: make -C firmware        # optional; runs in this file's directory before flashing
+  file: firmware/build/app.elf   # the image to flash (relative to this file)
+  # or an uploaded build:  build_id: <id>   or   repo: acme/firmware, ref: main (artifact: app.elf)
+  flash: {target: target/stm32f4x.cfg}   # optional overrides of the wiring profile's SWD settings
+env:
+  BENCH_OPTION: "1"              # for every step; values may use ${VAR}
+timeout: 20m                     # the whole run (default 60m)
+keep: {traces: failed}           # all | failed | none
+cleanup: default                 # or none, or a list: [dac_stop, power_off, sensors_off, pulls_off]
+upload: auto                     # auto | true | false (read now, used once uploads exist)
+baseline: main                   # read now, used once runs are compared on embeddedci.com
+steps:
+  - id: boot                     # stable id: the case id across runs (default: from name)
+    power_cycle: {until: "APP_OK", timeout: 10s, off_ms: 500}
+    required: true
+    expect:
+      boot_ms: {max: 600, drift: 20%}
+  - id: idle-current
+    measure_power: {duration: 2s}
+    expect:
+      mean_ma: {min: 5, max: 20}
+  - id: console
+    uart_expect: {send: "status\n", until: "ready>", timeout: 5s}
+  - id: hil
+    pytest: {path: tests, args: [-m, hardware]}
+    expect:
+      "tests/test_heater.py::test_heater/settle_ms": {max: 900}
+  - id: api
+    run: go test ./e2e -json
+    results: gotest-json
+  - wait: 2s
+  - power_off: {}
+```
+
+With `firmware` set and no `flash` step, the run flashes first (a required step with the id
+`flash`); the firmware is flashed once also with `--repeat`. Flash settings (SWD pins, target
+config, reset) come from the wiring profile, like `benchpod flash`; `firmware.flash` takes
+`target`, `swclk`, `swdio`, `nreset`, `load_address`, `target_power`, `verify`, `reset`,
+`connect_under_reset` and `openocd`.
+
+Every step has exactly one of these keys, plus optional `id`, `name`, `required`, `timeout`
+and `expect`:
+
+| Step | What it does | Metrics |
+|---|---|---|
+| `flash: {}` | Flashes the firmware. | |
+| `power_on: {}` | Sets the profile's I/O voltage (only while the rail is off), then turns on the profile's rail. | |
+| `power_off: {}` | Turns the profile's rail off. | |
+| `power_cycle: {until, timeout, off_ms}` | Power off, wait `off_ms` (default 500), power on; with `until` (a regex) it reads the DUT's UART (the profile's `uart_rx`/`uart_tx`/`uart_baud`) until it matches within `timeout` (default 10s). | `boot_ms`: power on to the match |
+| `uart_expect: {until, send, timeout}` | Sends `send` (optional) to the DUT's UART and waits up to `timeout` (default 5s) for `until`. | `match_ms` |
+| `measure_power: {duration}` | Records the profile's rail for `duration` (default 2s). | `mean_ma`, `peak_ma`, `min_ma`, `mean_v` |
+| `wait: 2s` | Waits. | |
+| `pytest: {path, args, python}` | Runs pytest (`pytest: tests` is short for `{path: tests}`). | the tests' `measure()` values |
+| `run: <command>` | Runs a shell command; `results: junit:<path>` or `results: gotest-json` reads its cases. | numeric JUnit properties |
+
+`capture` steps are not supported yet: capture from a pytest step for now. The UART and
+power steps need a direct link to the pod (its address or `usb`); through embeddedci.com
+only `flash` (an uploaded build), the power steps without `until` and `wait` run natively.
+
+`expect` sets limits on a step's metrics: `min` and `max` fail the case when the value is
+outside them; `drift` (`20%` or `0.2`) is the change allowed against an earlier run, shown by
+`benchpod ci diff`; `{}` records the value without limits. Every metric of a native step is
+recorded, limited or not. On a pytest or run step the keys are `"<case id>/<measurement>"`
+and add limits to what the tests record; a case that does not record an expected
+measurement fails.
+
+Durations are `500ms`, `10s`, `2m`, `1h30m`, or a number of seconds. Any string may use
+`${VAR}` (from `env`, then the environment; an unset variable is an error) and
+`${VAR:-default}`; `$${` is a literal `${`, and a bare `$VAR` is left for the shell.
+
+### Exit codes of `benchpod ci`
+
+| Code | Meaning |
+|---|---|
+| `0` | Every case passed (skipped and expected failures included). |
+| `1` | A file, usage or setup error: the YAML, the firmware build, no pod, a missing wiring profile. |
+| `2` | A test failed or errored, or a required step failed. |
+| `4` | The run is not valid: the pod was in use, `require` was not met, the pod rebooted or stopped answering, the lease was lost, a capture lost samples, or the run was interrupted. |
+
+`3` is kept for regressions against a baseline in a later version.
+
 ## Command reference
 
 Every command and flag. "Network" means the pod's TCP/JSON API (`--connection
@@ -778,6 +967,9 @@ stderr with a `[benchpod]` prefix.
 | `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
 | `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
 | `5`  | Unreachable: nothing answered on the pod's address, no pod was found on USB, or the pod is offline on embeddedci.com. |
+
+`benchpod ci` has its own exit codes (a CI result, not a command's): see
+[Exit codes of `benchpod ci`](#exit-codes-of-benchpod-ci).
 
 A refusal is printed word for word as the pod sent it. For a `locked:` (LAN policy),
 `busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
@@ -929,7 +1121,7 @@ shows them.
 
 | Flag     | Default | Purpose                                                       |
 |----------|---------|---------------------------------------------------------------|
-| `--json` | off     | Print the pod's raw `status` JSON instead of the summary (network and embeddedci.com). |
+| `--json` | off     | Print the pod's raw `status` JSON instead of the summary (network and embeddedci.com). It asks with `"caps":false`, so firmware after 3.10.10 answers with `features_rev` and, while a run holds the pod, `local_lease` (holder, purpose, seconds left) instead of the capability list. |
 
 ### `benchpod generate`
 
@@ -2043,6 +2235,85 @@ Set the pod's HTTP proxy.
 
 Remove the HTTP proxy; the pod connects to the cloud directly. No flags.
 
+### `benchpod ci`
+
+Run the CI suite a `benchpod-ci.yaml` defines, on one pod, and record it in a run folder.
+The same as `benchpod ci run`. See [CI runs: `benchpod ci`](#ci-runs-benchpod-ci) for what
+a run does, the file's reference and the exit codes.
+
+| Flag           | Default | Purpose |
+|----------------|---------|---------|
+| `--file`, `-f` | `benchpod-ci.yaml` | The suite definition. |
+| `--pod`        | (the default connection, else the one pod found) | The pod: a name (`benchpod-a1b2c3`) or any `--connection` value. |
+| `--firmware`   | (`firmware.file`) | Flash this image instead, or `build:<id>` for a build uploaded to embeddedci.com. |
+| `--step`       | (all)   | Run only this step id; repeatable or comma-separated. |
+| `--out`        | (`./embeddedci-runs/<UTC time>-<suite>`) | The run folder. |
+| `--no-upload`  | off     | Do not upload the run to embeddedci.com (uploads come in a later version; runs stay local for now). |
+| `--keep-going` | off     | Go on after a required step fails. |
+| `--repeat`     | `1`     | Run the steps N times (the firmware is flashed once); each case records its attempt. |
+| `--json`       | off     | Print run.json on stdout instead of the summary (step output goes to stderr). |
+| `--wait`       | (fail at once) | Wait this long for a pod another session holds, e.g. `10m`. |
+
+### `benchpod ci run`
+
+The same as `benchpod ci`, with the same flags.
+
+| Flag           | Default | Purpose |
+|----------------|---------|---------|
+| `--file`, `-f` | `benchpod-ci.yaml` | The suite definition. |
+| `--pod`        | (the default connection, else the one pod found) | The pod. |
+| `--firmware`   | (`firmware.file`) | Another image, or `build:<id>`. |
+| `--step`       | (all)   | Only these step ids. |
+| `--out`        | (`./embeddedci-runs/...`) | The run folder. |
+| `--no-upload`  | off     | Do not upload the run. |
+| `--keep-going` | off     | Go on after a required step fails. |
+| `--repeat`     | `1`     | Run the steps N times. |
+| `--json`       | off     | Print run.json on stdout. |
+| `--wait`       | (fail at once) | Wait for a busy pod. |
+
+### `benchpod ci validate`
+
+Check `benchpod-ci.yaml` without driving any hardware: keys, step kinds, durations, regexes,
+expect metrics, `${VAR}` references, the firmware file, and that `import embeddedci` works for
+the pytest steps' interpreters. With `--pod` it also reads the pod's status and its stored
+wiring profiles (nothing is powered, flashed or leased) and checks `require.pod_firmware`, the
+wiring profile and that the UART and power steps can run over that connection. Exit codes as
+for `benchpod ci` (`4` when `require` is not met).
+
+| Flag           | Default | Purpose |
+|----------------|---------|---------|
+| `--file`, `-f` | `benchpod-ci.yaml` | The suite definition. |
+| `--pod`        | (none)  | Also check this pod, read only. |
+| `--json`       | off     | Print the result as JSON. |
+
+### `benchpod ci diff <a> <b>`
+
+Compare two local runs, each a run folder or its `run.json`: `a` the older, `b` the newer.
+The rules are the same as the run compare on embeddedci.com, so both show the same diff for
+the same two runs. Two runs compare when they have the same suite and DUT, are both valid and
+used the same wiring; otherwise the output says why they are incomparable and lists only the
+inputs that changed. A different pod, board or connection is compared and flagged. The
+output lists:
+
+- the inputs that changed: every field of `inputs` that differs (firmware hash, tests commit,
+  pod firmware, tool versions, ...), except the GitHub run and the wiring snapshot;
+- cases newly failing, fixed, still failing, new, removed and newly skipped. A case repeated
+  with `--repeat` counts as failing when any attempt failed, and its duration and
+  measurements are its last attempt's. A case that failed in `a` and is skipped in `b` is
+  newly skipped, not fixed;
+- every measurement in both runs with its change, `(b - a) / |a|` (none when `a` is 0),
+  marked `limit` when `b` is outside its limits, `drift` when it changed more than its
+  `drift` (`b`'s, else `a`'s), else `within`;
+- cases that took 50 % and 200 ms longer, and pod commands whose median latency (the cases'
+  medians weighted by their call counts) went up 50 % and 2 ms.
+
+`--json` prints the same JSON as embeddedci.com's compare, with `found` (always true here)
+and `a_run`, a summary of run `a`.
+
+| Flag     | Default | Purpose |
+|----------|---------|---------|
+| `--json` | off     | Print the diff as JSON (the shape embeddedci.com's compare returns). |
+
 ## Development
 
 ### Makefile targets
@@ -2094,3 +2365,4 @@ cross-platform break is caught before tagging.
 | `internal/benchpodconfig/` | Local config (the saved `set-connection` target).                            |
 | `internal/serverapi/`      | HTTP client for `embeddedci-server` (device-login, refresh).                  |
 | `internal/authstore/`      | Token cache (`~/.config/benchpod-cli/token.json`).                            |
+| `internal/ci/`             | `benchpod ci`: the `benchpod-ci.yaml` format, run.json, JUnit and `go test -json` readers, traces, diff. |

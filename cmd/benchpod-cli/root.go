@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/ci"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -147,6 +148,7 @@ func newRootCmd() *cobra.Command {
 			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),
 			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g), newI2CCmd(g), newExpansionCmd(g),
 		}},
+		{"ci", "Continuous integration:", []*cobra.Command{newCICmd(g)}},
 		{"cloud", "embeddedci.com:", []*cobra.Command{
 			newLoginCmd(g), newLogoutCmd(g), newRegisterCmd(g), newDeregisterCmd(g), newCloudCmd(g), newVisionCmd(g),
 		}},
@@ -176,9 +178,20 @@ func run(args []string) int {
 	root := newRootCmd()
 	markUsageErrors(root)
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
-		log.Printf("%v", withSavedConnectionHint(withRefusalHint(err), savedConnectionUsed))
-		return exitCode(err)
+	cmd, err := root.ExecuteC()
+	if err == nil {
+		return exitOK
 	}
-	return exitOK
+	if code, ok := ciCommandExit(err); ok {
+		// benchpod ci printed its own summary; a message is only there for an early stop.
+		if msg := err.Error(); !strings.HasPrefix(msg, "benchpod ci: exit ") {
+			log.Printf("%s", msg)
+		}
+		return code
+	}
+	log.Printf("%v", withSavedConnectionHint(withRefusalHint(err), savedConnectionUsed))
+	if cmd != nil && isCICommand(cmd) {
+		return ci.ExitSetup // benchpod ci: a usage error is a setup error (exit 1), see its exit codes
+	}
+	return exitCode(err)
 }

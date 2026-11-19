@@ -30,10 +30,22 @@ func (c *Client) TargetPower(ctx context.Context, efuse int, on bool) error {
 // returns the untouched connection for the caller to bridge to OpenOCD. The
 // caller owns closing it; closing returns the pod to a safe JSON state.
 func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int, extra map[string]any) (net.Conn, error) {
+	req := map[string]any{"cmd": cmd, "swclk": swclk, "swdio": swdio}
+	for k, v := range extra {
+		req[k] = v
+	}
+	return c.StartRaw(ctx, req)
+}
+
+// StartRaw sends req, a command that turns its connection into a raw byte stream once it acks
+// (dap_start, uart_proxy_start), and reads exactly the one ack line. On "ok" it returns the
+// connection, now in its raw mode and without a deadline; the caller owns closing it.
+func (c *Client) StartRaw(ctx context.Context, req map[string]any) (net.Conn, error) {
 	addr := strings.TrimSpace(c.Addr)
 	if addr == "" {
 		return nil, fmt.Errorf("pod address is empty; run `benchpod set-connection <addr>` first")
 	}
+	cmd, _ := req["cmd"].(string)
 
 	budget := c.DialTimeout
 	if budget <= 0 {
@@ -47,11 +59,7 @@ func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int,
 		_ = conn.SetDeadline(deadline)
 	}
 
-	req := map[string]any{"cmd": cmd, "swclk": swclk, "swdio": swdio}
-	for k, v := range extra {
-		req[k] = v
-	}
-	line, err := json.Marshal(req)
+	line, err := json.Marshal(c.tagLease(req))
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -74,9 +82,8 @@ func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int,
 	}
 	switch r.Status {
 	case "ok":
-		// The connection is now in its raw protocol for the whole flash session,
-		// which can outlast the command deadline — clear it so the bridge manages
-		// the connection's lifetime itself.
+		// The connection is now in its raw protocol for the whole session, which can outlast the
+		// command deadline: clear it so the caller manages the connection's lifetime itself.
 		_ = conn.SetDeadline(time.Time{})
 		return conn, nil
 	case "error":
