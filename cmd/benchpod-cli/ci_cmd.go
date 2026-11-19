@@ -166,6 +166,7 @@ func takeCILease(ctx context.Context, c *ciConnected, join *tcpclient.LeaseJoin,
 		}
 		if lease.Supported() {
 			api.LeaseID = join.ID // every cloud command carries it (X-Benchpod-Lease)
+			cloudLeaseID = join.ID
 		}
 		return lease, nil
 	case *networkPod:

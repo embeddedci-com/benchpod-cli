@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -110,6 +112,9 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 	if err != nil {
 		return fmt.Errorf("flash: %w", err)
 	}
+	if spec.IsCloud() && isGitHubActionCredential(cred) {
+		return f.flashOnCloudRoute(ctx, api, cred, spec, art, swclk, swdio)
+	}
 	deviceID, err := cloudDeviceID(ctx, api, cred, spec)
 	if err != nil {
 		return fmt.Errorf("flash: %w", err)
@@ -130,6 +135,46 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 	if err != nil {
 		return fmt.Errorf("flash: %w", err)
 	}
+	return f.flashVerdict(resp)
+}
+
+// flashOnCloudRoute is flashOnServer for a GitHub Actions token: POST /api/cloud/devices/flash
+// with the pod's name and the build's selector (or its artifact, when one was resolved).
+func (f *flashFlags) flashOnCloudRoute(ctx context.Context, api *serverapi.Client, cred string, spec ConnSpec, art *serverapi.BuildArtifact, swclk, swdio int) error {
+	req := serverapi.CloudFlashRequest{Target: f.target, LoadAddr: f.loadAddr, SWCLK: swclk, SWDIO: swdio, NReset: f.nreset, Efuse: f.targetPower}
+	if art != nil {
+		req.JobID, req.PackID, req.ArtifactName = art.JobID, art.PackID, art.Name
+	} else {
+		req.Repo, req.Ref, req.Artifact = strings.TrimSpace(f.repo), strings.TrimSpace(f.ref), strings.TrimSpace(f.artifact)
+		if b := strings.TrimSpace(f.build); b != "" && b != "latest" {
+			req.Build = b
+		}
+	}
+	if f.noConnectUnderReset {
+		off := false
+		req.ConnectUnderReset = &off
+	}
+	fmt.Fprintln(os.Stderr, "flash: embeddedci.com is flashing the target (OpenOCD runs on the server)")
+	resp, err := api.CloudFlashDevice(ctx, cred, spec.Name, req)
+	var apiErr *serverapi.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Status {
+		case http.StatusForbidden:
+			return fmt.Errorf("flash: embeddedci.com refused (%s): the pod must be on this repository's list of pods, and the build from a trusted repository", valueOrDash(apiErr.Message))
+		case http.StatusNotFound:
+			return fmt.Errorf("flash: %s is not a pod of the repository's organization on embeddedci.com (%s)", spec.Name, valueOrDash(apiErr.Message))
+		case http.StatusConflict:
+			return fmt.Errorf("flash: %s is in use: another session holds its lease on embeddedci.com (%s)", spec.Name, valueOrDash(apiErr.Message))
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("flash: %w", err)
+	}
+	return f.flashVerdict(resp)
+}
+
+// flashVerdict prints the server's OpenOCD output and returns its verdict.
+func (f *flashFlags) flashVerdict(resp *serverapi.FlashResponse) error {
 	if resp.Output != "" {
 		fmt.Fprint(os.Stdout, resp.Output)
 		if !strings.HasSuffix(resp.Output, "\n") {

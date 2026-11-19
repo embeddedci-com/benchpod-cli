@@ -965,9 +965,10 @@ installs the CLI and runs it. In Actions it also:
   message, the measurements outside their limits or beyond their drift, and the baseline
   headline.
 
-With the GitHub Actions token, a flash step on a cloud pod is not available yet (embeddedci.com
-flashes uploaded builds for a signed-in user or an API key): for such a suite set
-`BENCHPOD_API_KEY` from a repository secret, which is then used instead.
+With the GitHub Actions token, a flash step on a cloud pod (and `benchpod flash --build ...
+--connection embeddedci:<pod>`) has embeddedci.com flash the uploaded build through the cloud
+route, within the run's lease. The pod must be one the repository may drive, and the build
+from a repository the organization trusts.
 
 ### Exit codes of `benchpod ci`
 

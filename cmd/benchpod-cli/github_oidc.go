@@ -73,3 +73,17 @@ func resetGitHubToken() {
 	defer ghToken.Unlock()
 	ghToken.base, ghToken.token, ghToken.expires = "", "", time.Time{}
 }
+
+// cloudIsGitHubAction says the credential for embeddedci.com is (or would be) the GitHub Actions
+// token: no API key and no `benchpod login` session, in a job with OIDC.
+func cloudIsGitHubAction() bool {
+	if strings.TrimSpace(os.Getenv("BENCHPOD_API_KEY")) != "" || !inGitHubActionsOIDC() {
+		return false
+	}
+	path, err := resolveTokenPath("")
+	if err != nil {
+		return true
+	}
+	_, err = os.Stat(path)
+	return err != nil
+}
