@@ -172,6 +172,10 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 		return errors.New("no firmware to flash: set firmware.file (or build_id, repo/ref), or pass --firmware")
 	}
 	fw := r.fw
+	if fw.Overrides.TargetPower == 0 {
+		// The target must be powered to answer SWD: the profile's rail, as the SDK's flash does.
+		fw.Overrides.TargetPower = r.wiring.rail()
+	}
 	fw.Timeout = stepTimeout(s)
 	if dl, ok := ctx.Deadline(); ok {
 		fw.Timeout = time.Until(dl)
