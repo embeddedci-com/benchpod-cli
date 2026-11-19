@@ -48,13 +48,9 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			}
 			defer cancel()
 
-			req := map[string]any{"cmd": "status"}
-			if asJSON {
-				// "caps":false: firmware after 3.10.10 then sends features_rev and local_lease
-				// (the pod's own lease) instead of the frozen caps list; older firmware ignores it.
-				req = features.StatusRequest()
-			}
-			data, err := pod.client.Command(ctx, req)
+			// "caps":false: firmware after 3.10.10 then sends features_rev and local_lease (the
+			// pod's own lease) instead of the frozen caps list; older firmware ignores it.
+			data, err := pod.client.Command(ctx, features.StatusRequest())
 			if err != nil {
 				return fmt.Errorf("status: %w", err)
 			}

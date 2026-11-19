@@ -161,19 +161,69 @@ func takeCILease(ctx context.Context, c *ciConnected, join *tcpclient.LeaseJoin,
 		return lease, nil
 	case *networkPod:
 		own := &tcpclient.Client{Addr: p.client.Addr, NoLeaseJoin: true}
-		// A pod whose features table says it has no lease gets no lease_acquire; when this CLI's
-		// table does not know the feature yet, the pod's answer decides (unknown command).
-		if _, known := features.Lookup("lease"); known {
-			if st, err := own.Command(ctx, features.StatusRequest()); err == nil {
-				if has, err := features.Has(st, "lease"); err == nil && !has {
-					fmt.Fprintln(warn, "Warning: this pod's firmware has no lease: the run goes on without one, so the web app or another session could use the pod meanwhile. Update the firmware with `benchpod flash-self`.")
-					return &localLease{leaseState: leaseState{id: join.ID}, cmd: own, join: join}, nil
-				}
-			}
+		st, serr := own.Command(ctx, features.StatusRequest())
+		has, form := leaseFeature(st, serr)
+		if has == leaseNo {
+			fmt.Fprintf(warn, "Warning: this pod's firmware has no lease (its status says %s; the lease needs features_rev %d): "+
+				"the run goes on without one, so the web app or another session could use the pod meanwhile. "+
+				"Update the firmware with `benchpod flash-self`.\n", form, leaseFeatureRev())
+			return &localLease{leaseState: leaseState{id: join.ID}, cmd: own, join: join}, nil
 		}
-		return acquireLocalLease(ctx, own, join, wait, ciLeaseInterval, warn)
+		// leaseYes, or unknown (a status without features_rev): the pod's answer to lease_acquire
+		// decides, and old firmware answers unknown command.
+		l, err := acquireLocalLease(ctx, own, join, wait, ciLeaseInterval, warn)
+		if err == nil && l.Supported() {
+			fmt.Fprintf(warn, "[benchpod ci] lease: %s held (status: %s)\n", join.ID, form)
+		} else if err == nil {
+			fmt.Fprintf(warn, "[benchpod ci] lease: none (status: %s)\n", form)
+		}
+		return l, err
 	}
 	return nil, fmt.Errorf("unknown pod type %T", c.pod)
+}
+
+// leaseHas is what a pod's status says about the lease feature.
+type leaseHas int
+
+const (
+	leaseUnknown leaseHas = iota // no features_rev (the caps-list form, or no status)
+	leaseNo
+	leaseYes
+)
+
+// leaseFeature decides the lease feature from a {"cmd":"status","caps":false} reply: with
+// features_rev the embedded features table decides; without it (a pod that sent the frozen caps
+// list) it is unknown. form says which reply it was, for the log.
+func leaseFeature(st json.RawMessage, err error) (leaseHas, string) {
+	if err != nil {
+		return leaseUnknown, "no status (" + err.Error() + ")"
+	}
+	var v struct {
+		FeaturesRev *int     `json:"features_rev"`
+		Caps        []string `json:"caps"`
+	}
+	if json.Unmarshal(st, &v) != nil {
+		return leaseUnknown, "an unreadable status"
+	}
+	if v.FeaturesRev == nil {
+		if v.Caps != nil {
+			return leaseUnknown, `the caps list (no features_rev: the pod ignored "caps":false)`
+		}
+		return leaseUnknown, "no features_rev"
+	}
+	form := fmt.Sprintf("features_rev %d", *v.FeaturesRev)
+	if _, known := features.Lookup("lease"); !known {
+		return leaseUnknown, form
+	}
+	if ok, err := features.Has(st, "lease"); err == nil && ok {
+		return leaseYes, form
+	}
+	return leaseNo, form
+}
+
+func leaseFeatureRev() int {
+	e, _ := features.Lookup("lease")
+	return e.Rev
 }
 
 // ── benchpod ci validate ────────────────────────────────────────────────────
