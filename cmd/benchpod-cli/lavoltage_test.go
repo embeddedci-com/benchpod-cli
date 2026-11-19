@@ -166,7 +166,7 @@ func TestLAVoltageUSB(t *testing.T) {
 
 func TestLAVoltageArgIsAUsageError(t *testing.T) {
 	t.Setenv("BENCHPOD_CONNECTION", "")
-	if code := run([]string{"la", "voltage", "5V", "--connection", "127.0.0.1:1"}); code != exitUsage {
+	if code := run([]string{"la", "voltage", "2.5V", "--connection", "127.0.0.1:1"}); code != exitUsage {
 		t.Fatalf("exit %d", code)
 	}
 }
@@ -185,5 +185,44 @@ func TestLAVoltageSavesNothingWhenThePodStoresProfiles(t *testing.T) {
 	}
 	if len(*saves) != 0 || !strings.Contains(out.String(), "Not saved: the pod uses the I/O voltage in its wiring profile") {
 		t.Fatalf("saves %v out %q", *saves, out.String())
+	}
+}
+
+// Digital board v3r4: 5 V mode shows pin 21, does not warn that the bank (3.3 V) differs, and
+// warns when pin 21 sits above its setting. Older boards send no vref_out and print as before.
+func TestLAVoltagePin21(t *testing.T) {
+	stubLAVoltageProfile(t, "", false, nil)
+	addr, _ := fakeLANPod(t, `{"status":"ok","data":{"mv":5000,"st":1,"readback_mv":3300,`+
+		`"vref_out":{"source":"5v","set_mv":5000,"mv":4920,"state":"ok","up":true}}}`)
+	var out, warn strings.Builder
+	if err := runLAVoltage(&globalFlags{connection: addr}, 5000, &out, &warn); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "is now 5 V") || !strings.Contains(out.String(), "J1 pin 21 (pull-up rail): 4.92 V, set to 5 V (ok)") {
+		t.Errorf("out = %q", out.String())
+	}
+	if warn.String() != "" {
+		t.Errorf("warn = %q", warn.String())
+	}
+
+	addr, _ = fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300,`+
+		`"vref_out":{"source":"bank","set_mv":3300,"mv":4700,"state":"high","up":true}}}`)
+	out.Reset()
+	warn.Reset()
+	if err := runLAVoltage(&globalFlags{connection: addr}, 0, &out, &warn); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(warn.String(), "above its setting") || !strings.Contains(warn.String(), "la voltage 5.0") {
+		t.Errorf("warn = %q", warn.String())
+	}
+
+	addr, _ = fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
+	out.Reset()
+	warn.Reset()
+	if err := runLAVoltage(&globalFlags{connection: addr}, 0, &out, &warn); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "pin 21") || warn.String() != "" {
+		t.Errorf("older board: out %q warn %q", out.String(), warn.String())
 	}
 }

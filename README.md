@@ -337,15 +337,17 @@ benchpod status --json     # the pod's raw status reply
 
 # Hardware (network):
 benchpod la voltage 3.3V                          # the DUT's I/O voltage for now (it normally comes from the wiring profile)
+benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (see the 5 V page linked under la voltage)
 benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --output csv      # ADC snapshot
 benchpod stream ...
 benchpod test ...
-benchpod la pull 3 up                             # LA pin pull resistor: up, down or off
+benchpod la pull 3 up                             # LA pin pull resistor: up, down or off (digital v3r4: every pin, strength picked by the pod)
 benchpod la status
 benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 benchpod la pins                                  # every LA pin: function, level, pull-up, direction, warnings
+benchpod la pins 1-4                              # only LA1-LA4
 benchpod la dir 9,10 dut_output                   # the pod refuses push-pull drivers on these pins
 benchpod i2c start --sda 1 --scl 2 --hz 400000    # the pod as an I2C master (gateware v55+)
 benchpod i2c xfer 0x48 --write 0d --read 2        # hex in, hex out
@@ -1476,7 +1478,9 @@ embeddedci.com; `la voltage` also works over USB.
 ### `benchpod la voltage [VOLTAGE]`
 
 Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
-(also `1800mV`, `3.3` or `3300`). Leave it out to show the setting. The pod refuses
+(also `1800mV`, `3.3` or `3300`), or `5V` on a pod with the digital board v3r4
+([5 V I/O](https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io): pin 21 goes to 5 V,
+and the output then shows pin 21). Leave it out to show the setting. The pod refuses
 LA capture, UART, SWD flash, pull-ups and sensor emulation until it is set;
 1.8 V needs a v3 pod, and the pod refuses a change while an LA pin is in use. Works
 over the network, over USB and through embeddedci.com. No flags.
@@ -1529,15 +1533,18 @@ Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
 | `--dir-la`    | (none)  | Direction pin, driven before stepping.                       |
 | `--direction` | `0`     | Level for `--dir-la`: `0` or `1`.                            |
 
-### `benchpod la pins`
+### `benchpod la pins [PINS]`
 
-List all 14 LA pins: what each one is used for (and by whom), its GPIO mode and
+List all 14 LA pins, or only PINS (a pin, a list or a range: `9`, `9,10`, `9-12`,
+`la9`, or a name from the pod's wiring profile): what each one is used for (and by whom), its GPIO mode and
 level, its live level, its pull resistor, its direction (see `la dir`) and its
 warnings. A warning line follows the table for each pin that has one: a pull-up on
 under a push-pull output (it only costs current), or a pin driven high or pulled up
 while the pod's target power is off (that powers an unpowered DUT through its pins;
 ignore it when the DUT has its own supply). Directions and warnings need gateware v55
-or later; older pods show every pin as `unknown`.
+or later; older pods show every pin as `unknown`. A list too large for one cloud reply
+(a long sensor instance name on every pin) is read in two parts by itself (firmware after
+3.10.12; older firmware answers "reply too large" then).
 
 | Flag     | Default | Purpose                          |
 |----------|---------|----------------------------------|
