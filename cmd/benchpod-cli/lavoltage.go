@@ -32,11 +32,10 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 			"sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
 			"VOLTAGE is 1.8V or 3.3V (also 1800mV, 3.3, or 3300).\n\n" +
-			"5V (5.0, 5000) works on a pod with the digital board v3r4: the bank stays at 3.3V and\n" +
-			"J1 pin 21, the rail the pull-ups pull to, goes to 5V. The pod reads 5V signals at full\n" +
-			"speed; its outputs reach 5V only through their pull-ups (benchpod la pull PIN up). The\n" +
-			"pod refuses with BP0028 when 5V did not come up, and other pods refuse 5000. On v3r4 the\n" +
-			"output also shows pin 21 and warns when it sits above its setting.\n\n" +
+			"5V (5.0, 5000) works on a pod with the digital board v3r4: pin 21, the pull-up rail,\n" +
+			"goes to 5V and outputs reach 5V through their pull-ups (benchpod la pull PIN up). The\n" +
+			"output then shows pin 21. BP0028: 5V did not come up. Other pods refuse 5000. Details:\n" +
+			"https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io\n\n" +
 			"Omit VOLTAGE to show the current setting. Works over the network, over USB (--connection usb) and through\n" +
 			"embeddedci.com (--connection embeddedci:<name>).\n\n" +
 			"The pod forgets the voltage on a restart. Firmware 3.10.8 and later keeps wiring\n" +

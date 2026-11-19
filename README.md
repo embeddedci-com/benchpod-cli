@@ -337,7 +337,7 @@ benchpod status --json     # the pod's raw status reply
 
 # Hardware (network):
 benchpod la voltage 3.3V                          # the DUT's I/O voltage for now (it normally comes from the wiring profile)
-benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (pin 21 goes to 5 V; also shows pin 21)
+benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (see the 5 V page linked under la voltage)
 benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --output csv      # ADC snapshot
@@ -1478,7 +1478,9 @@ embeddedci.com; `la voltage` also works over USB.
 ### `benchpod la voltage [VOLTAGE]`
 
 Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
-(also `1800mV`, `3.3` or `3300`). Leave it out to show the setting. The pod refuses
+(also `1800mV`, `3.3` or `3300`), or `5V` on a pod with the digital board v3r4
+([5 V I/O](https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io): pin 21 goes to 5 V,
+and the output then shows pin 21). Leave it out to show the setting. The pod refuses
 LA capture, UART, SWD flash, pull-ups and sensor emulation until it is set;
 1.8 V needs a v3 pod, and the pod refuses a change while an LA pin is in use. Works
 over the network, over USB and through embeddedci.com. No flags.
