@@ -50,6 +50,8 @@ type Run struct {
 	Health        Health  `json:"health"`
 	Results       Results `json:"results"`
 	Keep          Keep    `json:"keep"`
+
+	rawInputs json.RawMessage // the inputs object as read (ReadRun), for Compare
 }
 
 // Key is what runs are stored and compared under.
@@ -470,12 +472,33 @@ func ReadRun(path string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	var r Run
-	if err := json.Unmarshal(data, &r); err != nil {
+	r, err := ParseRun(data)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	return r, nil
+}
+
+// ParseRun reads a run.json document.
+func ParseRun(data []byte) (*Run, error) {
+	var r Run
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Inputs json.RawMessage `json:"inputs"`
+		Health struct {
+			Valid *bool `json:"valid"`
+		} `json:"health"`
+	}
+	if json.Unmarshal(data, &raw) == nil {
+		r.rawInputs = raw.Inputs
+		if raw.Health.Valid == nil { // a run without the field counts as valid, as on embeddedci.com
+			r.Health.Valid = true
+		}
+	}
 	if r.SchemaVersion != SchemaVersion {
-		return nil, fmt.Errorf("%s: schema_version %d is not supported (this CLI reads %d)", path, r.SchemaVersion, SchemaVersion)
+		return nil, fmt.Errorf("schema_version %d is not supported (this CLI reads %d)", r.SchemaVersion, SchemaVersion)
 	}
 	return &r, nil
 }

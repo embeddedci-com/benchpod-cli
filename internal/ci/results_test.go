@@ -3,6 +3,7 @@ package ci
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -406,7 +407,7 @@ func TestDiff(t *testing.T) {
 	if !d.Comparable || strings.Join(d.Flags, ",") != "pod differs" {
 		t.Fatalf("comparable %v flags %v reasons %v", d.Comparable, d.Flags, d.Reasons)
 	}
-	if len(d.InputsChanged) != 2 || d.InputsChanged[0].Field != "pod.name" || d.InputsChanged[1].Field != "pod.firmware" {
+	if len(d.InputsChanged) != 2 || d.InputsChanged[0].Field != "pod.firmware" || d.InputsChanged[1].Field != "pod.name" {
 		t.Errorf("inputs %+v", d.InputsChanged)
 	}
 	c := d.Cases
@@ -424,11 +425,12 @@ func TestDiff(t *testing.T) {
 	if len(d.Measurements) != 3 {
 		t.Fatalf("measurements %+v", d.Measurements)
 	}
-	if m := d.Measurements[0]; m.Status != "drift" || *m.Change != 0.3 {
-		t.Errorf("boot_ms %+v", m)
-	}
-	if m := d.Measurements[1]; m.Status != "limit" || *m.Change != 2 {
+	// Sorted limit, drift, within (as embeddedci.com does).
+	if m := d.Measurements[0]; m.Name != "x" || m.Status != "limit" || *m.Change != 2 {
 		t.Errorf("x %+v", m)
+	}
+	if m := d.Measurements[1]; m.Name != "boot_ms" || m.Status != "drift" || math.Abs(*m.Change-0.3) > 1e-9 {
+		t.Errorf("boot_ms %+v", m)
 	}
 	if m := d.Measurements[2]; m.Change != nil || m.Status != "within" {
 		t.Errorf("y %+v", m)

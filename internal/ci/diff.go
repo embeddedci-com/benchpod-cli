@@ -1,9 +1,11 @@
 package ci
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"sort"
 
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 // Diff is the comparison of run a (older) with run b (newer), spec section 8.
 type Diff struct {
+	Found         bool            `json:"found"` // always true locally (the server says false when it has no run to compare with)
 	A             string          `json:"a"`
 	B             string          `json:"b"`
 	Comparable    bool            `json:"comparable"`
@@ -22,6 +25,7 @@ type Diff struct {
 	Measurements  []MeasureChange `json:"measurements"`
 	Slower        []SlowerCase    `json:"slower"`
 	CallsSlower   []SlowerCall    `json:"calls_slower"`
+	ARun          *RunSummary     `json:"a_run"`
 }
 
 // InputChange is one input that differs.
@@ -66,30 +70,42 @@ type SlowerCall struct {
 	BP50MS float64 `json:"b_p50_ms"`
 }
 
-// Compare diffs a (the older run) against b.
+// Compare diffs a (the older run) against b, with the same rules as embeddedci.com's run compare
+// (so a diff reads the same in the terminal and on the run page):
+//
+//   - Comparable: same key.suite and key.dut, both health.valid, same inputs.wiring.sha256.
+//     Otherwise comparable is false, reasons say why, and only inputs_changed is filled.
+//   - A different pod, board or connection is compared but flagged.
+//   - Cases are matched by id. With repeats a case counts as failing when any attempt failed; its
+//     duration and measurements are the last attempt's. Failed before and skipped now is
+//     newly_skipped, not fixed.
+//   - A measurement is matched by case id + name: "limit" when b is outside its limits, "drift"
+//     when the change (b-a)/|a| is beyond the allowed drift (b's, else a's), else "within".
+//   - slower: 50 % and 200 ms longer. calls_slower: a command whose p50 over the run (the
+//     n-weighted mean of the cases' p50) is 50 % and 2 ms higher.
+//   - inputs_changed: every input field that differs, except github.* and wiring.snapshot.
 func Compare(a, b *Run) *Diff {
-	d := &Diff{A: a.RunID, B: b.RunID, Comparable: true, Reasons: []string{}, Flags: []string{},
+	d := &Diff{Found: true, A: a.RunID, B: b.RunID, Comparable: true, Reasons: []string{}, Flags: []string{},
 		InputsChanged: []InputChange{}, Measurements: []MeasureChange{}, Slower: []SlowerCase{}, CallsSlower: []SlowerCall{},
 		Cases: DiffCases{NewlyFailing: []string{}, Fixed: []string{}, StillFailing: []string{}, New: []string{}, Removed: []string{}, NewlySkipped: []string{}}}
+	sum := summarize(a)
+	d.ARun = &sum
 	if a.Key.Suite != b.Key.Suite {
-		d.Reasons = append(d.Reasons, fmt.Sprintf("different suites (%s, %s)", a.Key.Suite, b.Key.Suite))
+		d.Reasons = append(d.Reasons, "different suite ("+a.Key.Suite+" vs "+b.Key.Suite+")")
 	}
 	if a.Key.DUT != b.Key.DUT {
-		d.Reasons = append(d.Reasons, fmt.Sprintf("different DUTs (%s, %s)", a.Key.DUT, b.Key.DUT))
+		d.Reasons = append(d.Reasons, "different DUT ("+a.Key.DUT+" vs "+b.Key.DUT+")")
 	}
 	if !a.Health.Valid {
-		d.Reasons = append(d.Reasons, a.RunID+" is not valid: "+strings.Join(a.Health.Reasons, "; "))
+		d.Reasons = append(d.Reasons, "run "+a.RunID+" is invalid")
 	}
 	if !b.Health.Valid {
-		d.Reasons = append(d.Reasons, b.RunID+" is not valid: "+strings.Join(b.Health.Reasons, "; "))
+		d.Reasons = append(d.Reasons, "run "+b.RunID+" is invalid")
 	}
 	if a.Inputs.Wiring.SHA256 != b.Inputs.Wiring.SHA256 {
-		d.Reasons = append(d.Reasons, "the wiring differs")
+		d.Reasons = append(d.Reasons, "different wiring")
 	}
-	if len(d.Reasons) > 0 {
-		d.Comparable = false
-		return d
-	}
+	d.Comparable = len(d.Reasons) == 0
 	pa, pb := a.Inputs.Pod, b.Inputs.Pod
 	if pa.Name != pb.Name {
 		d.Flags = append(d.Flags, "pod differs")
@@ -100,160 +116,306 @@ func Compare(a, b *Run) *Diff {
 	if pa.Connection != pb.Connection {
 		d.Flags = append(d.Flags, "connection differs")
 	}
-	d.InputsChanged = inputChanges(a.Inputs, b.Inputs)
+	d.InputsChanged = inputsChanged(a.inputsJSON(), b.inputsJSON())
+	if !d.Comparable {
+		return d
+	}
 
-	ca, cb := caseSummary(a.Results.Cases), caseSummary(b.Results.Cases)
-	for _, id := range ca.order {
-		x := ca.byID[id]
-		y, ok := cb.byID[id]
+	ac, aOrder := caseIndex(a)
+	bc, bOrder := caseIndex(b)
+	for _, id := range bOrder {
+		cb := bc[id]
+		ca, ok := ac[id]
 		if !ok {
-			d.Cases.Removed = append(d.Cases.Removed, id)
+			d.Cases.New = append(d.Cases.New, id)
 			continue
 		}
 		switch {
-		case !x.failing && y.failing:
+		case cb.failing && !ca.failing:
 			d.Cases.NewlyFailing = append(d.Cases.NewlyFailing, id)
-		case x.failing && y.failing:
+		case cb.failing && ca.failing:
 			d.Cases.StillFailing = append(d.Cases.StillFailing, id)
-		case x.failing && !y.failing && !y.skipped:
+		case ca.failing && cb.skipped:
+			d.Cases.NewlySkipped = append(d.Cases.NewlySkipped, id)
+		case ca.failing:
 			d.Cases.Fixed = append(d.Cases.Fixed, id)
-		}
-		if !x.skipped && y.skipped {
+		case cb.skipped && !ca.skipped:
 			d.Cases.NewlySkipped = append(d.Cases.NewlySkipped, id)
 		}
-		if y.ms >= x.ms*1.5 && y.ms-x.ms >= 200 {
-			d.Slower = append(d.Slower, SlowerCase{Case: id, AMS: x.ms, BMS: y.ms})
+		da, db := ca.last.DurationMS, cb.last.DurationMS
+		if db >= da*slowerFactor && db-da >= slowerCaseMS {
+			d.Slower = append(d.Slower, SlowerCase{Case: id, AMS: da, BMS: db})
 		}
-		for _, name := range x.mOrder {
-			ma := x.m[name]
-			mb, ok := y.m[name]
-			if !ok {
-				continue
-			}
-			mc := MeasureChange{Case: id, Name: name, A: ma.Value, B: mb.Value, Unit: firstNonEmpty(mb.Unit, ma.Unit), Status: "within"}
-			if ma.Value != 0 {
-				ch := (mb.Value - ma.Value) / math.Abs(ma.Value)
-				ch = math.Round(ch*1e6) / 1e6
-				mc.Change = &ch
-			}
-			drift := mb.Drift
-			if drift == nil {
-				drift = ma.Drift
-			}
-			switch {
-			case mb.Outcome == Failed:
-				mc.Status = "limit"
-			case drift != nil && (mc.Change == nil && mb.Value != ma.Value || mc.Change != nil && math.Abs(*mc.Change) > *drift):
-				mc.Status = "drift"
-			}
-			d.Measurements = append(d.Measurements, mc)
+		d.Measurements = append(d.Measurements, measurementChanges(id, ca.last, cb.last)...)
+	}
+	for _, id := range aOrder {
+		if _, ok := bc[id]; !ok {
+			d.Cases.Removed = append(d.Cases.Removed, id)
 		}
 	}
-	for _, id := range cb.order {
-		if _, ok := ca.byID[id]; !ok {
-			d.Cases.New = append(d.Cases.New, id)
-		}
-	}
-	callsA, callsB := callMedians(a.Results.Cases), callMedians(b.Results.Cases)
-	for _, cmd := range sortedKeys(callsA) {
-		x := callsA[cmd]
-		y, ok := callsB[cmd]
-		if ok && y >= x*1.5 && y-x >= 2 {
-			d.CallsSlower = append(d.CallsSlower, SlowerCall{Cmd: cmd, AP50MS: round3(x), BP50MS: round3(y)})
-		}
-	}
+	sort.SliceStable(d.Measurements, func(i, j int) bool {
+		return statusRank(d.Measurements[i].Status) < statusRank(d.Measurements[j].Status)
+	})
+	d.CallsSlower = callsSlower(a, b)
 	return d
 }
 
-type caseInfo struct {
+// Thresholds of "slower".
+const (
+	slowerFactor = 1.5
+	slowerCaseMS = 200
+	slowerCallMS = 2
+)
+
+func statusRank(s string) int {
+	switch s {
+	case "limit":
+		return 0
+	case "drift":
+		return 1
+	}
+	return 2
+}
+
+type caseSummary struct {
 	failing, skipped bool
-	ms               float64
-	m                map[string]Measurement
-	mOrder           []string
+	last             *Case
 }
 
-type caseSet struct {
-	order []string
-	byID  map[string]*caseInfo
-}
-
-// caseSummary folds repeated attempts into one entry per id: failing when any attempt failed,
-// skipped when every attempt was, the longest duration, the last attempt's measurements.
-func caseSummary(cases []Case) caseSet {
-	s := caseSet{byID: map[string]*caseInfo{}}
-	for _, c := range cases {
-		ci := s.byID[c.ID]
-		if ci == nil {
-			ci = &caseInfo{skipped: true, m: map[string]Measurement{}}
-			s.byID[c.ID] = ci
-			s.order = append(s.order, c.ID)
+// caseIndex groups a run's cases by id, in first-seen order; last is the last attempt.
+func caseIndex(r *Run) (map[string]*caseSummary, []string) {
+	m := map[string]*caseSummary{}
+	var order []string
+	for i := range r.Results.Cases {
+		c := &r.Results.Cases[i]
+		s, ok := m[c.ID]
+		if !ok {
+			s = &caseSummary{skipped: true}
+			m[c.ID] = s
+			order = append(order, c.ID)
 		}
-		ci.failing = ci.failing || c.Failing()
-		ci.skipped = ci.skipped && c.Outcome == Skipped
-		ci.ms = math.Max(ci.ms, c.DurationMS)
-		for _, m := range c.Measurements {
-			if _, seen := ci.m[m.Name]; !seen {
-				ci.mOrder = append(ci.mOrder, m.Name)
-			}
-			ci.m[m.Name] = m
+		if c.Outcome == Failed || c.Outcome == Errored {
+			s.failing = true
+		}
+		if c.Outcome != Skipped {
+			s.skipped = false
+		}
+		if s.last == nil || c.Attempt >= s.last.Attempt {
+			s.last = c
 		}
 	}
-	return s
+	for _, s := range m {
+		if s.failing {
+			s.skipped = false
+		}
+	}
+	return m, order
 }
 
-// callMedians is each command's median latency over the run: the per-case medians weighted by
-// their call counts.
-func callMedians(cases []Case) map[string]float64 {
+func measurementChanges(caseID string, a, b *Case) []MeasureChange {
+	am := map[string]Measurement{}
+	for _, m := range a.Measurements {
+		am[m.Name] = m // the last value of a name
+	}
+	last := map[string]Measurement{}
+	for _, m := range b.Measurements {
+		last[m.Name] = m
+	}
+	seen := map[string]bool{}
+	var out []MeasureChange
+	for _, m := range b.Measurements { // in the order names first appear in b
+		if seen[m.Name] {
+			continue
+		}
+		seen[m.Name] = true
+		ma, ok := am[m.Name]
+		if !ok {
+			continue
+		}
+		mb := last[m.Name]
+		mc := MeasureChange{Case: caseID, Name: m.Name, A: ma.Value, B: mb.Value, Unit: mb.Unit, Status: "within"}
+		if ma.Value != 0 {
+			ch := (mb.Value - ma.Value) / math.Abs(ma.Value)
+			mc.Change = &ch
+		}
+		drift := mb.Drift
+		if drift == nil {
+			drift = ma.Drift
+		}
+		switch {
+		case mb.Outcome == Failed || outsideLimits(mb):
+			mc.Status = "limit"
+		case drift != nil && mc.Change != nil && math.Abs(*mc.Change) > *drift:
+			mc.Status = "drift"
+		case drift != nil && mc.Change == nil && mb.Value != ma.Value:
+			mc.Status = "drift"
+		}
+		out = append(out, mc)
+	}
+	return out
+}
+
+func outsideLimits(m Measurement) bool {
+	return (m.Min != nil && m.Value < *m.Min) || (m.Max != nil && m.Value > *m.Max)
+}
+
+// callP50 is the n-weighted mean of the cases' p50 per command.
+func callP50(r *Run) map[string]float64 {
 	sum, n := map[string]float64{}, map[string]int{}
-	for _, c := range cases {
+	for _, c := range r.Results.Cases {
 		for cmd, st := range c.Calls {
-			if st.N == 0 {
+			if st.N <= 0 {
 				continue
 			}
 			sum[cmd] += st.P50MS * float64(st.N)
 			n[cmd] += st.N
 		}
 	}
-	out := map[string]float64{}
-	for cmd, total := range sum {
-		out[cmd] = total / float64(n[cmd])
+	out := make(map[string]float64, len(sum))
+	for cmd, s := range sum {
+		out[cmd] = s / float64(n[cmd])
 	}
 	return out
 }
 
-func inputChanges(a, b Inputs) []InputChange {
-	type field struct {
-		name string
-		a, b any
-	}
-	fields := []field{
-		{"dut_firmware.sha256", a.DUTFirmware.SHA256, b.DUTFirmware.SHA256},
-		{"dut_firmware.build_id", a.DUTFirmware.BuildID, b.DUTFirmware.BuildID},
-		{"dut_firmware.version", a.DUTFirmware.Version, b.DUTFirmware.Version},
-		{"tests.repo", a.Tests.Repo, b.Tests.Repo},
-		{"tests.ref", a.Tests.Ref, b.Tests.Ref},
-		{"tests.sha", a.Tests.SHA, b.Tests.SHA},
-		{"tests.dirty", a.Tests.Dirty, b.Tests.Dirty},
-		{"pod.name", a.Pod.Name, b.Pod.Name},
-		{"pod.board", a.Pod.Board, b.Pod.Board},
-		{"pod.firmware", a.Pod.Firmware, b.Pod.Firmware},
-		{"pod.gateware", a.Pod.Gateware, b.Pod.Gateware},
-		{"pod.features_rev", a.Pod.FeaturesRev, b.Pod.FeaturesRev},
-		{"pod.calibration_sha256", a.Pod.CalibrationSHA256, b.Pod.CalibrationSHA256},
-		{"pod.connection", a.Pod.Connection, b.Pod.Connection},
-		{"tools.cli", a.Tools.CLI, b.Tools.CLI},
-		{"tools.sdk", a.Tools.SDK, b.Tools.SDK},
-		{"tools.python", a.Tools.Python, b.Tools.Python},
-		{"tools.pytest", a.Tools.Pytest, b.Tools.Pytest},
-		{"tools.os", a.Tools.OS, b.Tools.OS},
-	}
-	out := []InputChange{}
-	for _, f := range fields {
-		if f.a != f.b {
-			out = append(out, InputChange{Field: f.name, A: f.a, B: f.b})
+func callsSlower(a, b *Run) []SlowerCall {
+	pa, pb := callP50(a), callP50(b)
+	out := []SlowerCall{}
+	for cmd, vb := range pb {
+		va, ok := pa[cmd]
+		if !ok {
+			continue
+		}
+		if vb >= va*slowerFactor && vb-va >= slowerCallMS {
+			out = append(out, SlowerCall{Cmd: cmd, AP50MS: roundMS(va), BP50MS: roundMS(vb)})
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Cmd < out[j].Cmd })
 	return out
+}
+
+func roundMS(v float64) float64 { return math.Round(v*1000) / 1000 }
+
+// ignoredInputs change on every run and say nothing about the result.
+var ignoredInputs = map[string]bool{"github": true, "wiring.snapshot": true}
+
+// inputsJSON is the run's inputs object as read (every field, also ones this CLI does not know),
+// else as this CLI has them.
+func (r *Run) inputsJSON() json.RawMessage {
+	if len(r.rawInputs) > 0 {
+		return r.rawInputs
+	}
+	data, _ := json.Marshal(r.Inputs)
+	return data
+}
+
+// inputsChanged flattens both inputs objects to dotted fields and lists the ones that differ, in
+// field order.
+func inputsChanged(a, b json.RawMessage) []InputChange {
+	fa, fb := flattenJSON(a), flattenJSON(b)
+	keys := map[string]bool{}
+	for k := range fa {
+		keys[k] = true
+	}
+	for k := range fb {
+		keys[k] = true
+	}
+	sorted := make([]string, 0, len(keys))
+	for k := range keys {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+	out := []InputChange{}
+	for _, k := range sorted {
+		va, oka := fa[k]
+		vb, okb := fb[k]
+		if oka && okb && jsonEqual(va, vb) {
+			continue
+		}
+		if isEmptyValue(va) && isEmptyValue(vb) {
+			continue
+		}
+		out = append(out, InputChange{Field: k, A: va, B: vb})
+	}
+	return out
+}
+
+func flattenJSON(raw json.RawMessage) map[string]any {
+	out := map[string]any{}
+	var v any
+	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil {
+		return out
+	}
+	var walk func(prefix string, v any)
+	walk = func(prefix string, v any) {
+		if ignoredInputs[prefix] {
+			return
+		}
+		if m, ok := v.(map[string]any); ok {
+			for k, child := range m {
+				p := k
+				if prefix != "" {
+					p = prefix + "." + k
+				}
+				walk(p, child)
+			}
+			return
+		}
+		if prefix != "" {
+			out[prefix] = v
+		}
+	}
+	walk("", v)
+	return out
+}
+
+func isEmptyValue(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case string:
+		return t == ""
+	case bool:
+		return !t
+	}
+	return false
+}
+
+func jsonEqual(a, b any) bool {
+	ja, _ := json.Marshal(a)
+	jb, _ := json.Marshal(b)
+	return string(ja) == string(jb)
+}
+
+// RunSummary is a_run: the run compared with, as embeddedci.com summarizes it (the fields a local
+// run has; build_id is the uploaded build it flashed, device_name the pod).
+type RunSummary struct {
+	ID           string `json:"id"`
+	Suite        string `json:"suite"`
+	DUT          string `json:"dut"`
+	Outcome      string `json:"outcome"`
+	Valid        bool   `json:"valid"`
+	Trigger      string `json:"trigger"`
+	Started      string `json:"started"`
+	Finished     string `json:"finished,omitempty"`
+	DurationMS   int64  `json:"duration_ms"`
+	Counts       Counts `json:"counts"`
+	BuildID      string `json:"build_id"`
+	DeviceID     string `json:"device_id"`
+	DeviceName   string `json:"device_name"`
+	UploadedBy   string `json:"uploaded_by"`
+	TestsRepo    string `json:"tests_repo"`
+	TestsRef     string `json:"tests_ref"`
+	TestsSHA     string `json:"tests_sha"`
+	Firmware     string `json:"firmware"`
+	GithubRunURL string `json:"github_run_url"`
+}
+
+func summarize(r *Run) RunSummary {
+	return RunSummary{ID: r.RunID, Suite: r.Key.Suite, DUT: r.Key.DUT, Outcome: r.Results.Outcome, Valid: r.Health.Valid,
+		Trigger: r.Trigger, Started: r.Started, Finished: r.Finished, DurationMS: r.Results.DurationMS, Counts: r.Results.Counts,
+		BuildID: r.Inputs.DUTFirmware.BuildID, DeviceName: r.Inputs.Pod.Name, TestsRepo: r.Inputs.Tests.Repo,
+		TestsRef: r.Inputs.Tests.Ref, TestsSHA: r.Inputs.Tests.SHA, Firmware: r.Inputs.DUTFirmware.File, GithubRunURL: r.Inputs.GitHub.RunURL}
 }
 
 // Regressed says b is worse than a: a case newly failing or a measurement newly outside its limit.
@@ -280,7 +442,6 @@ func (d *Diff) WriteText(w io.Writer) {
 		for _, r := range d.Reasons {
 			fmt.Fprintf(w, "  - %s\n", r)
 		}
-		return
 	}
 	if len(d.Flags) > 0 {
 		fmt.Fprintf(w, "note: %s\n", strings.Join(d.Flags, ", "))
@@ -293,6 +454,9 @@ func (d *Diff) WriteText(w io.Writer) {
 			fmt.Fprintf(tw, "  %s\t%v\t%v\n", c.Field, dash(c.A), dash(c.B))
 		}
 		tw.Flush()
+	}
+	if !d.Comparable {
+		return
 	}
 	groups := []struct {
 		title string

@@ -2289,21 +2289,30 @@ for `benchpod ci` (`4` when `require` is not met).
 ### `benchpod ci diff <a> <b>`
 
 Compare two local runs, each a run folder or its `run.json`: `a` the older, `b` the newer.
-Two runs compare when they have the same suite and DUT, are both valid and used the same
-wiring (else the output says why they are incomparable); a different pod, board or
-connection is compared and flagged. The output lists:
+The rules are the same as the run compare on embeddedci.com, so both show the same diff for
+the same two runs. Two runs compare when they have the same suite and DUT, are both valid and
+used the same wiring; otherwise the output says why they are incomparable and lists only the
+inputs that changed. A different pod, board or connection is compared and flagged. The
+output lists:
 
-- the inputs that changed (firmware hash, tests commit, pod firmware, tool versions, ...);
-- cases newly failing, fixed, still failing, new, removed and newly skipped (a case repeated
-  with `--repeat` counts as failing when any attempt failed);
-- every measurement in both runs with its change, marked `limit` when it is outside its
-  limit in `b`, `drift` when it changed more than its `drift`, else `within`;
-- cases that took 50 % and 200 ms longer, and pod commands whose median latency went up 50 %
-  and 2 ms.
+- the inputs that changed: every field of `inputs` that differs (firmware hash, tests commit,
+  pod firmware, tool versions, ...), except the GitHub run and the wiring snapshot;
+- cases newly failing, fixed, still failing, new, removed and newly skipped. A case repeated
+  with `--repeat` counts as failing when any attempt failed, and its duration and
+  measurements are its last attempt's. A case that failed in `a` and is skipped in `b` is
+  newly skipped, not fixed;
+- every measurement in both runs with its change, `(b - a) / |a|` (none when `a` is 0),
+  marked `limit` when `b` is outside its limits, `drift` when it changed more than its
+  `drift` (`b`'s, else `a`'s), else `within`;
+- cases that took 50 % and 200 ms longer, and pod commands whose median latency (the cases'
+  medians weighted by their call counts) went up 50 % and 2 ms.
+
+`--json` prints the same JSON as embeddedci.com's compare, with `found` (always true here)
+and `a_run`, a summary of run `a`.
 
 | Flag     | Default | Purpose |
 |----------|---------|---------|
-| `--json` | off     | Print the diff as JSON (the same shape embeddedci.com will use). |
+| `--json` | off     | Print the diff as JSON (the shape embeddedci.com's compare returns). |
 
 ## Development
 
