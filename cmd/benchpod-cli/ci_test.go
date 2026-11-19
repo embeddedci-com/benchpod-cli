@@ -147,15 +147,44 @@ func (p *fakeCIPod) Transport() string { return "lan" }
 type fakeLease struct {
 	id        string
 	supported bool
+	mu        sync.Mutex
+	lostC     chan struct{}
 	lost      string
 	released  bool
 	dropped   bool
 }
 
-func (l *fakeLease) ID() string              { return l.id }
-func (l *fakeLease) Supported() bool         { return l.supported }
-func (l *fakeLease) Lost() string            { return l.lost }
-func (l *fakeLease) MarkLost(why string)     { l.lost = why }
+func (l *fakeLease) ID() string      { return l.id }
+func (l *fakeLease) Supported() bool { return l.supported }
+func (l *fakeLease) Lost() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lost
+}
+func (l *fakeLease) MarkLost(why string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lost == "" {
+		l.lost = why
+	}
+	if l.lostC == nil {
+		l.lostC = make(chan struct{})
+	}
+	select {
+	case <-l.lostC:
+	default:
+		close(l.lostC)
+	}
+}
+
+func (l *fakeLease) LostC() <-chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lostC == nil {
+		l.lostC = make(chan struct{})
+	}
+	return l.lostC
+}
 func (l *fakeLease) Release(context.Context) { l.released = true }
 func (l *fakeLease) Verify(context.Context)  {}
 func (l *fakeLease) Drop()                   { l.dropped = true }
@@ -171,6 +200,7 @@ type ciFixture struct {
 	leaseErr       error
 	connErr        error
 	join           *tcpclient.LeaseJoin
+	withUpload     bool // the run uploads (to BENCHPOD_API_BASE) as the real command does
 }
 
 func newCIFixture(t *testing.T, yaml string) *ciFixture {
@@ -197,6 +227,12 @@ func (f *ciFixture) run() (*ciExit, *ci.Run) {
 		f.t.Fatal(err)
 	}
 	r := &ciRunner{cfg: cfg, opts: f.opts, steps: steps, stdout: &f.stdout, stderr: &f.stderr}
+	if f.withUpload {
+		r.signedIn = ciSignedIn
+		r.upload = func(ctx context.Context, dir string) (*ci.Uploaded, error) {
+			return uploadRunFolder(ctx, dir, &f.stderr)
+		}
+	}
 	r.connect = func(context.Context) (*ciConnected, error) {
 		if f.connErr != nil {
 			return nil, f.connErr
@@ -753,5 +789,49 @@ func TestCIDiffText(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "Newly failing (1)") || !strings.Contains(buf.String(), "t::x") {
 		t.Errorf("%s", buf.String())
+	}
+}
+
+// slowPython writes its parts file (one case done), then runs on as if the tests went on.
+const slowPython = `#!/bin/sh
+if [ "$1" = "-c" ]; then echo "3.0.9"; echo "3.12.4"; exit 0; fi
+cat > "$EMBEDDEDCI_RUN_DIR/parts/$EMBEDDEDCI_RUN_STEP.json" <<EOF
+{"schema_version":1,"step":"$EMBEDDEDCI_RUN_STEP","kind":"pytest","cases":[{"id":"tests/test_a.py::test_first","outcome":"passed"}],
+ "health":{"reasons":["the pod lease was stopped by Alice Example during the run"]}}
+EOF
+sleep 30
+`
+
+func TestCILeaseLostStopsTheRunningStep(t *testing.T) {
+	f := newCIFixture(t, "")
+	py := filepath.Join(f.dir, "slowpython")
+	os.WriteFile(py, []byte(slowPython), 0o755)
+	os.WriteFile(f.opts.file, []byte("version: 1\nsuite: s\ndut: d\nsteps:\n  - id: hil\n    pytest: {python: "+py+"}\n  - id: after\n    power_on: {}\n"), 0o644)
+	go func() {
+		time.Sleep(700 * time.Millisecond) // the web app stops the run while pytest runs
+		f.lease.MarkLost("the pod lease was stopped by Alice Example during the run")
+	}()
+	start := time.Now()
+	exit, run := f.run()
+	if took := time.Since(start); took > 15*time.Second {
+		t.Fatalf("the step ran on after the lease was lost: %s", took)
+	}
+	if exit.code != ci.ExitInvalid || run.Results.Outcome != ci.Invalid || !run.Health.LeaseLost {
+		t.Fatalf("exit %d outcome %s health %+v", exit.code, run.Results.Outcome, run.Health)
+	}
+	if c := caseByID(run, "tests/test_a.py::test_first"); c == nil || c.Outcome != ci.Passed {
+		t.Errorf("the step's cases so far: %+v", run.Results.Cases)
+	}
+	if c := caseByID(run, "hil"); c == nil || c.Outcome != ci.Errored || !strings.Contains(c.Message, "stopped by Alice Example") {
+		t.Errorf("hil %+v", c)
+	}
+	if c := caseByID(run, "after"); c == nil || c.Outcome != ci.Skipped {
+		t.Errorf("after %+v", c)
+	}
+	if len(run.Health.Reasons) != 1 || run.Health.Reasons[0] != "the pod lease was stopped by Alice Example during the run" {
+		t.Errorf("reasons %q", run.Health.Reasons)
+	}
+	if !strings.Contains(strings.Join(f.pod.cmds(), ","), "dac_stop") {
+		t.Errorf("no cleanup: %v", f.pod.cmds())
 	}
 }

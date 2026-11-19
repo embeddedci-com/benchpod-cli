@@ -50,6 +50,8 @@ type Run struct {
 	Health        Health  `json:"health"`
 	Results       Results `json:"results"`
 	Keep          Keep    `json:"keep"`
+	// Uploaded is where the run is on embeddedci.com, once uploaded (run_id stays the local id).
+	Uploaded *Uploaded `json:"uploaded,omitempty"`
 
 	rawInputs json.RawMessage // the inputs object as read (ReadRun), for Compare
 }
@@ -154,11 +156,16 @@ type Health struct {
 	TraceTruncated      bool     `json:"trace_truncated"`
 }
 
-// Invalidate marks the run invalid for reason (once per reason).
+// Invalidate marks the run invalid for reason, once: a reason another one already says (the
+// same text, or one containing it) is not added twice.
 func (h *Health) Invalidate(reason string) {
 	h.Valid = false
-	for _, r := range h.Reasons {
-		if r == reason {
+	for i, r := range h.Reasons {
+		switch {
+		case r == reason || strings.Contains(r, reason):
+			return
+		case strings.Contains(reason, r): // the new one says more: it replaces the old
+			h.Reasons[i] = reason
 			return
 		}
 	}
@@ -521,6 +528,9 @@ func CaseSlug(id string) string {
 	s := b.String()
 	if len(s) > 120 {
 		s = s[:120]
+		changed = true
+	}
+	if s == "" {
 		changed = true
 	}
 	if changed {

@@ -344,10 +344,10 @@ func TestRecorder(t *testing.T) {
 	if strings.Contains(text, "hunter2") || strings.Contains(text, `"Token":"t"`) || strings.Contains(text, strings.Repeat("k", 20)) {
 		t.Errorf("secret in trace:\n%s", text)
 	}
-	if !strings.Contains(text, `"key":"short"`) || !strings.Contains(text, `"att":"att/0001-wiring_get.json"`) {
+	if !strings.Contains(text, `"key":"short"`) || !strings.Contains(text, `"att":"att/cli-0001-wiring_get.json"`) {
 		t.Errorf("trace:\n%s", text)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "att", "0001-wiring_get.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "att", "cli-0001-wiring_get.json")); err != nil {
 		t.Errorf("attachment: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(text), "\n")
@@ -471,5 +471,16 @@ func TestDiffIncomparable(t *testing.T) {
 	d.WriteText(&buf)
 	if !strings.Contains(buf.String(), "incomparable") {
 		t.Errorf("%s", buf.String())
+	}
+}
+
+func TestInvalidateDedupes(t *testing.T) {
+	h := Health{Valid: true, Reasons: []string{"the pod lease was stopped by A during the run"}}
+	h.Invalidate("the pod lease was stopped by A during the run")
+	h.Invalidate("stopped by A")
+	h.Invalidate("the pod rebooted")
+	h.Invalidate("the pod rebooted during the run")
+	if strings.Join(h.Reasons, "|") != "the pod lease was stopped by A during the run|the pod rebooted during the run" || h.Valid {
+		t.Errorf("%q", h.Reasons)
 	}
 }

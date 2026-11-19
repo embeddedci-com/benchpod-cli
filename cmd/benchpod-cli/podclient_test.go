@@ -168,7 +168,7 @@ func TestCloudPingStatusAndLAVoltage(t *testing.T) {
 		}
 	}
 	sent := strings.Join(f.sent(), " ")
-	for _, want := range []string{`{"cmd":"ping"}`, `{"cmd":"status"}`, `{"cmd":"cloud_status"}`, `{"cmd":"la_voltage"}`} {
+	for _, want := range []string{`{"cmd":"ping"}`, `{"caps":false,"cmd":"status"}`, `{"cmd":"cloud_status"}`, `{"cmd":"la_voltage"}`} {
 		if !strings.Contains(sent, want) {
 			t.Errorf("commands sent %s, want %s", sent, want)
 		}
