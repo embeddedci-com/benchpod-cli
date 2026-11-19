@@ -2,6 +2,7 @@ package ci
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -118,7 +119,8 @@ func (r *Recorder) RecordLine(l TraceLine, took time.Duration, err error) {
 		respJSON, _ := json.Marshal(l.Resp)
 		if len(reqJSON) > MaxInlineJSON || len(respJSON) > MaxInlineJSON {
 			r.attN++
-			att := fmt.Sprintf("%s/%04d-%s.json", attDirName, r.attN, safeName(name))
+			// "cli-": the pytest plugin numbers its own attachments in the same folder.
+			att := fmt.Sprintf("%s/cli-%04d-%s.json", attDirName, r.attN, safeName(name))
 			body, _ := json.Marshal(map[string]any{"req": l.Req, "resp": l.Resp})
 			r.cur.atts[att] = body
 			r.written += int64(len(body))
@@ -164,13 +166,32 @@ func (r *Recorder) End(c *Case) error {
 		b.Write(line)
 		b.WriteByte('\n')
 	}
-	rel := traceDirName + "/" + CaseSlug(c.ID)
+	stem := traceDirName + "/" + CaseSlug(c.ID)
 	if c.Attempt > 1 {
-		rel += fmt.Sprintf("-attempt%d", c.Attempt)
+		stem += fmt.Sprintf("-attempt%d", c.Attempt)
 	}
-	rel += ".ndjson"
-	if err := os.WriteFile(filepath.Join(r.dir, filepath.FromSlash(rel)), []byte(b.String()), 0o644); err != nil {
-		return err
+	// A new file, never one another process (the pytest plugin) wrote: stem, stem-2, ...
+	var rel string
+	for n := 1; ; n++ {
+		rel = stem + ".ndjson"
+		if n > 1 {
+			rel = fmt.Sprintf("%s-%d.ndjson", stem, n)
+		}
+		f, err := os.OpenFile(filepath.Join(r.dir, filepath.FromSlash(rel)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) && n < 1000 {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		_, werr := f.WriteString(b.String())
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			return werr
+		}
+		break
 	}
 	for name, body := range cur.atts {
 		if err := os.MkdirAll(filepath.Join(r.dir, attDirName), 0o755); err != nil {

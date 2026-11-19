@@ -344,10 +344,10 @@ func TestRecorder(t *testing.T) {
 	if strings.Contains(text, "hunter2") || strings.Contains(text, `"Token":"t"`) || strings.Contains(text, strings.Repeat("k", 20)) {
 		t.Errorf("secret in trace:\n%s", text)
 	}
-	if !strings.Contains(text, `"key":"short"`) || !strings.Contains(text, `"att":"att/0001-wiring_get.json"`) {
+	if !strings.Contains(text, `"key":"short"`) || !strings.Contains(text, `"att":"att/cli-0001-wiring_get.json"`) {
 		t.Errorf("trace:\n%s", text)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "att", "0001-wiring_get.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "att", "cli-0001-wiring_get.json")); err != nil {
 		t.Errorf("attachment: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(text), "\n")
