@@ -155,9 +155,22 @@ func CheckPodAPI(statusReply json.RawMessage) error {
 	return &UpdateRequiredError{Firmware: st.Version, PodAPI: max(api, st.MinClientAPI), MinClientAPI: st.MinClientAPI}
 }
 
-// checkReply is CheckPodAPI on a status command's reply, nil for any other command.
+// newerPodAllowed turns the status check off for the commands that must work against firmware
+// this CLI is too old for: showing the status, updating or rolling back the firmware and blobs,
+// DFU, discovery. Set before each command runs (SetAllowNewerPod).
+var newerPodAllowed atomic.Bool
+
+// SetAllowNewerPod lets status replies through (true) even when the pod's API level is above
+// ClientAPI, or checks them again (false).
+func SetAllowNewerPod(allow bool) { newerPodAllowed.Store(allow) }
+
+// NewerPodAllowed says whether SetAllowNewerPod(true) is in effect.
+func NewerPodAllowed() bool { return newerPodAllowed.Load() }
+
+// checkReply is CheckPodAPI on a status command's reply, nil for any other command and when
+// SetAllowNewerPod(true) is in effect.
 func checkReply(req map[string]any, data json.RawMessage) error {
-	if !IsStatus(req) {
+	if !IsStatus(req) || NewerPodAllowed() {
 		return nil
 	}
 	return CheckPodAPI(data)

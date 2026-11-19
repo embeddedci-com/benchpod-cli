@@ -223,6 +223,7 @@ var unknownCmdReplies = []string{
 // its status, with its own exit code; so does BP0030. A pod with api 1 or none works.
 func TestNewerPodFirmwareNeedsANewerCLI(t *testing.T) {
 	newer, _ := fakeLANPod(t, `{"status":"ok","data":{"version":"3.11.0","api":2,"min_client_api":0}}`)
+	newerPing, _ := fakeLANPod(t, `{"status":"ok","data":{"version":"3.11.0","api":2,"min_client_api":0}}`)
 	same, _ := fakeLANPod(t, `{"status":"ok","data":{"version":"3.10.14","api":1,"min_client_api":0}}`)
 	old, _ := fakeLANPod(t, `{"status":"ok","data":{"version":"3.10.13"}}`)
 	tooOld, _ := fakeLANPod(t, `{"status":"error","code":"BP0030","args":{"client_api":1,"min_client_api":2,"api":2},`+
@@ -235,11 +236,12 @@ func TestNewerPodFirmwareNeedsANewerCLI(t *testing.T) {
 		want int
 		msg  string
 	}{
-		{[]string{"status", "--connection", newer}, exitUpdateCLI,
-			"this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod"},
+		// status still shows the pod (it is how the user finds out), with the update line as a warning.
+		{[]string{"status", "--connection", newer}, exitOK,
+			"Warning: this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod"},
 		{[]string{"ping", "--connection", tooOld}, exitUpdateCLI,
 			"this pod's firmware needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod"},
-		{[]string{"ping", "--connection", newer}, exitOK, ""}, // ping reads no status
+		{[]string{"ping", "--connection", newerPing}, exitOK, ""}, // ping reads no status
 	} {
 		logged.Reset()
 		if got := run(c.args); got != c.want {

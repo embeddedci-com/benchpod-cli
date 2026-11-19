@@ -157,7 +157,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 		}
 		return nil, tcpclient.RefusalError(msg, resp.Code, resp.Args)
 	}
-	if tcpclient.IsStatus(req) {
+	if tcpclient.IsStatus(req) && !tcpclient.NewerPodAllowed() {
 		if err := tcpclient.CheckPodAPI(resp.Data); err != nil {
 			return nil, err
 		}

@@ -1051,10 +1051,12 @@ embeddedci.com) carries `"client_api"`, the pod API level this CLI was built for
 Newer firmware announces its own level in `status`; it goes up only when the firmware changes
 a reply in a way an older CLI would misread. When the pod's level is above this CLI's (a pod
 without one counts as level 1), a command that reads the pod's status stops with exit code
-`6` and says so:
+`6` and says so. `status`, `flash-self`, `install-blobs`, `dfu`, `bootsel`, `discover` and
+`identity` still run: `status` prints the same line as a warning, and the firmware commands are
+how such a pod is updated or rolled back.
 
 ```text
-[benchpod] status: this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
+[benchpod] la voltage: this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
 ```
 
 A pod that no longer takes commands from a CLI this old refuses them with `BP0030`, which

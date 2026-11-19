@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/embeddedci-com/benchpod-cli/internal/features"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,6 +55,10 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			data, err := pod.client.Command(ctx, features.StatusRequest())
 			if err != nil {
 				return fmt.Errorf("status: %w", err)
+			}
+			if upd := tcpclient.CheckPodAPI(data); upd != nil {
+				// Shown, not refused: status is how the user finds out (see allowsNewerPod).
+				log.Printf("Warning: %v", upd)
 			}
 			out, closeOut, err := resolveOutput(g.outputFilename)
 			if err != nil {

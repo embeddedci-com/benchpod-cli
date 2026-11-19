@@ -87,7 +87,8 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Apply Viper precedence (flag > env > default) into g before any RunE.
-		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
+			tcpclient.SetAllowNewerPod(allowsNewerPod(c))
 			g.connection = viper.GetString("connection")
 			g.configFile = viper.GetString("config-file")
 			g.outputFilename = viper.GetString("output-filename")
@@ -196,4 +197,16 @@ func run(args []string) int {
 		return ci.ExitSetup // benchpod ci: a usage error is a setup error (exit 1), see its exit codes
 	}
 	return exitCode(err)
+}
+
+// newerPodCommands still run against a pod whose firmware needs a newer CLI (exit code 6
+// otherwise): they show the pod's state or change its firmware, which is how such a pod is
+// rolled back or looked at. `status` prints a warning instead.
+var newerPodCommands = map[string]bool{
+	"status": true, "flash-self": true, "install-blobs": true, "dfu": true, "bootsel": true,
+	"discover": true, "identity": true,
+}
+
+func allowsNewerPod(c *cobra.Command) bool {
+	return c.Parent() != nil && !c.Parent().HasParent() && newerPodCommands[c.Name()]
 }
