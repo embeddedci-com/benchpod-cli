@@ -1235,8 +1235,8 @@ value (`ohms`), what the pin does now (`state`) and the directions it can pull
 (`dirs`). Which pins have one depends on the board: today LA1-LA6 pull up, LA7/LA8
 pull down and LA9-LA14 have none. Another direction is refused with BP0024 ("LA7
 supports pull-down only on this board"), and `up` or `down` on a pin without a
-resistor with BP0023; `off` works on every pin. The resistors go to 3.3 V, so the LA
-bank must be at 3.3 V. Firmware before the `la_pull_dir` feature only takes on/off:
+resistor with BP0023; `off` works on every pin. The pull-ups pull to the LA bank
+voltage, 1.8 V or 3.3 V (firmware 3.10.12 and older refuses them at 1.8 V). Firmware before the `la_pull_dir` feature only takes on/off:
 the CLI then sends that and checks the direction itself. No flags.
 
 ```bash
@@ -1322,7 +1322,7 @@ benchpod i2c stop
 Claim two LA pins as an I2C master. Pins are `1`-`14` (or `la1`) or names from the
 pod's wiring profile; the ones you leave out are its `i2c_sda` and `i2c_scl`. The bus
 needs pull-ups: with `--pullups pod` both pins must be LA1-LA6 with their pull-up on
-(`benchpod la pull 1 up`), and the LA bank at 3.3 V. The pod never switches a
+(`benchpod la pull 1 up`; at a 1.8 V LA bank that needs firmware newer than 3.10.12). The pod never switches a
 pull-up by itself. Prints the pins and the rate the pod uses: 400 kHz runs at about
 364 kHz, 1 MHz at about 923 kHz, and slow edges (weak pull-ups, long wires) make it a
 bit slower again, never faster.
