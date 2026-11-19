@@ -86,10 +86,16 @@ func cloudServerURL() string {
 // in, an id, slug or name. Empty is the account's active organization.
 var cloudOrg string
 
+// cloudLeaseID is the embeddedci.com device lease a `benchpod ci` run holds ("" for none): every
+// client newServerAPI makes sends it (X-Benchpod-Lease), so a flash or command the run makes
+// through embeddedci.com is let through its own lease.
+var cloudLeaseID string
+
 // newServerAPI is a client for embeddedci.com at baseURL that acts in cloudOrg.
 func newServerAPI(baseURL string) *serverapi.Client {
 	api := serverapi.New(baseURL)
 	api.Org = cloudOrg
+	api.LeaseID = cloudLeaseID
 	return api
 }
 

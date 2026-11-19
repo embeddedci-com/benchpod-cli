@@ -780,6 +780,37 @@ type FlashRequest struct {
 	ConnectUnderReset *bool  `json:"connect_under_reset,omitempty"`
 }
 
+// CloudFlashRequest is the body of POST /api/cloud/devices/flash: the build by its selector (Build,
+// Repo, Ref, Artifact) or by its artifact (JobID, PackID, ArtifactName), and the SWD settings.
+type CloudFlashRequest struct {
+	Build             string `json:"build,omitempty"`
+	Repo              string `json:"repo,omitempty"`
+	Ref               string `json:"ref,omitempty"`
+	Artifact          string `json:"artifact,omitempty"`
+	JobID             string `json:"job_id,omitempty"`
+	PackID            string `json:"pack_id,omitempty"`
+	ArtifactName      string `json:"artifact_name,omitempty"`
+	Target            string `json:"target"`
+	SWCLK             int    `json:"swclk"`
+	SWDIO             int    `json:"swdio"`
+	NReset            bool   `json:"nreset"`
+	Efuse             int    `json:"efuse"`
+	LoadAddr          string `json:"load_addr,omitempty"`
+	ConnectUnderReset *bool  `json:"connect_under_reset,omitempty"`
+	PowerCycle        *bool  `json:"power_cycle,omitempty"`
+}
+
+// CloudFlashDevice calls POST /api/cloud/devices/flash?device=<name> with a cloud token (GitHub
+// Actions): embeddedci.com flashes an uploaded build through the pod with its own OpenOCD. The
+// client's LeaseID goes as X-Benchpod-Lease.
+func (c *Client) CloudFlashDevice(ctx context.Context, token, name string, body CloudFlashRequest) (*FlashResponse, error) {
+	var out FlashResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/cloud/devices/flash?device="+url.QueryEscape(strings.TrimSpace(name)), token, body, &out, false); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // FlashResponse is the server's verdict: OpenOCD's output and, on failure, the error.
 type FlashResponse struct {
 	OK                bool   `json:"ok"`

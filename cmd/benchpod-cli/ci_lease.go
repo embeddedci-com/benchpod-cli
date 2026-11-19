@@ -421,6 +421,7 @@ func (l *cloudLease) Verify(ctx context.Context) {
 
 func (l *cloudLease) Release(ctx context.Context) {
 	l.stopLoop()
+	cloudLeaseID = ""
 	if !l.supported {
 		return
 	}
@@ -433,4 +434,4 @@ func (l *cloudLease) Release(ctx context.Context) {
 
 func (l *localLease) Drop() { tcpclient.SetLeaseJoin(nil) }
 
-func (l *cloudLease) Drop() { l.api.LeaseID = "" }
+func (l *cloudLease) Drop() { l.api.LeaseID, cloudLeaseID = "", "" }

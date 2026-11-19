@@ -182,7 +182,10 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 		return runFlashESP(g, f, spec)
 	}
 	var art *serverapi.BuildArtifact
-	if fromBuild {
+	if fromBuild && spec.IsCloud() && serverSide && cloudIsGitHubAction() {
+		// A GitHub Actions token cannot look builds up on the user's routes: embeddedci.com's
+		// cloud flash route takes the build's selector itself (flashOnServer).
+	} else if fromBuild {
 		var cleanup func()
 		var err error
 		art, cleanup, err = f.resolveBuild(g, !serverSide)
