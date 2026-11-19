@@ -83,6 +83,9 @@ type Client struct {
 	// or name of one of the user's organizations (looked up once). It goes as X-Organization-Id.
 	// Empty means the account's active organization, the server's default.
 	Org string
+	// LeaseID, when set, goes as X-Benchpod-Lease on every request: the device lease this client
+	// holds (benchpod ci), so the server lets its commands through while the lease is held.
+	LeaseID string
 
 	orgMu       sync.Mutex
 	orgFor      string // the Org value orgResolved was looked up for
@@ -476,6 +479,9 @@ func (c *Client) doJSON(ctx context.Context, method, path, accessToken string, b
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", Authorization(accessToken))
+	if c.LeaseID != "" {
+		req.Header.Set("X-Benchpod-Lease", c.LeaseID)
+	}
 	if withOrg {
 		if err := c.setOrgHeader(ctx, req, accessToken); err != nil {
 			return err

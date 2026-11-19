@@ -155,7 +155,7 @@ func (c *Client) AuthorizeRequest(ctx context.Context, req *http.Request, creden
 
 // WithOrg is a copy of c that acts in the organization sel (an id, slug or name) instead.
 func (c *Client) WithOrg(sel string) *Client {
-	return &Client{BaseURL: c.BaseURL, HTTP: c.HTTP, Org: sel}
+	return &Client{BaseURL: c.BaseURL, HTTP: c.HTTP, Org: sel, LeaseID: c.LeaseID}
 }
 
 // cachedOrg is the looked-up organization, for a copy of the client to reuse.

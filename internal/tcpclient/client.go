@@ -51,6 +51,9 @@ type Client struct {
 	Addr        string        // host:port; callers should port-normalise first
 	DialTimeout time.Duration // total connect budget across retries; defaults to DefaultDialTimeout when zero
 	TLS         TLSMode       // TLSDefault: DefaultTLSMode (tls.go)
+	// NoLeaseJoin: this client's connections do not join the lease set with SetLeaseJoin (the
+	// lease commands themselves use it).
+	NoLeaseJoin bool
 
 	lastTLS bool // the last connection used TLS
 }
@@ -159,6 +162,44 @@ func decodeB64Samples(s string) ([]int, error) {
 		out[i] = int(binary.LittleEndian.Uint16(raw[2*i:]))
 	}
 	return out, nil
+}
+
+// Chunks sends req and returns every reply line of a chunked reply as it came, reading until a
+// line has "more" false (or no "more"). It is for chunked replies whose fields are not a sample
+// array (power_profile's t_us/current_ua/stats). An error line is the pod's refusal.
+func (c *Client) Chunks(ctx context.Context, req map[string]any) ([]json.RawMessage, error) {
+	conn, reader, err := c.dialAndSend(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	defer watchContext(ctx, conn)()
+
+	var out []json.RawMessage
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil && len(strings.TrimSpace(string(line))) == 0 {
+			return nil, readErr(ctx, err)
+		}
+		var head reply
+		if jerr := json.Unmarshal(line, &head); jerr != nil {
+			return nil, fmt.Errorf("parse reply: %w", jerr)
+		}
+		switch head.Status {
+		case "error":
+			return nil, replyError(&head)
+		case "ok", "chunk":
+		default:
+			return nil, fmt.Errorf("unexpected response status %q", head.Status)
+		}
+		out = append(out, json.RawMessage(append([]byte(nil), line...)))
+		if !head.More {
+			return out, nil
+		}
+		if err != nil {
+			return nil, readErr(ctx, err)
+		}
+	}
 }
 
 // dialAndSend opens the TCP connection, applies the context deadline, writes req
