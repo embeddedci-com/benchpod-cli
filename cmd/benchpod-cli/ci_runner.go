@@ -217,7 +217,7 @@ func (r *ciRunner) prepareFirmware(ctx context.Context) *ciExit {
 				return setupErr("%v", err)
 			}
 			res := runChild(ctx, shellCommand(fw.Build), r.cfg.Dir, mergeEnv(os.Environ(), r.cfg.Env), io.MultiWriter(log, r.stderr), io.MultiWriter(log, r.stderr))
-			log.Close()
+			_ = log.Close()
 			if res.ExitCode != 0 {
 				why := fmt.Sprintf("exit status %d", res.ExitCode)
 				if res.Err != nil {
@@ -501,11 +501,12 @@ func (r *ciRunner) cleanup() {
 	if err != nil {
 		return
 	}
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pod := r.conn.pod
 	note := func(action string, err error) {
+		r.noteLeaseError(err)
 		if err != nil {
 			fmt.Fprintf(log, "%s: %v\n", action, err)
 		} else {
@@ -553,6 +554,9 @@ func (r *ciRunner) checkHealthAtEnd() {
 		r.run.Health.Invalidate("the pod rebooted during the run")
 	case r.started.BootID != "" && st.BootID != "" && st.BootID != r.started.BootID:
 		r.run.Health.Invalidate("the pod rebooted during the run")
+	}
+	if r.lease != nil {
+		r.lease.Verify(ctx)
 	}
 	if lost := r.leaseLost(); lost != "" {
 		r.run.Health.LeaseLost = true

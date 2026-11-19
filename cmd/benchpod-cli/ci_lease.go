@@ -40,6 +40,8 @@ type ciLease interface {
 	Lost() string
 	// MarkLost records a loss seen elsewhere (a command answered "lease lost").
 	MarkLost(why string)
+	// Verify renews once now, so a lease stopped since the last renew is seen at the run's end.
+	Verify(ctx context.Context)
 	Release(ctx context.Context)
 }
 
@@ -198,16 +200,27 @@ func acquireLocalLease(ctx context.Context, cmd podCommander, join *tcpclient.Le
 		}
 	}
 	tcpclient.SetLeaseJoin(join)
-	l.loop(interval, func() (string, error) {
-		rctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_, err := l.cmd.Command(rctx, map[string]any{"cmd": "lease_renew", "id": l.id, "ttl_s": l.join.TTL})
-		if pe, ok := tcpclient.AsPodError(err); ok {
-			return "the pod lease was lost (" + strings.TrimSpace(pe.Reason) + "): the pod rebooted, or someone stopped the run's lease", nil
-		}
-		return "", err
-	})
+	l.loop(interval, func() (string, error) { return l.renew(context.Background()) })
 	return l, nil
+}
+
+func (l *localLease) renew(ctx context.Context) (string, error) {
+	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_, err := l.cmd.Command(rctx, map[string]any{"cmd": "lease_renew", "id": l.id, "ttl_s": l.join.TTL})
+	if pe, ok := tcpclient.AsPodError(err); ok {
+		return "the pod lease was lost (" + strings.TrimSpace(pe.Reason) + "): the pod rebooted, or someone stopped the run's lease", nil
+	}
+	return "", err
+}
+
+func (l *localLease) Verify(ctx context.Context) {
+	if !l.supported || l.Lost() != "" {
+		return
+	}
+	if gone, _ := l.renew(ctx); gone != "" {
+		l.MarkLost(gone)
+	}
 }
 
 func (l *localLease) Release(ctx context.Context) {
@@ -335,24 +348,35 @@ func acquireCloudLease(ctx context.Context, api *serverapi.Client, credential, d
 		case <-time.After(ciLeasePoll):
 		}
 	}
-	l.loop(interval, func() (string, error) {
-		rctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		tok, err := l.sessionToken(rctx)
-		if err != nil {
-			return "", err
-		}
-		busy, err := api.CloudLease(rctx, tok, "renew", device, l.req)
-		var apiErr *serverapi.APIError
-		switch {
-		case busy != nil:
-			return "the lease was lost on embeddedci.com: " + busy.Holder + " holds the pod now", nil
-		case errors.As(err, &apiErr) && apiErr.Status == http.StatusGone:
-			return "the lease expired on embeddedci.com", nil
-		}
-		return "", err
-	})
+	l.loop(interval, func() (string, error) { return l.renew(context.Background()) })
 	return l, nil
+}
+
+func (l *cloudLease) renew(ctx context.Context) (string, error) {
+	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	tok, err := l.sessionToken(rctx)
+	if err != nil {
+		return "", err
+	}
+	busy, err := l.api.CloudLease(rctx, tok, "renew", l.device, l.req)
+	var apiErr *serverapi.APIError
+	switch {
+	case busy != nil:
+		return "the lease was lost on embeddedci.com: " + busy.Holder + " holds the pod now", nil
+	case errors.As(err, &apiErr) && apiErr.Status == http.StatusGone:
+		return "the lease expired on embeddedci.com", nil
+	}
+	return "", err
+}
+
+func (l *cloudLease) Verify(ctx context.Context) {
+	if !l.supported || l.Lost() != "" {
+		return
+	}
+	if gone, _ := l.renew(ctx); gone != "" {
+		l.MarkLost(gone)
+	}
 }
 
 func (l *cloudLease) Release(ctx context.Context) {

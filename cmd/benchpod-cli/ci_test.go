@@ -156,6 +156,7 @@ func (l *fakeLease) Supported() bool         { return l.supported }
 func (l *fakeLease) Lost() string            { return l.lost }
 func (l *fakeLease) MarkLost(why string)     { l.lost = why }
 func (l *fakeLease) Release(context.Context) { l.released = true }
+func (l *fakeLease) Verify(context.Context)  {}
 
 // ciFixture is a run folder, a YAML and a fake pod.
 type ciFixture struct {

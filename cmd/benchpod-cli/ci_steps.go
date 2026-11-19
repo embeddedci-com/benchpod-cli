@@ -41,7 +41,7 @@ func (r *ciRunner) nativeStep(ctx context.Context, s *ci.Step, attempt int) ci.C
 	if err != nil {
 		stepLog = &cappedLog{}
 	}
-	defer stepLog.Close()
+	defer func() { _ = stepLog.Close() }()
 
 	r.rec.Begin()
 	start := time.Now()
@@ -284,7 +284,7 @@ func (r *ciRunner) powerCycle(ctx context.Context, pc *ci.PowerCycle, w io.Write
 	if err != nil {
 		return nil, fmt.Errorf("open the UART: %w", err)
 	}
-	defer uart.Close()
+	defer func() { _ = uart.Close() }()
 	reader := startUARTReader(uart, w)
 	if err := r.powerOn(ctx, w); err != nil {
 		return nil, err
@@ -309,7 +309,7 @@ func (r *ciRunner) uartExpect(ctx context.Context, u *ci.UARTExpect, w io.Writer
 	if err != nil {
 		return nil, fmt.Errorf("open the UART: %w", err)
 	}
-	defer uart.Close()
+	defer func() { _ = uart.Close() }()
 	reader := startUARTReader(uart, w)
 	start := time.Now()
 	if u.Send != "" {
@@ -585,7 +585,7 @@ func (r *ciRunner) pytestStep(ctx context.Context, s *ci.Step, attempt int) {
 	if err != nil {
 		stepLog = &cappedLog{}
 	}
-	defer stepLog.Close()
+	defer func() { _ = stepLog.Close() }()
 	fmt.Fprintf(stepLog, "$ %s\n", strings.Join(argv, " "))
 	res := runChild(ctx, argv, r.cfg.Dir, env, io.MultiWriter(stepLog, r.stderr), io.MultiWriter(stepLog, r.stderr))
 
@@ -670,7 +670,7 @@ func (r *ciRunner) runCommandStep(ctx context.Context, s *ci.Step, attempt int) 
 	if err != nil {
 		stepLog = &cappedLog{}
 	}
-	defer stepLog.Close()
+	defer func() { _ = stepLog.Close() }()
 	fmt.Fprintf(stepLog, "$ %s\n", s.Run)
 	var stdout bytes.Buffer
 	outW := io.MultiWriter(stepLog, r.stderr)
