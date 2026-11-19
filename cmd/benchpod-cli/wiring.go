@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/errcatalog"
-	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
 
@@ -69,10 +68,10 @@ func wiringList(ctx context.Context, c podCommander) (*wiringListReply, error) {
 // errNoWiringStore: the pod's firmware stores no wiring profiles.
 var errNoWiringStore = errors.New("this pod's firmware does not store wiring profiles; update it with `benchpod flash-self`")
 
-// wiringStoreList is wiringList, with an older firmware's "unknown cmd" as errNoWiringStore.
+// wiringStoreList is wiringList, with an older firmware's BP0002 ("unknown cmd") as errNoWiringStore.
 func wiringStoreList(ctx context.Context, c podCommander) (*wiringListReply, error) {
 	l, err := wiringList(ctx, c)
-	if pe, ok := tcpclient.AsPodError(err); ok && (pe.Code == "BP0002" || strings.TrimSpace(pe.Reason) == "unknown cmd") {
+	if isUnknownCommand(err) {
 		return nil, errNoWiringStore
 	}
 	return l, err

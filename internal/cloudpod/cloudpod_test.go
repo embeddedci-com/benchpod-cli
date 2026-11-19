@@ -113,6 +113,19 @@ func TestPodRefusalIsAPodError(t *testing.T) {
 	}
 }
 
+// A coded refusal keeps its code and args through embeddedci.com, and its kind follows the code.
+func TestCodedPodRefusalThroughTheCloud(t *testing.T) {
+	f := &fakeServer{reply: func(w http.ResponseWriter) {
+		_, _ = w.Write([]byte(`{"status":"error","code":"BP0025","args":{"holder":"a cloud job","purpose":"ci","left_s":7}}`))
+	}}
+	c := &Client{API: f.start(t), Credential: "tok", DeviceID: "id-b", Name: "bench-b"}
+	_, err := c.Command(context.Background(), map[string]any{"cmd": "la"})
+	pe, ok := tcpclient.AsPodError(err)
+	if !ok || pe.Code != "BP0025" || pe.Args["holder"] != "a cloud job" || pe.Kind() != tcpclient.Busy {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
 func TestTransportFailures(t *testing.T) {
 	for _, c := range []struct {
 		status      int

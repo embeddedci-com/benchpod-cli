@@ -266,7 +266,7 @@ const (
 )
 
 func isLeaseBusy(pe *tcpclient.PodError) bool {
-	return pe.Code == codeLeaseBusy || pe.Kind() == tcpclient.Busy
+	return pe.Code == codeLeaseBusy || pe.Kind() == tcpclient.Busy // Kind: the text fallback without a code
 }
 
 // busyText is "<holder> holds this pod (<purpose>, N s left)" from a lease_busy refusal.
@@ -285,6 +285,7 @@ func busyText(pe *tcpclient.PodError) string {
 		}
 		return s
 	}
+	// fallback: BP0025's holder/purpose/left_s args replace it (firmware without codes)
 	return strings.TrimPrefix(strings.TrimSpace(pe.Reason), "busy: ")
 }
 
@@ -301,8 +302,11 @@ func leaseLostText(pe *tcpclient.PodError) string {
 
 // isLeaseLost is a command refused because the run's lease was stopped (BP0026) or expired (BP0027).
 func isLeaseLost(pe *tcpclient.PodError) bool {
-	r := strings.TrimSpace(pe.Reason)
-	return pe.Code == codeLeaseLost || pe.Code == codeLeaseNotHeld || strings.HasPrefix(r, "lease lost")
+	if pe.Code == codeLeaseLost || pe.Code == codeLeaseNotHeld {
+		return true
+	}
+	// fallback: BP0026 / BP0027 replace it (firmware without codes)
+	return strings.HasPrefix(strings.TrimSpace(pe.Reason), "lease lost")
 }
 
 // ── the server's lease (embeddedci.com) ─────────────────────────────────────

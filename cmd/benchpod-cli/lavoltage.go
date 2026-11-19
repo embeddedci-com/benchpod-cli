@@ -266,7 +266,7 @@ func laVoltageError(what string, err error) error {
 		return errors.New(laVoltageMissing)
 	}
 	if pe, ok := tcpclient.AsPodError(err); ok {
-		if pe.Reason == "unknown cmd" {
+		if isUnknownCommand(err) {
 			return errors.New(laVoltageMissing)
 		}
 		return refusedError(what, pe, pe.Cmd == "")

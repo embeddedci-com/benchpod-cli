@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -45,6 +46,16 @@ var cat = func() catalog {
 func Lookup(code string) (Entry, bool) {
 	e, ok := cat.Codes[strings.ToUpper(strings.TrimSpace(code))]
 	return e, ok
+}
+
+// Codes is every code in the catalog, sorted.
+func Codes() []string {
+	out := make([]string, 0, len(cat.Codes))
+	for c := range cat.Codes {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Count is how many codes the catalog has.

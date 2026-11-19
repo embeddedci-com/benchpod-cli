@@ -29,10 +29,12 @@ func TestLogLevelSet(t *testing.T) {
 }
 
 func TestLogLevelOnOlderFirmware(t *testing.T) {
-	addr, _ := fakeLANPod(t, `{"status":"error","message":"unknown cmd"}`)
-	err := runLogLevel(&globalFlags{connection: addr}, "", &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "newer than 3.10.12") {
-		t.Fatalf("got %v", err)
+	for _, reply := range unknownCmdReplies {
+		addr, _ := fakeLANPod(t, reply)
+		err := runLogLevel(&globalFlags{connection: addr}, "", &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "newer than 3.10.12") {
+			t.Fatalf("got %v", err)
+		}
 	}
 }
 

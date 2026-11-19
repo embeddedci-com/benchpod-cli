@@ -313,10 +313,12 @@ func TestPolicyLANShowOnly(t *testing.T) {
 }
 
 func TestPolicyLANOldFirmware(t *testing.T) {
-	addr, _ := fakeLANPod(t, `{"status":"error","message":"unknown cmd"}`)
-	_, _, err := runPolicyCapture(t, &globalFlags{connection: addr}, lanPolicy, policyTarget{}, "")
-	if err == nil || err.Error() != "this firmware has no LAN policy; update the pod's firmware" {
-		t.Fatalf("err = %v", err)
+	for _, reply := range unknownCmdReplies {
+		addr, _ := fakeLANPod(t, reply)
+		_, _, err := runPolicyCapture(t, &globalFlags{connection: addr}, lanPolicy, policyTarget{}, "")
+		if err == nil || err.Error() != "this firmware has no LAN policy; update the pod's firmware" {
+			t.Fatalf("err = %v", err)
+		}
 	}
 }
 

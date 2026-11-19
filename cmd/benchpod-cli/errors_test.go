@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/errcatalog"
 	"github.com/embeddedci-com/benchpod-cli/internal/fwrefusals"
 	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
@@ -137,4 +138,72 @@ func TestShownRefusalsKeepTheirExitCode(t *testing.T) {
 			t.Errorf("hint added twice: %v", got)
 		}
 	}
+}
+
+// Every code in the catalog: the exit code follows its kind, and the refusal shows the catalog's
+// message and fix.cli with the args filled in, whatever the pod's text.
+func TestEveryCodedRefusal(t *testing.T) {
+	wantExit := map[tcpclient.RefusalKind]int{
+		tcpclient.Refused: exitRefused, tcpclient.Locked: exitRefused,
+		tcpclient.Forbidden: exitRefused, tcpclient.Busy: exitBusy,
+	}
+	args := map[string]any{"cmd": "x", "arg": "la", "name": "k66", "rev": 3, "max": 8, "bytes": 9000,
+		"expected": 0, "feature": "i2c", "min": 55, "la": 4, "rx": 1, "tx": 2, "have": "up", "want": "down",
+		"holder": "benchpod ci: alice", "purpose": "smoke", "left_s": 30, "by": "bob", "id": "L-1", "mv": 12,
+		"client_api": 1, "min_client_api": 2, "api": 2}
+	for _, code := range errcatalog.Codes() {
+		t.Run(code, func(t *testing.T) {
+			e, _ := errcatalog.Lookup(code)
+			kind, ok := tcpclient.CodeKind(code)
+			if !ok {
+				t.Fatal("no kind")
+			}
+			pe := &tcpclient.PodError{Reason: "pod returned an error", Code: code, Args: args}
+			if got := exitCode(fmt.Errorf("x: %w", pe)); got != wantExit[kind] {
+				t.Errorf("exit %d, want %d", got, wantExit[kind])
+			}
+			fix := errcatalog.Fill(e.Fix["cli"], args)
+			if got := refusalHint(pe, true); got != fix {
+				t.Errorf("hint %q, want %q", got, fix)
+			}
+			msg := refusedError("cmd", pe, true).Error()
+			if !strings.Contains(msg, code+": "+errcatalog.Fill(e.Message, args)) || !strings.Contains(msg, fix) {
+				t.Errorf("refusedError = %q", msg)
+			}
+			if msg := withRefusalHint(fmt.Errorf("cmd: %w", pe)).Error(); !strings.Contains(msg, fix) {
+				t.Errorf("withRefusalHint = %q", msg)
+			}
+		})
+	}
+}
+
+// The text fallbacks still classify a refusal without a code as before (older firmware).
+func TestUncodedRefusalsKeepTheirExitCodes(t *testing.T) {
+	for id, want := range map[string]int{
+		"lan_locked": exitRefused, "lan_locked_v39": exitRefused, "tunnel_forbidden": exitRefused,
+		"lease_busy": exitBusy, "heavy_busy": exitBusy, "psram_bus_busy": exitBusy, "swd_busy": exitBusy,
+		"uart_busy": exitBusy, "spi_busy": exitBusy, "swd_or_spi_busy": exitBusy, "unknown_cmd": exitRefused,
+		"la_voltage_unset": exitRefused, "pin_conflict": exitRefused,
+	} {
+		if got := exitCode(&tcpclient.PodError{Reason: fwrefusals.Example(id)}); got != want {
+			t.Errorf("%s: exit %d, want %d", id, got, want)
+		}
+	}
+}
+
+// One helper says "the firmware lacks this command": BP0002, or the old text.
+func TestIsUnknownCommandHelper(t *testing.T) {
+	if !isUnknownCommand(fmt.Errorf("x: %w", &tcpclient.PodError{Code: "BP0002", Reason: "pod returned an error"})) ||
+		!isUnknownCommand(&tcpclient.PodError{Reason: fwrefusals.Example("unknown_cmd")}) ||
+		isUnknownCommand(&tcpclient.PodError{Code: "BP0006", Reason: "missing la"}) ||
+		isUnknownCommand(errors.New("unknown cmd")) {
+		t.Fatal("isUnknownCommand")
+	}
+}
+
+// unknownCmdReplies are a pod's answers to a command its firmware lacks: the text of firmware
+// without codes, and BP0002 (with no text: a build without texts).
+var unknownCmdReplies = []string{
+	`{"status":"error","message":"unknown cmd"}`,
+	`{"status":"error","code":"BP0002","args":{"cmd":"x"}}`,
 }

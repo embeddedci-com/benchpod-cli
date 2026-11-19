@@ -1042,7 +1042,14 @@ stderr with a `[benchpod]` prefix.
 `benchpod ci` has its own exit codes (a CI result, not a command's): see
 [Exit codes of `benchpod ci`](#exit-codes-of-benchpod-ci).
 
-A refusal is printed word for word as the pod sent it. For a `locked:` (LAN policy),
+Firmware 3.10.8 and later sends more and more refusals with a stable error code (`BP0001` and up).
+The CLI then shows the code, what went wrong and what to run, from the error catalog it ships
+with, plus a link to the code's page; `benchpod explain <code>` prints the whole entry. The
+exit code follows the code: a session, the bus engine, the storage or a lease in use
+(`BP0003`, `BP0004`, `BP0005`, `BP0016`, `BP0025`) is `4`, every other code `3`.
+
+A refusal without a code (older firmware, or one that has no code yet) is printed word for
+word as the pod sent it. For a `locked:` (LAN policy),
 `busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
 So it does for `la voltage not set` (run `benchpod la voltage 3.3V` or 1.8V, or set it on
 the web app's Wiring tab) and for a `pin conflict: LA4 is in use by ...`, where the raw

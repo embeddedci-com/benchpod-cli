@@ -252,7 +252,7 @@ func runFlashESP(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 			req[k] = v
 		}
 		if _, err := c.Command(ctx, req); err != nil {
-			if pe, ok := tcpclient.AsPodError(err); ok && strings.Contains(pe.Error(), "unknown cmd") {
+			if isUnknownCommand(err) {
 				return fmt.Errorf("flash: this pod's firmware cannot flash an ESP32 (no esp_flash command): update it with `benchpod flash-self`")
 			}
 			return fmt.Errorf("flash: %w", err)

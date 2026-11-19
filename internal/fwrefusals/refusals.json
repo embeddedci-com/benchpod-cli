@@ -7,7 +7,7 @@
     {"id": "lan_locked", "file": "stm32h563/src/cmd_gate.c", "removed": "3.9.0", "kind": "json",
      "format": "locked: %s needs the cloud or the USB console",
      "example": "locked: cloud_set needs the cloud or the USB console"},
-    {"id": "lease_busy", "file": "stm32h563/src/cmd_gate.c", "kind": "json",
+    {"id": "lease_busy", "file": "stm32h563/src/cmd_gate.c", "removed": "3.10.14", "kind": "json",
      "format": "busy: a cloud job holds this pod (%s, %lu s left)",
      "example": "busy: a cloud job holds this pod (ci-run-42, 37 s left)"},
     {"id": "tunnel_forbidden", "file": "stm32h563/src/cmd_gate.c", "kind": "json",

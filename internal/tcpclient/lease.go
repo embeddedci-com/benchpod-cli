@@ -36,8 +36,12 @@ func IsUnknownCommand(err error) bool {
 	if !ok {
 		return false
 	}
+	if pe.Code == "BP0002" {
+		return true
+	}
+	// fallback: BP0002 replaces it (firmware without codes)
 	r := strings.ToLower(strings.TrimSpace(pe.Reason))
-	return pe.Code == "BP0002" || strings.HasPrefix(r, "unknown cmd") || strings.HasPrefix(r, "unknown command")
+	return strings.HasPrefix(r, "unknown cmd") || strings.HasPrefix(r, "unknown command")
 }
 
 func (c *Client) tagLease(req map[string]any) map[string]any { return tagLease(req, c.NoLeaseJoin) }
