@@ -24,6 +24,8 @@ const ciExitCodesHelp = "Exit codes:\n" +
 	"  0  passed\n" +
 	"  1  a file, usage or setup error (the YAML, the firmware build, no pod)\n" +
 	"  2  a test failed (or errored)\n" +
+	"  3  the run passed, but a gated measurement drifted beyond its allowance against the\n" +
+	"     baseline (baseline: with fail_on_drift, or gate: drift)\n" +
 	"  4  the run is not valid: the pod is in use, require is not met, the pod rebooted\n" +
 	"     or was lost, the lease was lost, a capture lost data, or the run was interrupted"
 
@@ -99,6 +101,13 @@ func runCICommand(g *globalFlags, o *ciOptions, cmd *cobra.Command) error {
 	r.signedIn = ciSignedIn
 	r.upload = func(ctx context.Context, dir string) (*ci.Uploaded, error) {
 		return uploadRunFolder(ctx, dir, r.stderr)
+	}
+	r.compare = func(ctx context.Context, id, with string) (json.RawMessage, error) {
+		api, cred, err := runsAPI(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return api.CompareRun(ctx, cred, id, with)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

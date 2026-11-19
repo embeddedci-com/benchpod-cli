@@ -29,6 +29,9 @@ type Client struct {
 	Credential string // a `benchpod login` access token, or "ApiKey eci_..." (see serverapi.Authorization)
 	DeviceID   string // the pod's id on embeddedci.com
 	Name       string // the pod's name on embeddedci.com, for messages
+	// ByName: the credential is a cloud token (GitHub Actions), which reaches the pod by name on
+	// the /api/cloud/devices routes instead of by id on the user's device routes.
+	ByName bool
 }
 
 // Resolve finds the pod named name (or with that id) among the devices the credential can see.
@@ -135,7 +138,13 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 			timeout = maxTimeout
 		}
 	}
-	resp, err := c.API.DeviceCommand(ctx, c.Credential, c.DeviceID, req, timeout)
+	var resp *serverapi.CommandResponse
+	var err error
+	if c.ByName {
+		resp, err = c.API.CloudDeviceCommand(ctx, c.Credential, c.Name, req, timeout)
+	} else {
+		resp, err = c.API.DeviceCommand(ctx, c.Credential, c.DeviceID, req, timeout)
+	}
 	if err != nil {
 		return nil, c.Explain(ctx, err)
 	}

@@ -313,6 +313,7 @@ type cloudLease struct {
 	credential string // the user's
 	device     string // the pod's name on embeddedci.com
 	req        serverapi.LeaseRequest
+	github     bool // credential is a GitHub Actions token
 
 	sessMu  sync.Mutex
 	session string
@@ -325,6 +326,10 @@ func (l *cloudLease) sessionToken(ctx context.Context) (string, error) {
 	defer l.sessMu.Unlock()
 	if l.session != "" && time.Until(l.expires) > 5*time.Minute {
 		return l.session, nil
+	}
+	if l.github {
+		// The lease routes take the github_action token itself (minted again near its end).
+		return githubActionCredential(ctx, l.api)
 	}
 	s, err := l.api.MintCloudSession(ctx, l.credential, 3600)
 	if err != nil {
@@ -341,7 +346,7 @@ func (l *cloudLease) sessionToken(ctx context.Context) (string, error) {
 // acquireCloudLease takes the server's lease on device, waiting up to wait.
 func acquireCloudLease(ctx context.Context, api *serverapi.Client, credential, device, id string, wait, interval time.Duration, warn io.Writer) (*cloudLease, error) {
 	l := &cloudLease{leaseState: leaseState{id: id}, api: api, credential: credential, device: device,
-		req: serverapi.LeaseRequest{LeaseID: id, RunLabel: leaseHolder(), TTLSeconds: ciLeaseTTL}}
+		req: serverapi.LeaseRequest{LeaseID: id, RunLabel: leaseHolder(), TTLSeconds: ciLeaseTTL}, github: isGitHubActionCredential(credential)}
 	deadline := time.Now().Add(wait)
 	warned := false
 	for {

@@ -420,7 +420,7 @@ const (
 	ExitPassed     = 0
 	ExitSetup      = 1 // file, usage or setup error
 	ExitFailed     = 2 // a test failed (or errored)
-	ExitRegression = 3 // drift beyond fail_on_drift against the baseline (later)
+	ExitRegression = 3 // the run passed, but a gated measurement drifted beyond its allowance against the baseline
 	ExitInvalid    = 4 // the run cannot be trusted: require not met, pod or lease lost, pod busy
 )
 
