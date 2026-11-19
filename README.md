@@ -347,6 +347,7 @@ benchpod la pull 3 up                             # LA pin pull resistor: up, do
 benchpod la status
 benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 benchpod la pins                                  # every LA pin: function, level, pull-up, direction, warnings
+benchpod la pins 1-4                              # only LA1-LA4
 benchpod la dir 9,10 dut_output                   # the pod refuses push-pull drivers on these pins
 benchpod i2c start --sda 1 --scl 2 --hz 400000    # the pod as an I2C master (gateware v55+)
 benchpod i2c xfer 0x48 --write 0d --read 2        # hex in, hex out
@@ -1530,15 +1531,18 @@ Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
 | `--dir-la`    | (none)  | Direction pin, driven before stepping.                       |
 | `--direction` | `0`     | Level for `--dir-la`: `0` or `1`.                            |
 
-### `benchpod la pins`
+### `benchpod la pins [PINS]`
 
-List all 14 LA pins: what each one is used for (and by whom), its GPIO mode and
+List all 14 LA pins, or only PINS (a pin, a list or a range: `9`, `9,10`, `9-12`,
+`la9`, or a name from the pod's wiring profile): what each one is used for (and by whom), its GPIO mode and
 level, its live level, its pull resistor, its direction (see `la dir`) and its
 warnings. A warning line follows the table for each pin that has one: a pull-up on
 under a push-pull output (it only costs current), or a pin driven high or pulled up
 while the pod's target power is off (that powers an unpowered DUT through its pins;
 ignore it when the DUT has its own supply). Directions and warnings need gateware v55
-or later; older pods show every pin as `unknown`.
+or later; older pods show every pin as `unknown`. A list too large for one cloud reply
+(a long sensor instance name on every pin) is read in two parts by itself (firmware after
+3.10.12; older firmware answers "reply too large" then).
 
 | Flag     | Default | Purpose                          |
 |----------|---------|----------------------------------|

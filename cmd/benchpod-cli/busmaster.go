@@ -562,19 +562,100 @@ func printLAPins(w io.Writer, rep laPinsReply) {
 	}
 }
 
+// laPinsCommander is the one call laPinsFetch needs (the pod client).
+type laPinsCommander interface {
+	Command(ctx context.Context, req map[string]any) (json.RawMessage, error)
+}
+
+// laPinsFetch reads la_pins: every pin (pins nil) or only those pins. Firmware after 3.10.12 sends
+// only the pins asked for; older firmware sends all 14 and they are filtered here. A full listing
+// the pod answers with "reply too large" (a long sensor instance name on every pin) is read in two
+// parts, LA1-7 and LA8-14, and joined.
+func laPinsFetch(ctx context.Context, c laPinsCommander, pins []int) (json.RawMessage, error) {
+	if pins == nil {
+		raw, err := c.Command(ctx, map[string]any{"cmd": "la_pins"})
+		if err == nil || !strings.Contains(err.Error(), "reply too large") {
+			return raw, err
+		}
+		first, err1 := laPinsQuery(ctx, c, []int{1, 2, 3, 4, 5, 6, 7})
+		if err1 != nil {
+			return nil, err
+		}
+		if n, _ := first["pins"].([]any); len(n) > 7 {
+			return nil, err // firmware without the pin subset: it sent everything again
+		}
+		second, err2 := laPinsQuery(ctx, c, []int{8, 9, 10, 11, 12, 13, 14})
+		if err2 != nil {
+			return nil, err2
+		}
+		a, _ := first["pins"].([]any)
+		b, _ := second["pins"].([]any)
+		first["pins"] = append(a, b...)
+		return json.Marshal(first)
+	}
+	m, err := laPinsQuery(ctx, c, pins)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(m)
+}
+
+// laPinsQuery sends la_pins with "la" and keeps only the entries of those pins.
+func laPinsQuery(ctx context.Context, c laPinsCommander, pins []int) (map[string]any, error) {
+	raw, err := c.Command(ctx, map[string]any{"cmd": "la_pins", "la": pins})
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("unexpected reply %s", strings.TrimSpace(string(raw)))
+	}
+	want := map[int]bool{}
+	for _, p := range pins {
+		want[p] = true
+	}
+	var keep []any
+	entries, _ := m["pins"].([]any)
+	for _, e := range entries {
+		if em, ok := e.(map[string]any); ok {
+			if la, ok := em["la"].(float64); ok && want[int(la)] {
+				keep = append(keep, e)
+			}
+		}
+	}
+	if keep == nil {
+		keep = []any{}
+	}
+	m["pins"] = keep
+	return m, nil
+}
+
 func newLAPinsCmd(g *globalFlags) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "pins",
+		Use:   "pins [PINS]",
 		Short: "List every LA pin: function, GPIO state, live level, pull-up, direction and warnings",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Long: "List every LA pin, or only PINS (a pin, a list or a range: 9, 9,10, 9-12, la9, or a\n" +
+			"name from the pod's wiring profile). A list too large for one cloud reply is read\n" +
+			"in two parts by itself (firmware after 3.10.12).",
+		Example: "  benchpod la pins\n  benchpod la pins 1-4\n  benchpod la pins uart_rx --json",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			var pins []int
+			if len(args) == 1 && !strings.EqualFold(strings.TrimSpace(args[0]), "all") {
+				r := &pinResolver{g: g}
+				p, err := r.pins("PINS", args[0])
+				if err != nil {
+					return usageErrorf("%v", err)
+				}
+				pins = p
+			}
 			ctx, cancel, t, err := g.podClient("la pins", i2cTimeout)
 			if err != nil {
 				return err
 			}
 			defer cancel()
-			raw, err := t.client.Command(ctx, map[string]any{"cmd": "la_pins"})
+			raw, err := laPinsFetch(ctx, t.client, pins)
 			if err != nil {
 				return fmt.Errorf("la pins: %w", err)
 			}
