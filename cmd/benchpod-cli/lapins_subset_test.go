@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -87,7 +88,9 @@ func TestLAPinsTooLargeReadsInTwoParts(t *testing.T) {
 	}
 	// Firmware without the subset cannot help: the error stands.
 	f = &fakeLAPins{tooLarge: true}
-	if _, err := laPinsFetch(context.Background(), f, nil); err == nil {
-		t.Fatal("want the too-large error")
+	_, err = laPinsFetch(context.Background(), f, nil)
+	if err == nil || !strings.Contains(err.Error(), "reply too large") ||
+		!strings.Contains(err.Error(), "firmware after 3.10.12 reads this list in parts") {
+		t.Fatalf("want the too-large error with the update hint, got %v", err)
 	}
 }

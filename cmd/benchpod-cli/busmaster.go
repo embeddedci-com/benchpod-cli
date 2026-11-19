@@ -579,10 +579,10 @@ func laPinsFetch(ctx context.Context, c laPinsCommander, pins []int) (json.RawMe
 		}
 		first, err1 := laPinsQuery(ctx, c, []int{1, 2, 3, 4, 5, 6, 7})
 		if err1 != nil {
-			return nil, err
+			return nil, laPinsUpdateHint(err)
 		}
 		if n, _ := first["pins"].([]any); len(n) > 7 {
-			return nil, err // firmware without the pin subset: it sent everything again
+			return nil, laPinsUpdateHint(err) // firmware without the pin subset: it sent everything again
 		}
 		second, err2 := laPinsQuery(ctx, c, []int{8, 9, 10, 11, 12, 13, 14})
 		if err2 != nil {
@@ -598,6 +598,13 @@ func laPinsFetch(ctx context.Context, c laPinsCommander, pins []int) (json.RawMe
 		return nil, err
 	}
 	return json.Marshal(m)
+}
+
+// laPinsUpdateHint says what to do when older firmware (no pin subset) cannot send the whole list.
+func laPinsUpdateHint(err error) error {
+	return fmt.Errorf("%w; firmware after 3.10.12 reads this list in parts: update the pod "+
+		"(benchpod flash-self, or the firmware update in the web app), or ask for fewer pins "+
+		"(benchpod la pins 1-7)", err)
 }
 
 // laPinsQuery sends la_pins with "la" and keeps only the entries of those pins.
