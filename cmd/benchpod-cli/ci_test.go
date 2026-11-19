@@ -149,6 +149,7 @@ type fakeLease struct {
 	supported bool
 	lost      string
 	released  bool
+	dropped   bool
 }
 
 func (l *fakeLease) ID() string              { return l.id }
@@ -157,6 +158,7 @@ func (l *fakeLease) Lost() string            { return l.lost }
 func (l *fakeLease) MarkLost(why string)     { l.lost = why }
 func (l *fakeLease) Release(context.Context) { l.released = true }
 func (l *fakeLease) Verify(context.Context)  {}
+func (l *fakeLease) Drop()                   { l.dropped = true }
 
 // ciFixture is a run folder, a YAML and a fake pod.
 type ciFixture struct {
@@ -438,7 +440,7 @@ func TestCIRequireNotMet(t *testing.T) {
 
 func TestCILeaseLostAndRebootAreInvalid(t *testing.T) {
 	f := newCIFixture(t, "version: 1\nsuite: s\ndut: d\nsteps:\n  - power_on: {}\n  - power_off: {}\n")
-	f.pod.refuse["target_power"] = &tcpclient.PodError{Reason: "lease lost: stopped by alice", Code: "BP0026"}
+	f.pod.refuse["target_power"] = &tcpclient.PodError{Reason: "lease lost: stopped by alice", Code: "BP0026", Args: map[string]any{"by": "alice"}}
 	f.pod.uptimes = []int64{50000, 10}
 	exit, run := f.run()
 	if exit.code != ci.ExitInvalid || !run.Health.LeaseLost {
@@ -450,6 +452,12 @@ func TestCILeaseLostAndRebootAreInvalid(t *testing.T) {
 	}
 	if c := caseByID(run, "power-off"); c.Outcome != ci.Skipped {
 		t.Errorf("after the loss %+v", c)
+	}
+	if !f.lease.dropped || !strings.Contains(reasons, "stopped by alice") {
+		t.Errorf("cleanup did not drop the lease: %v %s", f.lease.dropped, reasons)
+	}
+	if !strings.Contains(strings.Join(f.pod.cmds(), ","), "dac_stop") {
+		t.Errorf("no cleanup after the loss: %v", f.pod.cmds())
 	}
 }
 

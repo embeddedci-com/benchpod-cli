@@ -127,9 +127,9 @@ func planDial(addr string, mode TLSMode) dialPlan {
 	return dialPlan{tlsAddr: net.JoinHostPort(host, TLSPort), plainAddr: addr, fallback: true}
 }
 
-// dialConn connects to c.Addr as the TLS mode says, within budget. The returned connection is a
+// dial connects to c.Addr as the TLS mode says, within budget. The returned connection is a
 // *tls.Conn or a *net.TCPConn; c.lastTLS records which.
-func (c *Client) dialConn(ctx context.Context, budget time.Duration) (net.Conn, error) {
+func (c *Client) dial(ctx context.Context, budget time.Duration) (net.Conn, error) {
 	p := planDial(strings.TrimSpace(c.Addr), c.TLS)
 	if p.fallback {
 		if _, known := noTLS.Load(p.plainAddr); known && !pinned(p.tlsAddr) {

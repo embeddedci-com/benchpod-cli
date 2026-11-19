@@ -31,7 +31,8 @@ const (
 	ciLeasePoll     = 5 * time.Second   // how often --wait asks again
 )
 
-// ciLease is the lease a run holds.
+// ciLease is the lease a run holds. While it holds, every JSON command the CLI sends carries
+// "lease":<id> (tcpclient.SetLeaseJoin) or, through embeddedci.com, X-Benchpod-Lease.
 type ciLease interface {
 	ID() string
 	// Supported is false when the pod (or server) has no lease: the run goes on without one.
@@ -40,6 +41,8 @@ type ciLease interface {
 	Lost() string
 	// MarkLost records a loss seen elsewhere (a command answered "lease lost").
 	MarkLost(why string)
+	// Drop stops tagging commands with the lease (after it was lost: cleanup runs without it).
+	Drop()
 	// Verify renews once now, so a lease stopped since the last renew is seen at the run's end.
 	Verify(ctx context.Context)
 	Release(ctx context.Context)
@@ -209,7 +212,7 @@ func (l *localLease) renew(ctx context.Context) (string, error) {
 	defer cancel()
 	_, err := l.cmd.Command(rctx, map[string]any{"cmd": "lease_renew", "id": l.id, "ttl_s": l.join.TTL})
 	if pe, ok := tcpclient.AsPodError(err); ok {
-		return "the pod lease was lost (" + strings.TrimSpace(pe.Reason) + "): the pod rebooted, or someone stopped the run's lease", nil
+		return leaseLostText(pe), nil
 	}
 	return "", err
 }
@@ -262,6 +265,17 @@ func busyText(pe *tcpclient.PodError) string {
 		return s
 	}
 	return strings.TrimPrefix(strings.TrimSpace(pe.Reason), "busy: ")
+}
+
+// leaseLostText is why a lease_lost / lease_not_held refusal says the lease is gone.
+func leaseLostText(pe *tcpclient.PodError) string {
+	if pe.Code == codeLeaseLost {
+		if by, _ := pe.Args["by"].(string); by != "" {
+			return "stopped by " + by
+		}
+		return "the run's lease was stopped"
+	}
+	return "the pod lease was lost (" + strings.TrimSpace(pe.Reason) + "): the pod rebooted, or the lease expired"
 }
 
 // isLeaseLost is a command refused because the run's lease was stopped (BP0026) or expired (BP0027).
@@ -390,3 +404,7 @@ func (l *cloudLease) Release(ctx context.Context) {
 		_, _ = l.api.CloudLease(rctx, tok, "release", l.device, l.req)
 	}
 }
+
+func (l *localLease) Drop() { tcpclient.SetLeaseJoin(nil) }
+
+func (l *cloudLease) Drop() { l.api.LeaseID = "" }

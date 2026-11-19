@@ -65,7 +65,7 @@ func (s *Session) Command(ctx context.Context, req map[string]any) (json.RawMess
 	_ = s.conn.SetDeadline(deadline)
 	defer watchContext(ctx, s.conn)()
 
-	line, err := json.Marshal(req)
+	line, err := json.Marshal(tagLease(req, false))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}

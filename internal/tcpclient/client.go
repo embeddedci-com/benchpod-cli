@@ -51,8 +51,8 @@ type Client struct {
 	Addr        string        // host:port; callers should port-normalise first
 	DialTimeout time.Duration // total connect budget across retries; defaults to DefaultDialTimeout when zero
 	TLS         TLSMode       // TLSDefault: DefaultTLSMode (tls.go)
-	// NoLeaseJoin: this client's connections do not join the lease set with SetLeaseJoin (the
-	// lease commands themselves use it).
+	// NoLeaseJoin: this client's commands do not carry the lease set with SetLeaseJoin (the lease
+	// commands themselves, and read-only probes of other pods).
 	NoLeaseJoin bool
 
 	lastTLS bool // the last connection used TLS
@@ -223,7 +223,7 @@ func (c *Client) dialAndSend(ctx context.Context, req map[string]any) (net.Conn,
 		_ = conn.SetDeadline(deadline)
 	}
 
-	line, err := json.Marshal(req)
+	line, err := json.Marshal(c.tagLease(req))
 	if err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("marshal request: %w", err)

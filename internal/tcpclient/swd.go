@@ -59,7 +59,7 @@ func (c *Client) StartRaw(ctx context.Context, req map[string]any) (net.Conn, er
 		_ = conn.SetDeadline(deadline)
 	}
 
-	line, err := json.Marshal(req)
+	line, err := json.Marshal(c.tagLease(req))
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("marshal request: %w", err)

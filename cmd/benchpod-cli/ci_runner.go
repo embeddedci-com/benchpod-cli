@@ -504,6 +504,14 @@ func (r *ciRunner) cleanup() {
 	defer func() { _ = log.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if r.lease != nil {
+		r.lease.Verify(ctx)
+		if lost := r.lease.Lost(); lost != "" {
+			// Best effort without the lease: if someone else took the pod, the pod refuses these.
+			r.lease.Drop()
+			fmt.Fprintf(log, "the lease was lost (%s): cleaning up without it\n", lost)
+		}
+	}
 	pod := r.conn.pod
 	note := func(action string, err error) {
 		r.noteLeaseError(err)
@@ -577,7 +585,7 @@ func (r *ciRunner) noteLeaseError(err error) {
 		return
 	}
 	if pe, ok := tcpclient.AsPodError(err); ok && isLeaseLost(pe) {
-		r.lease.MarkLost("the pod lease was lost: " + strings.TrimSpace(pe.Reason))
+		r.lease.MarkLost(leaseLostText(pe))
 	}
 	var ce *cloudpod.Error
 	if errors.As(err, &ce) && ce.Code == "lease_held" {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -65,81 +66,52 @@ func (p *linePod) seen() [][]string {
 	return out
 }
 
-func TestLeaseJoinOnEveryConnection(t *testing.T) {
-	var gotID string
-	addr, pod := startLinePod(t, func(req map[string]any) string {
-		if req["cmd"] == "lease_acquire" {
-			gotID, _ = req["id"].(string)
-			return `{"status":"ok","data":{"ok":true,"lease":{"id":"L-1","left_s":300}}}`
-		}
-		return `{"status":"ok","data":{"version":"3.10.12"}}`
+func TestLeaseTagOnEveryCommand(t *testing.T) {
+	var mu sync.Mutex
+	var got []map[string]any
+	addr, _ := startLinePod(t, func(req map[string]any) string {
+		mu.Lock()
+		got = append(got, req)
+		mu.Unlock()
+		return `{"status":"ok","data":{}}`
 	})
-	SetLeaseJoin(&LeaseJoin{ID: "L-1", Holder: "benchpod ci: me", Purpose: "suite", TTL: 300})
+	SetLeaseJoin(&LeaseJoin{ID: "L-1", TTL: 300})
 	t.Cleanup(func() { SetLeaseJoin(nil) })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	c := &Client{Addr: addr, TLS: TLSOff}
-	for i := 0; i < 2; i++ {
-		data, err := c.Command(ctx, map[string]any{"cmd": "status"})
-		if err != nil || string(data) != `{"version":"3.10.12"}` {
-			t.Fatalf("command %d: %s %v", i, data, err)
-		}
-	}
-	if gotID != "L-1" {
-		t.Errorf("joined %q", gotID)
-	}
-	seen := pod.seen()
-	if len(seen) != 2 || len(seen[0]) != 2 || seen[0][0] != "lease_acquire" || seen[0][1] != "status" {
-		t.Errorf("connections %v", seen)
-	}
-	// The lease commands' own client does not join.
-	own := &Client{Addr: addr, TLS: TLSOff, NoLeaseJoin: true}
-	if _, err := own.Command(ctx, map[string]any{"cmd": "lease_renew"}); err != nil {
+	req := map[string]any{"cmd": "target_power", "efuse": 1}
+	if _, err := c.Command(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	if s := pod.seen(); len(s[2]) != 1 || s[2][0] != "lease_renew" {
-		t.Errorf("own client %v", s[2])
+	if _, has := req["lease"]; has {
+		t.Error("the caller's request was changed")
 	}
-}
-
-func TestLeaseJoinUnknownCommandIsRemembered(t *testing.T) {
-	addr, pod := startLinePod(t, func(req map[string]any) string {
-		if req["cmd"] == "lease_acquire" {
-			return `{"status":"error","code":"BP0002","args":{"cmd":"lease_acquire"},"message":"unknown cmd"}`
-		}
-		return `{"status":"ok","data":{}}`
-	})
-	SetLeaseJoin(&LeaseJoin{ID: "L-2", TTL: 300})
-	t.Cleanup(func() { SetLeaseJoin(nil) })
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	c := &Client{Addr: addr, TLS: TLSOff}
-	for i := 0; i < 2; i++ {
-		if _, err := c.Command(ctx, map[string]any{"cmd": "ping"}); err != nil {
-			t.Fatal(err)
-		}
+	s, err := c.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	seen := pod.seen()
-	if len(seen[0]) != 2 || len(seen[1]) != 1 || seen[1][0] != "ping" {
-		t.Errorf("connections %v", seen)
+	if _, err := s.Command(ctx, map[string]any{"cmd": "spi_xfer"}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestLeaseJoinBusyFailsTheCommand(t *testing.T) {
-	addr, _ := startLinePod(t, func(req map[string]any) string {
-		if req["cmd"] == "lease_acquire" {
-			return `{"status":"error","code":"BP0050","message":"busy: web holds this pod (demo, 40 s left)","busy":true}`
-		}
-		return `{"status":"ok","data":{}}`
-	})
-	SetLeaseJoin(&LeaseJoin{ID: "L-3", TTL: 300})
-	t.Cleanup(func() { SetLeaseJoin(nil) })
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := (&Client{Addr: addr, TLS: TLSOff}).Command(ctx, map[string]any{"cmd": "target_power"})
-	pe, ok := AsPodError(err)
-	if !ok || pe.Kind() != Busy {
-		t.Fatalf("want a busy refusal, got %v", err)
+	s.Close()
+	if _, err := (&Client{Addr: addr, TLS: TLSOff, NoLeaseJoin: true}).Command(ctx, map[string]any{"cmd": "lease_renew", "id": "L-1"}); err != nil {
+		t.Fatal(err)
+	}
+	SetLeaseJoin(nil)
+	if _, err := c.Command(ctx, map[string]any{"cmd": "status"}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 4 || got[0]["lease"] != "L-1" || got[0]["efuse"].(float64) != 1 || got[1]["lease"] != "L-1" {
+		t.Fatalf("tagged %v", got)
+	}
+	if _, has := got[2]["lease"]; has {
+		t.Errorf("NoLeaseJoin client tagged: %v", got[2])
+	}
+	if _, has := got[3]["lease"]; has {
+		t.Errorf("tagged after the lease ended: %v", got[3])
 	}
 }
 
@@ -168,6 +140,9 @@ func TestChunks(t *testing.T) {
 }
 
 func TestStartRaw(t *testing.T) {
+	SetLeaseJoin(&LeaseJoin{ID: "L-raw"})
+	t.Cleanup(func() { SetLeaseJoin(nil) })
+	rawReq := make(chan string, 1)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +155,8 @@ func TestStartRaw(t *testing.T) {
 		}
 		defer conn.Close()
 		r := bufio.NewReader(conn)
-		r.ReadBytes('\n')
+		line, _ := r.ReadBytes('\n')
+		rawReq <- string(line)
 		conn.Write([]byte(`{"status":"ok","data":"uart ready"}` + "\n" + "APP_OK\r\n"))
 		time.Sleep(200 * time.Millisecond)
 	}()
@@ -195,5 +171,8 @@ func TestStartRaw(t *testing.T) {
 	n, _ := conn.Read(buf)
 	if string(buf[:n]) != "APP_OK\r\n" {
 		t.Errorf("raw bytes %q", buf[:n])
+	}
+	if req := <-rawReq; !strings.Contains(req, `"lease":"L-raw"`) {
+		t.Errorf("uart_proxy_start not tagged: %s", req)
 	}
 }
