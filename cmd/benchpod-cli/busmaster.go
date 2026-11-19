@@ -227,7 +227,8 @@ func newI2CStartCmd(g *globalFlags) *cobra.Command {
 		Long: "Claim two LA pins as an I2C master. Pins are 1-14 (or la1) or names from the\n" +
 			"pod's wiring profile; left out, they are its i2c_sda and i2c_scl. The bus needs\n" +
 			"pull-ups: with --pullups pod (the default) both pins must be LA1-LA6 with their\n" +
-			"pull-up on (`benchpod la pull 1 up`), and the LA bank at 3.3 V. Pass\n" +
+			"pull-up on (`benchpod la pull 1 up`; at a 1.8 V LA bank, firmware newer than\n" +
+			"3.10.12). Pass\n" +
 			"--pullups external when the board has its own. The pod reports the rate it uses.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
