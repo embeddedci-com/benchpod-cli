@@ -929,7 +929,7 @@ shows them.
 
 | Flag     | Default | Purpose                                                       |
 |----------|---------|---------------------------------------------------------------|
-| `--json` | off     | Print the pod's raw `status` JSON instead of the summary (network and embeddedci.com). |
+| `--json` | off     | Print the pod's raw `status` JSON instead of the summary (network and embeddedci.com). It asks with `"caps":false`, so firmware after 3.10.10 answers with `features_rev` and, while a run holds the pod, `local_lease` (holder, purpose, seconds left) instead of the capability list. |
 
 ### `benchpod generate`
 
