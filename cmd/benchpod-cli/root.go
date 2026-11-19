@@ -140,7 +140,7 @@ func newRootCmd() *cobra.Command {
 		{"pod", "The pod:", []*cobra.Command{
 			newStatusCmd(g), newPingCmd(g), newLACmd(g), newIdentityCmd(g),
 			newFlashSelfCmd(g), newInstallBlobsCmd(g), newBootselCmd(g), newDfuCmd(g),
-			newLanPolicyCmd(g), newSigPolicyCmd(g), newUSBNetworkCmd(g), newLanTLSCmd(g),
+			newLanPolicyCmd(g), newSigPolicyCmd(g), newUSBNetworkCmd(g), newLogLevelCmd(g), newLanTLSCmd(g),
 			newWiringCmd(g), newExplainCmd(),
 		}},
 		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{

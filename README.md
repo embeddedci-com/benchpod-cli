@@ -1956,6 +1956,20 @@ the console), `on` over the USB console (the link does not exist while it is off
 Over Ethernet, Wi-Fi or `--connection embeddedci:<name>` it can only be read.
 `benchpod status` shows the adapter as "network off (turned off on the pod)".
 
+### `benchpod log-level [error|warn|info|debug]`
+
+Show or set how much the pod prints on its USB console (firmware newer than 3.10.12).
+`info` is the default. `debug` also prints the trace of every command
+(`[cmd] <- ...`, `[cmd] -> ok ...`) and each retry of the cloud, Wi-Fi and DHCP
+reconnect loops; `warn` and `error` print less. Errors always print. The level is
+stored on the pod, so it survives a reboot and a firmware update; it is the same
+setting as the console's `log` command. Any connection may read or set it.
+
+```bash
+benchpod log-level          # Console log level of the pod at ...: info
+benchpod log-level debug
+```
+
 ### `benchpod sig-policy`
 
 Show the pod's signature policy: `audit`, `permissive` or `required`. Same
