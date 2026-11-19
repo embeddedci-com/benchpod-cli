@@ -26,6 +26,8 @@ type fakeRunsServer struct {
 	queries  []string
 	failRun  bool
 	compared string
+	// compareBody, when set, is the compare reply.
+	compareBody string
 }
 
 func startRunsServer(t *testing.T) (*fakeRunsServer, *httptest.Server) {
@@ -69,6 +71,10 @@ func startRunsServer(t *testing.T) (*fakeRunsServer, *httptest.Server) {
 			    {"id":"t::x","outcome":"failed","message":"assert 1 == 2"}]}}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/compare"):
 			f.compared = r.URL.Path + "?" + r.URL.RawQuery
+			if f.compareBody != "" {
+				_, _ = w.Write([]byte(f.compareBody))
+				return
+			}
 			if r.URL.Query().Get("with") == "baseline:none" {
 				_, _ = w.Write([]byte(`{"found":false,"a":null,"b":"r-2","message":"no earlier valid run of s on d to compare with"}`))
 				return

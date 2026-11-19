@@ -865,13 +865,14 @@ timeout: 20m                     # the whole run (default 60m)
 keep: {traces: failed}           # all | failed | none
 cleanup: default                 # or none, or a list: [dac_stop, power_off, sensors_off, pulls_off]
 upload: auto                     # auto (when signed in) | true | false
-baseline: main                   # read now, used once runs are compared on embeddedci.com
+baseline: main                   # after the upload, compare with the last valid run on this branch
+gate: drift                      # optional: every drift allowance gates (exit 3); default: per metric
 steps:
   - id: boot                     # stable id: the case id across runs (default: from name)
     power_cycle: {until: "APP_OK", timeout: 10s, off_ms: 500}
     required: true
     expect:
-      boot_ms: {max: 600, drift: 20%}
+      boot_ms: {max: 600, drift: 20%, fail_on_drift: true}
   - id: idle-current
     measure_power: {duration: 2s}
     expect:
@@ -916,7 +917,9 @@ only `flash` (an uploaded build), the power steps without `until` and `wait` run
 
 `expect` sets limits on a step's metrics: `min` and `max` fail the case when the value is
 outside them; `drift` (`20%` or `0.2`) is the change allowed against an earlier run, shown by
-`benchpod ci diff`; `{}` records the value without limits. Every metric of a native step is
+`benchpod ci diff` and the baseline compare; `fail_on_drift: true` makes a change beyond it
+against the baseline fail the run (see [Baseline gating](#baseline-gating)); `{}` records the
+value without limits. Every metric of a native step is
 recorded, limited or not. On a pytest or run step the keys are `"<case id>/<measurement>"`
 and add limits to what the tests record; a case that does not record an expected
 measurement fails.
@@ -925,16 +928,56 @@ Durations are `500ms`, `10s`, `2m`, `1h30m`, or a number of seconds. Any string 
 `${VAR}` (from `env`, then the environment; an unset variable is an error) and
 `${VAR:-default}`; `$${` is a literal `${`, and a bare `$VAR` is left for the shell.
 
+### Baseline gating
+
+With `baseline: <branch>` the run, once uploaded, is compared on embeddedci.com with the last
+valid run of the same suite and DUT on that branch, and the summary prints the headline:
+
+```
+Baseline main (run 3f9c...): 0 newly failing, 1 fixed, 2 drifted, 1 beyond a gated drift
+```
+
+A measurement whose change against the baseline is beyond its `drift` allowance fails the run
+with exit code 3 when the metric says `fail_on_drift: true`, or the file says `gate: drift`
+(every measurement with a drift allowance gates, including the ones a test records with
+`measure()`; `fail_on_drift: false` on a metric opts it out). Exit code 3 only replaces a
+passing run's 0: a failed or invalid run keeps its 2 or 4. Without a baseline run on the
+branch yet, or when the run was not uploaded, the compare is skipped with a note and gates
+nothing.
+
+### In GitHub Actions
+
+`benchpod ci` runs the same in a workflow; the action
+[`embeddedci-com/submit-job-action/ci`](https://github.com/embeddedci-com/submit-job-action)
+installs the CLI and runs it. In Actions it also:
+
+- **Signs in without a secret.** With no `BENCHPOD_API_KEY` and no `benchpod login` session,
+  a job with `permissions: id-token: write` signs in with its GitHub OIDC token (audience
+  `https://embeddedci.com`, or `EMBEDDEDCI_OIDC_AUDIENCE`). embeddedci.com exchanges it for a
+  token of the organization that trusts the repository (its GitHub repositories in the
+  organization settings, with the pods the repository may drive). That token reaches cloud
+  pods (`--pod embeddedci:<name>`) and uploads the run. A self-hosted runner next to a LAN pod
+  needs no sign-in for the run itself, only for the upload.
+- **Records the workflow run.** run.json gets `trigger: github` and `inputs.github`: the run id,
+  attempt, URL, workflow and actor.
+- **Writes the step summary.** With `$GITHUB_STEP_SUMMARY` set, it appends a Markdown summary:
+  suite, DUT, outcome and counts, the run's URL, the failed cases with the first line of their
+  message, the measurements outside their limits or beyond their drift, and the baseline
+  headline.
+
+With the GitHub Actions token, a flash step on a cloud pod is not available yet (embeddedci.com
+flashes uploaded builds for a signed-in user or an API key): for such a suite set
+`BENCHPOD_API_KEY` from a repository secret, which is then used instead.
+
 ### Exit codes of `benchpod ci`
 
 | Code | Meaning |
 |---|---|
 | `0` | Every case passed (skipped and expected failures included). |
-| `1` | A file, usage or setup error: the YAML, the firmware build, no pod, a missing wiring profile. |
+| `1` | A file, usage or setup error: the YAML, the firmware build, no pod, a missing wiring profile, `upload: true` without a sign-in. |
 | `2` | A test failed or errored, or a required step failed. |
+| `3` | The run passed, but a gated measurement drifted beyond its allowance against the baseline (see [Baseline gating](#baseline-gating)). |
 | `4` | The run is not valid: the pod was in use, `require` was not met, the pod rebooted or stopped answering, the lease was lost, a capture lost samples, or the run was interrupted. |
-
-`3` is kept for regressions against a baseline in a later version.
 
 ## Command reference
 
