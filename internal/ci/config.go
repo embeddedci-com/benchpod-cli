@@ -369,7 +369,13 @@ func (p *parser) finishSteps(cfg *Config) {
 		}
 	}
 	if cfg.Firmware != nil && !hasFlash {
-		implicit := &Step{ID: "flash", Kind: KindFlash, Implicit: true, Required: true, Line: cfg.Firmware.Line}
+		id := "flash"
+		for _, s := range cfg.Steps {
+			if s.ID == id {
+				id = "flash-firmware"
+			}
+		}
+		implicit := &Step{ID: id, Kind: KindFlash, Implicit: true, Required: true, Line: cfg.Firmware.Line}
 		cfg.Steps = append([]*Step{implicit}, cfg.Steps...)
 	}
 	ids := map[string]int{}
@@ -388,11 +394,6 @@ func (p *parser) finishSteps(cfg *Config) {
 						break
 					}
 				}
-			}
-		}
-		if s.Implicit {
-			if _, dup := ids[s.ID]; dup {
-				s.ID = "flash-firmware"
 			}
 		}
 		if line, dup := ids[s.ID]; dup {
