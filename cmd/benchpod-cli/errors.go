@@ -244,6 +244,7 @@ const (
 	exitRefused     = 3 // the pod refused the command (locked LAN, missing role, bad request)
 	exitBusy        = 4 // the pod or one of its engines is in use (a cloud lease, another session)
 	exitUnreachable = 5 // the pod did not answer on its address, no pod on USB, or offline on embeddedci.com
+	exitUpdateCLI   = 6 // the pod's firmware needs a newer CLI (its API level is above this CLI's, or BP0030)
 )
 
 // exitCodesHelp is the exit-code table for the root command's help.
@@ -254,7 +255,8 @@ const exitCodesHelp = "Exit codes:\n" +
 	"  3  refused: the pod refused the command (a locked LAN, a missing role, a bad request)\n" +
 	"  4  busy: the pod or one of its engines is in use (a cloud job's lease, another session)\n" +
 	"  5  unreachable: nothing answered on the pod's address, no pod found on USB, or the\n" +
-	"     pod is offline on embeddedci.com"
+	"     pod is offline on embeddedci.com\n" +
+	"  6  update the CLI: the pod's firmware needs a newer benchpod CLI"
 
 // usageError marks a command-line mistake (exit code 2).
 type usageError struct{ err error }
@@ -279,6 +281,10 @@ func exitCode(err error) int {
 	// Cobra's own complaint about an unknown subcommand is not a typed error.
 	if strings.HasPrefix(err.Error(), "unknown command ") {
 		return exitUsage
+	}
+	var upd *tcpclient.UpdateRequiredError
+	if errors.As(err, &upd) {
+		return exitUpdateCLI
 	}
 	if pe, ok := tcpclient.AsPodError(err); ok {
 		if pe.Kind() == tcpclient.Busy {

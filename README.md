@@ -1038,9 +1038,29 @@ stderr with a `[benchpod]` prefix.
 | `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
 | `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
 | `5`  | Unreachable: nothing answered on the pod's address, no pod was found on USB, or the pod is offline on embeddedci.com. |
+| `6`  | Update the CLI: the pod's firmware needs a newer benchpod CLI (see [Firmware newer than the CLI](#firmware-newer-than-the-cli)). |
 
 `benchpod ci` has its own exit codes (a CI result, not a command's): see
 [Exit codes of `benchpod ci`](#exit-codes-of-benchpod-ci).
+
+#### Firmware newer than the CLI
+
+Every JSON command the CLI sends to the pod (on the LAN, over USB networking and through
+embeddedci.com) carries `"client_api"`, the pod API level this CLI was built for, and
+`"client"`, its name and version (`"cli 0.9.5"`). Firmware 3.10.13 and older ignores both.
+Newer firmware announces its own level in `status`; it goes up only when the firmware changes
+a reply in a way an older CLI would misread. When the pod's level is above this CLI's (a pod
+without one counts as level 1), a command that reads the pod's status stops with exit code
+`6` and says so:
+
+```text
+[benchpod] status: this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
+```
+
+A pod that no longer takes commands from a CLI this old refuses them with `BP0030`, which
+the CLI reports the same way. Update the CLI as you installed it (see
+[Installation](#installation)). Commands that only talk to embeddedci.com or work locally are
+not affected, and neither is the USB console.
 
 Firmware 3.10.8 and later sends more and more refusals with a stable error code (`BP0001` and up).
 The CLI then shows the code, what went wrong and what to run, from the error catalog it ships

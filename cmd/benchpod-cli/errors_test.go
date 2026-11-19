@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/errcatalog"
 	"github.com/embeddedci-com/benchpod-cli/internal/fwrefusals"
@@ -153,6 +157,13 @@ func TestEveryCodedRefusal(t *testing.T) {
 		"client_api": 1, "min_client_api": 2, "api": 2}
 	for _, code := range errcatalog.Codes() {
 		t.Run(code, func(t *testing.T) {
+			if code == tcpclient.CodeClientTooOld {
+				// Not a *PodError: the update-required error (TestNewerPodFirmwareNeedsANewerCLI).
+				if got := exitCode(tcpclient.RefusalError("", code, args)); got != exitUpdateCLI {
+					t.Errorf("exit %d, want %d", got, exitUpdateCLI)
+				}
+				return
+			}
 			e, _ := errcatalog.Lookup(code)
 			kind, ok := tcpclient.CodeKind(code)
 			if !ok {
@@ -206,4 +217,72 @@ func TestIsUnknownCommandHelper(t *testing.T) {
 var unknownCmdReplies = []string{
 	`{"status":"error","message":"unknown cmd"}`,
 	`{"status":"error","code":"BP0002","args":{"cmd":"x"}}`,
+}
+
+// A pod whose firmware announces a newer API than this CLI handles stops a command that reads
+// its status, with its own exit code; so does BP0030. A pod with api 1 or none works.
+func TestNewerPodFirmwareNeedsANewerCLI(t *testing.T) {
+	newer, _ := fakeLANPod(t, `{"status":"ok","data":{"version":"3.11.0","api":2,"min_client_api":0}}`)
+	same, _ := fakeLANPod(t, `{"status":"ok","data":{"version":"3.10.14","api":1,"min_client_api":0}}`)
+	old, _ := fakeLANPod(t, `{"status":"ok","data":{"version":"3.10.13"}}`)
+	tooOld, _ := fakeLANPod(t, `{"status":"error","code":"BP0030","args":{"client_api":1,"min_client_api":2,"api":2},`+
+		`"message":"update the BenchPod SDK, MCP or CLI: this firmware needs client API 2 or newer (this client sent 1)"}`)
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	for _, c := range []struct {
+		args []string
+		want int
+		msg  string
+	}{
+		{[]string{"status", "--connection", newer}, exitUpdateCLI,
+			"this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod"},
+		{[]string{"ping", "--connection", tooOld}, exitUpdateCLI,
+			"this pod's firmware needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod"},
+		{[]string{"ping", "--connection", newer}, exitOK, ""}, // ping reads no status
+	} {
+		logged.Reset()
+		if got := run(c.args); got != c.want {
+			t.Errorf("%v: exit %d, want %d (%s)", c.args, got, c.want, logged.String())
+		}
+		if !strings.Contains(logged.String(), c.msg) || (c.msg != "" && strings.Contains(logged.String(), "BP0030:")) {
+			t.Errorf("%v: logged %q", c.args, logged.String())
+		}
+	}
+	for _, addr := range []string{same, old} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := (&tcpclient.Client{Addr: addr}).Command(ctx, map[string]any{"cmd": "status", "caps": false})
+		cancel()
+		if err != nil {
+			t.Errorf("%s: %v", addr, err)
+		}
+	}
+	if got := exitCode(fmt.Errorf("x: %w", &tcpclient.UpdateRequiredError{PodAPI: 2})); got != exitUpdateCLI {
+		t.Errorf("wrapped: exit %d", got)
+	}
+}
+
+// Every JSON command the CLI sends carries client_api and client ("cli <version>"), on the LAN and
+// through embeddedci.com.
+func TestEveryRequestCarriesTheClientFields(t *testing.T) {
+	tcpclient.SetClientFields(true)
+	defer tcpclient.SetClientFields(false)
+	addr, got := fakeLANPod(t, `{"status":"ok","data":"pong"}`)
+	if code := run([]string{"ping", "--connection", addr}); code != exitOK {
+		t.Fatalf("exit %d", code)
+	}
+	var req map[string]any
+	_ = json.Unmarshal([]byte(<-got), &req)
+	if req["client_api"] != float64(tcpclient.ClientAPI) || req["client"] != "cli "+strings.TrimPrefix(version, "v") {
+		t.Fatalf("LAN request %v", req)
+	}
+
+	f := &fakeCloud{reply: podReplies(map[string]string{"ping": `"pong"`})}
+	f.start(t)
+	if code := run([]string{"ping", "--connection", "embeddedci:bench-1"}); code != exitOK {
+		t.Fatalf("cloud exit %d", code)
+	}
+	if len(f.commands) == 0 || f.commands[0]["client_api"] != float64(tcpclient.ClientAPI) || f.commands[0]["client"] == nil {
+		t.Fatalf("cloud request %v", f.commands)
+	}
 }

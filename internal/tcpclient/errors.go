@@ -78,7 +78,7 @@ var codeKinds = map[string]RefusalKind{
 	"BP0027": Refused, // lease_not_held
 	"BP0028": Refused, // vref_5v_missing
 	"BP0029": Refused, // pull_rail_down
-	"BP0030": Refused, // client_too_old
+	"BP0030": Refused, // client_too_old: arrives as an *UpdateRequiredError, not a *PodError (RefusalError)
 }
 
 // CodeKind is the kind of a refusal code; ok is false for a code the table does not have.
@@ -156,6 +156,15 @@ func firmwareMessage(msg string) string {
 func podError(msg string) error { return &PodError{Reason: firmwareMessage(msg)} }
 
 // replyError is an error reply from the JSON API with its code and args.
-func replyError(r *reply) error {
-	return &PodError{Reason: firmwareMessage(r.Message), Code: r.Code, Args: r.Args}
+func replyError(r *reply) error { return RefusalError(r.Message, r.Code, r.Args) }
+
+// RefusalError is a refusal with its text, code and args, from any JSON transport (the LAN, the
+// USB network, embeddedci.com's command channel): a *PodError, or for BP0030 (the pod takes no
+// client this old) an *UpdateRequiredError.
+func RefusalError(msg, code string, args map[string]any) error {
+	pe := &PodError{Reason: firmwareMessage(msg), Code: code, Args: args}
+	if strings.EqualFold(strings.TrimSpace(code), CodeClientTooOld) {
+		return updateRequiredFromRefusal(pe)
+	}
+	return pe
 }

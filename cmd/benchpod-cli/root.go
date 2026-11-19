@@ -51,6 +51,8 @@ var version = "dev"
 // newRootCmd builds the benchpod root command, wires the persistent flags
 // through Viper, and registers all subcommands.
 func newRootCmd() *cobra.Command {
+	// Every JSON command names this CLI to the pod ("client"), next to its client_api.
+	tcpclient.SetClientName("cli " + strings.TrimPrefix(version, "v"))
 	g := &globalFlags{}
 	root := &cobra.Command{
 		Use:     "benchpod",

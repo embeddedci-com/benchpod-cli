@@ -44,22 +44,6 @@ func IsUnknownCommand(err error) bool {
 	return strings.HasPrefix(r, "unknown cmd") || strings.HasPrefix(r, "unknown command")
 }
 
-func (c *Client) tagLease(req map[string]any) map[string]any { return tagLease(req, c.NoLeaseJoin) }
-
-// tagLease is req with "lease":<id> added while a lease is set (a copy; req is not changed). A
-// request that names a lease already, or skip, is left as it is.
-func tagLease(req map[string]any, skip bool) map[string]any {
-	j := leaseJoin.Load()
-	if j == nil || skip {
-		return req
-	}
-	if _, has := req["lease"]; has {
-		return req
-	}
-	out := make(map[string]any, len(req)+1)
-	for k, v := range req {
-		out[k] = v
-	}
-	out["lease"] = j.ID
-	return out
-}
+// tagRequest is req as this client sends it: with the client fields and, unless NoLeaseJoin, the
+// lease (clientapi.go).
+func (c *Client) tagRequest(req map[string]any) map[string]any { return tagRequest(req, c.NoLeaseJoin) }
