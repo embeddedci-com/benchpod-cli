@@ -26,9 +26,13 @@ import (
 // child processes get its id in BENCHPOD_LEASE so the SDK joins the same lease.
 
 const (
-	ciLeaseTTL      = 300               // seconds
-	ciLeaseInterval = 100 * time.Second // renew period, a third of the TTL
-	ciLeasePoll     = 5 * time.Second   // how often --wait asks again
+	ciLeaseTTL = 300 // seconds
+	// ciLeaseInterval is how often the pod's lease is renewed. Often (not TTL/3): a renew is how
+	// the runner learns that the run was stopped from the web app (BP0026), and a stopped run
+	// stops its running step at once.
+	ciLeaseInterval      = 15 * time.Second
+	ciCloudLeaseInterval = 100 * time.Second // the server's lease: a third of the TTL
+	ciLeasePoll          = 5 * time.Second   // how often --wait asks again
 )
 
 // ciLease is the lease a run holds. While it holds, every JSON command the CLI sends carries
@@ -41,6 +45,8 @@ type ciLease interface {
 	Lost() string
 	// MarkLost records a loss seen elsewhere (a command answered "lease lost").
 	MarkLost(why string)
+	// LostC is closed when the lease is lost.
+	LostC() <-chan struct{}
 	// Drop stops tagging commands with the lease (after it was lost: cleanup runs without it).
 	Drop()
 	// Verify renews once now, so a lease stopped since the last renew is seen at the run's end.
@@ -97,7 +103,20 @@ type leaseState struct {
 	stop      chan struct{}
 	done      chan struct{}
 	once      sync.Once
+	lostOnce  sync.Once
+	lostC     chan struct{}
 }
+
+func (l *leaseState) lostChan() chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lostC == nil {
+		l.lostC = make(chan struct{})
+	}
+	return l.lostC
+}
+
+func (l *leaseState) LostC() <-chan struct{} { return l.lostChan() }
 
 func (l *leaseState) ID() string      { return l.id }
 func (l *leaseState) Supported() bool { return l.supported }
@@ -109,11 +128,13 @@ func (l *leaseState) Lost() string {
 }
 
 func (l *leaseState) MarkLost(why string) {
+	c := l.lostChan()
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.lost == "" {
 		l.lost = why
 	}
+	l.mu.Unlock()
+	l.lostOnce.Do(func() { close(c) })
 }
 
 // loop calls renew every interval until stop; a renew that reports the lease gone marks it lost
@@ -271,9 +292,9 @@ func busyText(pe *tcpclient.PodError) string {
 func leaseLostText(pe *tcpclient.PodError) string {
 	if pe.Code == codeLeaseLost {
 		if by, _ := pe.Args["by"].(string); by != "" {
-			return "stopped by " + by
+			return "the pod lease was stopped by " + by + " during the run"
 		}
-		return "the run's lease was stopped"
+		return "the pod lease was stopped during the run"
 	}
 	return "the pod lease was lost (" + strings.TrimSpace(pe.Reason) + "): the pod rebooted, or the lease expired"
 }

@@ -51,6 +51,9 @@ func (r *ciRunner) nativeStep(ctx context.Context, s *ci.Step, attempt int) ci.C
 	switch {
 	case err == nil:
 		c.Outcome = ci.Passed
+	case errors.Is(context.Cause(ctx), errLeaseLost):
+		c.Outcome = ci.Errored
+		c.Message = stoppedWhy(ctx, r.lease)
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		c.Outcome = ci.Errored
 		c.Message = fmt.Sprintf("timed out after %s: %v", stepTimeout(s), err)
@@ -630,7 +633,7 @@ func (r *ciRunner) pytestStep(ctx context.Context, s *ci.Step, attempt int) {
 	case res.TimedOut:
 		stepCase.Outcome, stepCase.Message = ci.Errored, fmt.Sprintf("pytest timed out after %s and was stopped", res.Duration.Round(time.Second))
 	case res.Canceled:
-		stepCase.Outcome, stepCase.Message = ci.Errored, "pytest was stopped (the run was interrupted)"
+		stepCase.Outcome, stepCase.Message = ci.Errored, "pytest was "+stoppedWhy(ctx, r.lease)
 	case res.Err != nil:
 		stepCase.Outcome, stepCase.Message = ci.Errored, "pytest did not start: "+res.Err.Error()
 	case len(added) == 0 && res.ExitCode == 0:
@@ -719,7 +722,7 @@ func (r *ciRunner) runCommandStep(ctx context.Context, s *ci.Step, attempt int) 
 	case res.TimedOut:
 		stepCase.Outcome, stepCase.Message = ci.Errored, fmt.Sprintf("timed out after %s and was stopped", res.Duration.Round(time.Second))
 	case res.Canceled:
-		stepCase.Outcome, stepCase.Message = ci.Errored, "stopped (the run was interrupted)"
+		stepCase.Outcome, stepCase.Message = ci.Errored, stoppedWhy(ctx, r.lease)
 	case res.Err != nil:
 		stepCase.Outcome, stepCase.Message = ci.Errored, "did not start: "+res.Err.Error()
 	case resultsMissing != "":

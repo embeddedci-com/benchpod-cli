@@ -768,15 +768,18 @@ benchpod ci upload embeddedci-runs/<run>      # a run made offline
 While a run holds the pod, the web app, the desktop app, MCP sessions and other runs get a
 "busy" answer for anything that drives it (reading its status keeps working). On the LAN and
 USB the lease lives in the pod itself (firmware with the `lease` feature); through
-embeddedci.com it is the server's device lease. It is renewed every 100 seconds and released
-at the end, also on Ctrl-C; if the CLI dies it expires on its own after 5 minutes. Every command the run sends to the pod carries the lease's id, and so do the commands of its
-pytest and run steps (the SDK reads `BENCHPOD_LEASE`).
+embeddedci.com it is the server's device lease. It is renewed every 15 seconds on the pod
+(every 100 seconds on embeddedci.com) and released at the end, also on Ctrl-C; if the CLI
+dies it expires on its own after 5 minutes. Every command the run sends to the pod carries
+the lease's id, and so do the commands of its pytest and run steps (the SDK reads
+`BENCHPOD_LEASE`).
 
 A pod that is in use when the run starts ends it at once with exit code 4 and who holds it;
 `--wait 10m` waits for it instead. A pod whose firmware has no lease gets one warning and the
 run goes on without one. A lease lost during the run (someone stopped the run from the web
-app, the pod rebooted) makes the run invalid (exit code 4): the steps left are skipped and
-cleanup still runs, without the lease (if another session took the pod meanwhile, the pod
+app, the pod rebooted) makes the run invalid (exit code 4). The step that is running stops
+at once (a pytest or run step is stopped like at its timeout, and the cases it recorded so far
+are kept), the steps left are skipped, and cleanup still runs, without the lease (if another session took the pod meanwhile, the pod
 refuses it, and `logs/cleanup.log` says so).
 
 `benchpod status --json` shows the pod's lease as `local_lease` (holder, purpose, seconds left).

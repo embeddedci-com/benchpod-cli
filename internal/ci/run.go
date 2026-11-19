@@ -156,11 +156,16 @@ type Health struct {
 	TraceTruncated      bool     `json:"trace_truncated"`
 }
 
-// Invalidate marks the run invalid for reason (once per reason).
+// Invalidate marks the run invalid for reason, once: a reason another one already says (the
+// same text, or one containing it) is not added twice.
 func (h *Health) Invalidate(reason string) {
 	h.Valid = false
-	for _, r := range h.Reasons {
-		if r == reason {
+	for i, r := range h.Reasons {
+		switch {
+		case r == reason || strings.Contains(r, reason):
+			return
+		case strings.Contains(reason, r): // the new one says more: it replaces the old
+			h.Reasons[i] = reason
 			return
 		}
 	}

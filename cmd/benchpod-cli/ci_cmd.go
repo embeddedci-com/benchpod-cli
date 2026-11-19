@@ -151,7 +151,7 @@ func takeCILease(ctx context.Context, c *ciConnected, join *tcpclient.LeaseJoin,
 	switch p := c.pod.(type) {
 	case *cloudPod:
 		api := p.client.API
-		lease, err := acquireCloudLease(ctx, api, p.client.Credential, p.client.Name, join.ID, wait, ciLeaseInterval, warn)
+		lease, err := acquireCloudLease(ctx, api, p.client.Credential, p.client.Name, join.ID, wait, ciCloudLeaseInterval, warn)
 		if err != nil {
 			return nil, err
 		}

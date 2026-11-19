@@ -473,3 +473,14 @@ func TestDiffIncomparable(t *testing.T) {
 		t.Errorf("%s", buf.String())
 	}
 }
+
+func TestInvalidateDedupes(t *testing.T) {
+	h := Health{Valid: true, Reasons: []string{"the pod lease was stopped by A during the run"}}
+	h.Invalidate("the pod lease was stopped by A during the run")
+	h.Invalidate("stopped by A")
+	h.Invalidate("the pod rebooted")
+	h.Invalidate("the pod rebooted during the run")
+	if strings.Join(h.Reasons, "|") != "the pod lease was stopped by A during the run|the pod rebooted during the run" || h.Valid {
+		t.Errorf("%q", h.Reasons)
+	}
+}

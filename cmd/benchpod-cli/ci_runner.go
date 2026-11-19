@@ -76,6 +76,17 @@ type ciRunner struct {
 	podDriven      bool   // a step touched the pod: cleanup runs
 }
 
+// errLeaseLost is the cause of a step stopped because the run's lease was lost.
+var errLeaseLost = errors.New("the run's pod lease was lost")
+
+// stoppedWhy says why a step's context ended early, for its case message.
+func stoppedWhy(ctx context.Context, lease ciLease) string {
+	if errors.Is(context.Cause(ctx), errLeaseLost) && lease != nil {
+		return "stopped: " + lease.Lost()
+	}
+	return "stopped (the run was interrupted)"
+}
+
 // ciExit is the exit code of `benchpod ci`, with the message to print ("" when the summary said
 // it already).
 type ciExit struct {
@@ -455,6 +466,23 @@ func (r *ciRunner) runStep(runCtx context.Context, s *ci.Step, attempt int) {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(runCtx, d)
 		defer cancel()
+	}
+	// A lost lease (the run stopped from the web app) stops the step at once: a child step's
+	// process group is stopped like at a timeout, its results so far are still read.
+	if r.lease != nil {
+		var cancel context.CancelCauseFunc
+		ctx, cancel = context.WithCancelCause(ctx)
+		defer cancel(nil)
+		lost := r.lease.LostC()
+		stepDone := make(chan struct{})
+		defer close(stepDone)
+		go func() {
+			select {
+			case <-lost:
+				cancel(errLeaseLost)
+			case <-stepDone:
+			}
+		}()
 	}
 	label := s.ID
 	if attempt > 1 {
