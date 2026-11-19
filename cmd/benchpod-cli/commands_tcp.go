@@ -372,7 +372,11 @@ func newLAPullCmd(g *globalFlags) *cobra.Command {
 			"and reports its value (ohms). Which pins have one and which way each can pull depends on the\n" +
 			"board: today LA1-LA6 pull up, LA7/LA8 pull down and LA9-LA14 have none; the reply's dirs\n" +
 			"lists them. Another direction is refused (BP0024), and up or down on a pin without a resistor\n" +
-			"(BP0023); off works on every pin. The resistors go to 3.3 V, so the LA bank must be at 3.3 V.",
+			"(BP0023); off works on every pin. The resistors go to the LA bank voltage.\n\n" +
+			"Digital board v3r4: every pin, LA1-LA14, pulls up or down with a 10k, a 2.2k or both (about\n" +
+			"1.8k). The pod picks the strength from the pin's function (2.2k for I2C, one-wire UART, open\n" +
+			"drain and outputs in 5 V mode, else 10k); the reply's strength says which. The pull-ups go to\n" +
+			"J1 pin 21, so they work at 1.8, 3.3 and 5 V; while pin 21 is down they are off (BP0029).",
 		Example: "  benchpod la pull 1 up\n  benchpod la pull 7 down\n  benchpod la pull 7 off",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {

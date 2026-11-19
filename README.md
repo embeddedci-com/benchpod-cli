@@ -337,12 +337,13 @@ benchpod status --json     # the pod's raw status reply
 
 # Hardware (network):
 benchpod la voltage 3.3V                          # the DUT's I/O voltage for now (it normally comes from the wiring profile)
+benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (pin 21 goes to 5 V; also shows pin 21)
 benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --output csv      # ADC snapshot
 benchpod stream ...
 benchpod test ...
-benchpod la pull 3 up                             # LA pin pull resistor: up, down or off
+benchpod la pull 3 up                             # LA pin pull resistor: up, down or off (digital v3r4: every pin, strength picked by the pod)
 benchpod la status
 benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 benchpod la pins                                  # every LA pin: function, level, pull-up, direction, warnings

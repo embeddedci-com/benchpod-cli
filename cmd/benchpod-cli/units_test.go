@@ -43,12 +43,13 @@ func near(a, b float64) bool {
 }
 
 func TestParseLAVoltage(t *testing.T) {
-	for in, want := range map[string]int{"3.3V": 3300, "3.3v": 3300, "1.8V": 1800, "1800mV": 1800, "3.3": 3300, "1.8": 1800, "3300": 3300, "1800": 1800} {
+	for in, want := range map[string]int{"3.3V": 3300, "3.3v": 3300, "1.8V": 1800, "1800mV": 1800, "3.3": 3300, "1.8": 1800, "3300": 3300, "1800": 1800,
+		"5V": 5000, "5.0": 5000, "5000": 5000, "5000mV": 5000} { // 5 V: digital v3r4 (other pods refuse it)
 		if got, err := parseLAVoltage(in); err != nil || got != want {
 			t.Errorf("parseLAVoltage(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"5V", "2.5", "1234", "x", ""} {
+	for _, in := range []string{"2.5", "1234", "4.9", "x", ""} {
 		if _, err := parseLAVoltage(in); err == nil {
 			t.Errorf("parseLAVoltage(%q) accepted", in)
 		}

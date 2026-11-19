@@ -26,13 +26,18 @@ const laVoltageMissing = "this firmware has no LA voltage selection; update the 
 func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "voltage [VOLTAGE]",
-		Short: "Show or set the LA bank I/O voltage (1.8V or 3.3V, the DUT's logic level)",
+		Short: "Show or set the LA bank I/O voltage (1.8V or 3.3V, 5V on digital v3r4: the DUT's logic level)",
 		Long: "Show or set the voltage of the pod's LA bank (LA1-LA14), which must match the\n" +
 			"DUT's I/O voltage. The pod refuses LA capture, UART, SWD flash, pull-ups and\n" +
 			"sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
-			"VOLTAGE is 1.8V or 3.3V (also 1800mV, 3.3, or 3300). Omit it to show the\n" +
-			"current setting. Works over the network, over USB (--connection usb) and through\n" +
+			"VOLTAGE is 1.8V or 3.3V (also 1800mV, 3.3, or 3300).\n\n" +
+			"5V (5.0, 5000) works on a pod with the digital board v3r4: the bank stays at 3.3V and\n" +
+			"J1 pin 21, the rail the pull-ups pull to, goes to 5V. The pod reads 5V signals at full\n" +
+			"speed; its outputs reach 5V only through their pull-ups (benchpod la pull PIN up). The\n" +
+			"pod refuses with BP0028 when 5V did not come up, and other pods refuse 5000. On v3r4 the\n" +
+			"output also shows pin 21 and warns when it sits above its setting.\n\n" +
+			"Omit VOLTAGE to show the current setting. Works over the network, over USB (--connection usb) and through\n" +
 			"embeddedci.com (--connection embeddedci:<name>).\n\n" +
 			"The pod forgets the voltage on a restart. Firmware 3.10.8 and later keeps wiring\n" +
 			"profiles on the pod: the profile's I/O voltage is applied when the DUT powers on and\n" +
@@ -80,6 +85,36 @@ var openLAVoltageConsole = func(g *globalFlags, device string, timeout time.Dura
 type laVoltageReply struct {
 	MV         int `json:"mv"`
 	ReadbackMV int `json:"readback_mv"`
+	// VrefOut is J1 pin 21 on the digital board v3r4 (nil on other boards).
+	VrefOut *vrefOut `json:"vref_out,omitempty"`
+}
+
+// vrefOut is pin 21 in the la_voltage reply (digital board v3r4).
+type vrefOut struct {
+	Source string `json:"source"` // "bank" or "5v"
+	SetMV  int    `json:"set_mv"`
+	MV     int    `json:"mv"` // -1 without a reading
+	State  string `json:"state"`
+	Up     bool   `json:"up"`
+}
+
+// pin21Text is pin 21's line and, when it is not ok, a warning ("" when there is none).
+func pin21Text(v *vrefOut) (line, warning string) {
+	measured := "no reading"
+	if v.MV >= 0 {
+		measured = formatMV(v.MV)
+	}
+	line = fmt.Sprintf("J1 pin 21 (pull-up rail): %s, set to %s (%s)", measured, formatMV(v.SetMV), v.State)
+	switch v.State {
+	case "high":
+		warning = "pin 21 is above its setting: a DUT signal above the I/O voltage lifts it through the pull " +
+			"resistors. Select 5V (benchpod la voltage 5.0) or remove the signal."
+	case "low":
+		warning = "pin 21 is below its setting: something on it draws too much current."
+	case "short":
+		warning = "pin 21 is shorted or held down: the pull resistors are off until it is back."
+	}
+	return line, warning
 }
 
 func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
@@ -96,8 +131,16 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 		return nil
 	}
 	fmt.Fprintf(out, "LA voltage of %s%s %s\n", label, verb, formatMV(rep.MV))
-	if rep.ReadbackMV != 0 && rep.ReadbackMV != rep.MV {
+	// In 5 V mode the bank stays at 3.3 V while the I/O voltage is 5 V.
+	if rep.ReadbackMV != 0 && rep.ReadbackMV != rep.MV && !(rep.MV == 5000 && rep.ReadbackMV == 3300) {
 		fmt.Fprintf(warn, "Warning: the bank's power mux reports %s, not %s\n", formatMV(rep.ReadbackMV), formatMV(rep.MV))
+	}
+	if rep.VrefOut != nil {
+		line, w := pin21Text(rep.VrefOut)
+		fmt.Fprintln(out, line)
+		if w != "" {
+			fmt.Fprintln(warn, "Warning: "+w)
+		}
 	}
 	if mv != 0 && podStoresWiring(g) {
 		fmt.Fprintln(out, "Not saved: the pod uses the I/O voltage in its wiring profile after a restart (change it there with `benchpod wiring save`, or in the Pins pane).")
