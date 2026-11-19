@@ -31,7 +31,7 @@ func newExpansionCmd(g *globalFlags) *cobra.Command {
 			"as the SDK names them. It only reads; nothing on the chip changes. An open\n" +
 			"`benchpod i2c start` session is used as it is; otherwise one is opened on --sda and\n" +
 			"--scl (default: the wiring profile's i2c_sda and i2c_scl) and closed afterwards.\n" +
-			"With --pullups pod the pull-ups must be on (`benchpod la pullup 1 on`).",
+			"With --pullups pod the pull-ups must be on (`benchpod la pull 1 up`).",
 		Example: "  benchpod expansion\n" +
 			"  benchpod expansion tca9555 --addr 0x20 --sda 1 --scl 2\n" +
 			"  benchpod expansion mcp23017 --addr 0x20,0x21 --pullups external",

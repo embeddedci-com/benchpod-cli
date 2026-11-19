@@ -357,17 +357,58 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 func newLACmd(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "la",
-		Short: "Logic-analyzer pin control (bank voltage, pull-ups, step pulses, pin list and directions)",
+		Short: "Logic-analyzer pin control (bank voltage, pull resistors, step pulses, pin list and directions)",
 	}
-	cmd.AddCommand(newLAVoltageCmd(g), newLAPullupCmd(g), newLAStatusCmd(g), newLAStepCmd(g),
+	cmd.AddCommand(newLAVoltageCmd(g), newLAPullCmd(g), newLAPullupCmd(g), newLAStatusCmd(g), newLAStepCmd(g),
 		newLAPinsCmd(g), newLADirCmd(g))
 	return cmd
+}
+
+func newLAPullCmd(g *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "pull PIN up|down|off",
+		Short: "Pull an LA pin up or down, or switch its pull resistor off (PIN: 1-14 or la1)",
+		Long: "Pull an LA pin up or down, or switch its pull resistor off. The pod picks the resistor\n" +
+			"and reports its value (ohms). Which pins have one and which way each can pull depends on the\n" +
+			"board: today LA1-LA6 pull up, LA7/LA8 pull down and LA9-LA14 have none; the reply's dirs\n" +
+			"lists them. Another direction is refused (BP0024), and up or down on a pin without a resistor\n" +
+			"(BP0023); off works on every pin. The resistors go to 3.3 V, so the LA bank must be at 3.3 V.",
+		Example: "  benchpod la pull 1 up\n  benchpod la pull 7 down\n  benchpod la pull 7 off",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			pin, err := parseLAPin(args[0])
+			if err != nil {
+				return usageErrorf("%v", err)
+			}
+			want := strings.ToLower(strings.TrimSpace(args[1]))
+			if want != "up" && want != "down" && want != "off" {
+				return usageErrorf("invalid direction %q (use up, down or off)", args[1])
+			}
+			ctx, cancel, pod, err := g.podClient("la pull", 30*time.Second)
+			if err != nil {
+				return err
+			}
+			defer cancel()
+
+			data, err := setLAPull(ctx, pod.client, pin, want)
+			if err != nil {
+				return fmt.Errorf("la pull: %w", err)
+			}
+			out, closeOut, err := resolveOutput(g.outputFilename)
+			if err != nil {
+				return fmt.Errorf("la pull: open output: %w", err)
+			}
+			defer closeOut()
+			printJSON(out, data)
+			return nil
+		},
+	}
 }
 
 func newLAPullupCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "pullup PIN STATE",
-		Short: "Switch an LA pin's pull-up (PIN: 1-8 or la1; STATE: on|off)",
+		Short: "Older form of `la pull`: switch an LA pin's pull resistor on in its own direction, or off (STATE: on|off)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			pin, err := parseLAPin(args[0])

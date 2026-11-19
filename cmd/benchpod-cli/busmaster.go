@@ -192,7 +192,7 @@ func newI2CCmd(g *globalFlags) *cobra.Command {
 			"the session and it stays open across runs until `i2c stop`. SWD, SPI and I2C\n" +
 			"sessions exclude each other. Bytes are hex in and hex out. Works over the network\n" +
 			"and through embeddedci.com.",
-		Example: "  benchpod la pullup 1 on && benchpod la pullup 2 on\n" +
+		Example: "  benchpod la pull 1 up && benchpod la pull 2 up\n" +
 			"  benchpod i2c start --sda 1 --scl 2 --hz 400000\n" +
 			"  benchpod i2c scan\n" +
 			"  benchpod i2c xfer 0x48 --write 0d --read 2\n" +
@@ -227,7 +227,7 @@ func newI2CStartCmd(g *globalFlags) *cobra.Command {
 		Long: "Claim two LA pins as an I2C master. Pins are 1-14 (or la1) or names from the\n" +
 			"pod's wiring profile; left out, they are its i2c_sda and i2c_scl. The bus needs\n" +
 			"pull-ups: with --pullups pod (the default) both pins must be LA1-LA6 with their\n" +
-			"pull-up on (`benchpod la pullup 1 on`), and the LA bank at 3.3 V. Pass\n" +
+			"pull-up on (`benchpod la pull 1 up`), and the LA bank at 3.3 V. Pass\n" +
 			"--pullups external when the board has its own. The pod reports the rate it uses.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {

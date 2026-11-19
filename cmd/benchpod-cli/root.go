@@ -70,7 +70,7 @@ func newRootCmd() *cobra.Command {
 			"Over the network: every pod command but the USB-only ones below. Over the USB\n" +
 			"console: status, la voltage, flash (SWD), lan-policy, sig-policy, cloud ca and\n" +
 			"cloud proxy; the rest over the pod's USB network adapter when it is up.\n" +
-			"Through embeddedci.com: status, ping, la voltage, la pullup, la status, la step,\n" +
+			"Through embeddedci.com: status, ping, la voltage, la pull, la pullup, la status, la step,\n" +
 			"la pins, la dir, i2c, generate, sensor, lan-policy, sig-policy, cloud ca\n" +
 			"show/clear, cloud proxy, deregister and flash-self (embeddedci.com runs the update).\n" +
 			"Always over the USB console: set-wifi, show-network, clear-wifi, identity,\n" +

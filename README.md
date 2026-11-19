@@ -212,7 +212,7 @@ Which command works over which connection:
 |---------------------|----------|
 | Network address     | Every pod command except the USB-only ones below. |
 | USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD), `install-blobs`, `cloud ca` and `cloud proxy`; without it the pod's Ethernet or Wi-Fi address, and the console where it still has the command. Firmware before 3.9.0: the console, as before. `lan-policy`, `sig-policy` and `identity` always use the console (physical presence). |
-| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
+| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pull`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
 | USB only            | `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU (or, with `--connection embeddedci:<name>`, embeddedci.com). These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
 A command that cannot use the connection it is given says so and names what to use
@@ -342,7 +342,7 @@ benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --output csv      # ADC snapshot
 benchpod stream ...
 benchpod test ...
-benchpod la pullup 3 on                           # LA pin pull-up
+benchpod la pull 3 up                             # LA pin pull resistor: up, down or off
 benchpod la status
 benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 benchpod la pins                                  # every LA pin: function, level, pull-up, direction, warnings
@@ -1067,7 +1067,7 @@ moved with `BENCHPOD_SENSOR_CACHE`; the Python SDK uses the same cache). Without
 network the cache serves, then the built-in version, with a warning.
 
 ```bash
-benchpod la pullup 1 on && benchpod la pullup 2 on      # I2C needs pull-ups
+benchpod la pull 1 up && benchpod la pull 2 up          # I2C needs pull-ups
 benchpod sensor start bme280 --pin sda=2 --pin scl=1 --set temperature_c=22.5
 benchpod sensor set bme280 temperature_c=40
 benchpod sensor fault bme280 no_response --duration 2s
@@ -1227,13 +1227,33 @@ embeddedci.com (only `la_mv` changes), which the server applies on every connect
 A failed save is a warning; the pod setting still stands. Over USB it is set on the
 pod only.
 
+### `benchpod la pull`
+
+`benchpod la pull PIN up|down|off`: pull an LA pin up or down, or switch its pull
+resistor off. `PIN` is 1-14 (or `la1`). The pod picks the resistor and reports its
+value (`ohms`), what the pin does now (`state`) and the directions it can pull
+(`dirs`). Which pins have one depends on the board: today LA1-LA6 pull up, LA7/LA8
+pull down and LA9-LA14 have none. Another direction is refused with BP0024 ("LA7
+supports pull-down only on this board"), and `up` or `down` on a pin without a
+resistor with BP0023; `off` works on every pin. The resistors go to 3.3 V, so the LA
+bank must be at 3.3 V. Firmware before the `la_pull_dir` feature only takes on/off:
+the CLI then sends that and checks the direction itself. No flags.
+
+```bash
+benchpod la pull 1 up
+benchpod la pull 7 down
+benchpod la pull 7 off
+```
+
 ### `benchpod la pullup PIN STATE`
 
-Switch an LA pin's pull-up: `PIN` is 1-8 (or `la1`), `STATE` is `on` or `off`. No flags.
+The older form of `la pull`: `STATE` `on` engages the pin's resistor in its own
+direction (up on LA1-LA6, down on LA7/LA8), `off` switches it off. Still accepted;
+use `la pull`. No flags.
 
 ### `benchpod la status [PIN]`
 
-Report the pull-up state of one pin, or the bitmask of all of them. No flags.
+Report the pull state of one pin, or the bitmask of the engaged ones. No flags.
 
 ### `benchpod la step`
 
@@ -1289,8 +1309,8 @@ and through embeddedci.com. A pod with older firmware answers with the update it
 needs (`benchpod flash-self`).
 
 ```bash
-benchpod la pullup 1 on
-benchpod la pullup 2 on
+benchpod la pull 1 up
+benchpod la pull 2 up
 benchpod i2c start --sda 1 --scl 2 --hz 400000
 benchpod i2c scan                          # 0x48 0x76
 benchpod i2c xfer 0x48 --write 0d --read 2 # 01 17
@@ -1302,7 +1322,7 @@ benchpod i2c stop
 Claim two LA pins as an I2C master. Pins are `1`-`14` (or `la1`) or names from the
 pod's wiring profile; the ones you leave out are its `i2c_sda` and `i2c_scl`. The bus
 needs pull-ups: with `--pullups pod` both pins must be LA1-LA6 with their pull-up on
-(`benchpod la pullup 1 on`), and the LA bank at 3.3 V. The pod never switches a
+(`benchpod la pull 1 up`), and the LA bank at 3.3 V. The pod never switches a
 pull-up by itself. Prints the pins and the rate the pod uses: 400 kHz runs at about
 364 kHz, 1 MHz at about 923 kHz, and slow edges (weak pull-ups, long wires) make it a
 bit slower again, never faster.
@@ -1357,7 +1377,7 @@ register layout it has after power-up.
 
 An open `benchpod i2c start` session is used as it is. Otherwise the command opens one on
 `--sda` and `--scl` (default: the wiring profile's `i2c_sda` and `i2c_scl`) and closes it
-afterwards; with `--pullups pod` the pull-ups must be on (`benchpod la pullup 1 on`). SPI
+afterwards; with `--pullups pod` the pull-ups must be on (`benchpod la pull 1 up`). SPI
 expanders (MCP23S17, 74HC595, 74HC165) are not read by the CLI: use the SDK or the MCP server.
 
 ```bash
