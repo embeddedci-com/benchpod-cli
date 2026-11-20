@@ -13,11 +13,7 @@ import (
 // API (firmware cmd "target_power"). efuse is 1 (internal 5V) or 2 (external).
 // It returns the firmware's error when the request is rejected.
 func (c *Client) TargetPower(ctx context.Context, efuse int, on bool) error {
-	state := 0
-	if on {
-		state = 1
-	}
-	_, err := c.Command(ctx, map[string]any{"cmd": "target_power", "efuse": efuse, "state": state})
+	_, err := c.Command(ctx, map[string]any{"cmd": "target_power", "efuse": efuse, "enabled": on})
 	return err
 }
 

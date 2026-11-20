@@ -118,7 +118,7 @@ func runUSBNetwork(g *globalFlags, set string, out io.Writer) error {
 func usbNetworkJSON(ctx context.Context, c podCommander, set string) (string, error) {
 	req := map[string]any{"cmd": "usb_network"}
 	if set != "" {
-		req["set"] = set
+		req["enabled"] = set == "on"
 	}
 	data, err := c.Command(ctx, req)
 	if err != nil {
@@ -128,12 +128,15 @@ func usbNetworkJSON(ctx context.Context, c podCommander, set string) (string, er
 		return "", err
 	}
 	var rep struct {
-		Setting string `json:"setting"`
+		Enabled *bool `json:"enabled"`
 	}
-	if err := json.Unmarshal(data, &rep); err != nil || rep.Setting == "" {
+	if err := json.Unmarshal(data, &rep); err != nil || rep.Enabled == nil {
 		return "", fmt.Errorf("unexpected reply %s", strings.TrimSpace(string(data)))
 	}
-	return rep.Setting, nil
+	if *rep.Enabled {
+		return "on", nil
+	}
+	return "off", nil
 }
 
 func printUSBNetwork(out io.Writer, via, setting, set string) {

@@ -56,7 +56,7 @@ type Started struct {
 	MOSI int `json:"mosi"`
 	MISO int `json:"miso"`
 	CS   int `json:"cs"`
-	Hz   int `json:"hz"`
+	Hz   int `json:"clock_hz"`
 	Mode int `json:"mode"`
 }
 
@@ -99,7 +99,7 @@ func (p *Pod) call(ctx context.Context, timeout time.Duration, req map[string]an
 func (p *Pod) Start(ctx context.Context, c Config) (Started, error) {
 	req := map[string]any{"cmd": "spi_start", "sck": c.SCK, "mosi": c.MOSI, "miso": c.MISO, "cs": c.CS, "mode": c.Mode}
 	if c.Hz > 0 {
-		req["hz"] = c.Hz
+		req["clock_hz"] = c.Hz
 	}
 	var s Started
 	err := p.call(ctx, cmdTimeout, req, &s)

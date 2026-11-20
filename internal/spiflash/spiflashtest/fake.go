@@ -80,7 +80,7 @@ func (f *FakePod) Command(ctx context.Context, req map[string]any) (json.RawMess
 			return nil, tcpclient.RefusalError("", "BP0004", nil)
 		}
 		f.Armed = true
-		return ok(map[string]any{"sck": num("sck"), "mosi": num("mosi"), "miso": num("miso"), "cs": num("cs"), "hz": 1000000, "mode": num("mode")})
+		return ok(map[string]any{"sck": num("sck"), "mosi": num("mosi"), "miso": num("miso"), "cs": num("cs"), "clock_hz": 1000000, "mode": num("mode")})
 	case "spi_stop":
 		f.Armed = false
 		return ok("spi stopped")

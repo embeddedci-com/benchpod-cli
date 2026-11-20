@@ -139,9 +139,9 @@ func TestCloudPingStatusAndLAVoltage(t *testing.T) {
 		"ping":          `"pong"`,
 		"status":        `{"version":"4.0.0","ip":"192.168.1.220","net":"eth","la_vccio_mv":3300,"gateware":48,"api":2,"min_client_api":2}`,
 		"cloud_status":  `{"state":"connected","configured":true,"device_id":"id-1"}`,
-		"target_status": `{"efuse1":{"enabled":1,"fault":0},"efuse2":{"enabled":0,"fault":0}}`,
+		"target_status": `{"efuse1":{"enabled":true,"fault":false},"efuse2":{"enabled":false,"fault":false}}`,
 		"la_voltage":    `{"mv":3300,"readback_mv":3300}`,
-		"la":            `{"pullups":0}`,
+		"la_pull":       `{"pullups":0}`,
 	})}
 	f.start(t)
 	conn := "embeddedci:bench-1"

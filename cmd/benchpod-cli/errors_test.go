@@ -82,7 +82,7 @@ func TestExitCodes(t *testing.T) {
 		{[]string{"ping", "--connection", ok, "--no-such-flag"}, exitUsage},
 		{[]string{"ping", "--connection", ok, "extra"}, exitUsage},
 		{[]string{"no-such-command"}, exitUsage},
-		{[]string{"la", "pullup", "1"}, exitUsage},
+		{[]string{"la", "pullup", "1", "on"}, exitUsage}, // gone in 0.10
 		{[]string{"ping", "--connection", locked}, exitRefused},
 		{[]string{"ping", "--connection", forbidden}, exitRefused},
 		{[]string{"ping", "--connection", leased}, exitBusy},

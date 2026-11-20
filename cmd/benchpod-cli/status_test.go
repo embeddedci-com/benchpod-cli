@@ -19,7 +19,7 @@ func TestStatusSummaryIsReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := targetPower{}
-	p.Efuse1.Enabled = 1
+	p.Efuse1.Enabled = true
 	var out bytes.Buffer
 	printStatusSummary(&out, statusSummary{
 		addr: "192.168.1.221:8080", st: st, power: &p, latest: "v3.9.0",

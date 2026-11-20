@@ -571,7 +571,7 @@ func (r *ciRunner) cleanup() {
 			note(a, err)
 		case ci.CleanupPowerOff:
 			for _, efuse := range []int{1, 2} {
-				_, err := pod.Command(ctx, map[string]any{"cmd": "target_power", "efuse": efuse, "state": 0})
+				_, err := pod.Command(ctx, map[string]any{"cmd": "target_power", "efuse": efuse, "enabled": false})
 				note(fmt.Sprintf("%s efuse %d", a, efuse), err)
 			}
 		case ci.CleanupSensorsOff:

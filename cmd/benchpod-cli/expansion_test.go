@@ -18,10 +18,10 @@ func fakeTCA9555(pod *fakeSensorPod, session bool) {
 			if !active {
 				return map[string]any{"active": false}, ""
 			}
-			return map[string]any{"active": true, "sda": 5, "scl": 6, "hz": 100000, "pullups": "external"}, ""
+			return map[string]any{"active": true, "sda": 5, "scl": 6, "clock_hz": 100000, "pullups": "external"}, ""
 		case "i2c_start":
 			active = true
-			return map[string]any{"sda": req["sda"], "scl": req["scl"], "hz": req["hz"], "pullups": req["pullups"]}, ""
+			return map[string]any{"sda": req["sda"], "scl": req["scl"], "clock_hz": req["clock_hz"], "pullups": req["pullups"]}, ""
 		case "i2c_stop":
 			active = false
 			return "i2c stopped", ""
@@ -87,7 +87,7 @@ func TestExpansionOpensAndClosesItsOwnSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reqJSON(pod.last("i2c_start")); got != `{"cmd":"i2c_start","hz":400000,"pullups":"pod","scl":2,"sda":1}` {
+	if got := reqJSON(pod.last("i2c_start")); got != `{"clock_hz":400000,"cmd":"i2c_start","pullups":"pod","scl":2,"sda":1}` {
 		t.Fatalf("start %s", got)
 	}
 	if pod.last("i2c_stop") == nil {

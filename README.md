@@ -213,7 +213,7 @@ Which command works over which connection:
 |---------------------|----------|
 | Network address     | Every pod command except the USB console ones below. Settings the pod changes only over USB or the cloud (`lan-tls` switches, `cloud ca`/`proxy` changes, `identity wipe`, `usb-network`) are refused there with their code. |
 | USB                 | Every pod command, as JSON over the pod's USB network adapter. With USB networking off (Wi-Fi configured), the pod's Ethernet or Wi-Fi address from its console `status` when this computer reaches it (its external LAN policy applies there), and the command says so. |
-| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pull`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `deregister`. |
+| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pull`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `deregister`. |
 | USB console only    | `dfu`, `bootsel`, `net-reset`, `usb-network`, `usb-bridge`, `lan-policy set` over USB; `flash-self` uses USB DFU (or, with `--connection embeddedci:<name>`, embeddedci.com). A saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
 A command that cannot use the connection it is given says so and names what to use
@@ -256,7 +256,7 @@ when the pod is in another of your organizations, the `--org` that reaches it. A
 key belongs to the organization it was created in.
 
 Commands that stream data or need a direct link to the pod do not go through
-embeddedci.com: `capture`, `stream`, `measure`, `test`, `flash --file`, `spi-flash`,
+embeddedci.com: `capture`, `measure`, `test`, `flash --file`, `spi-flash`,
 `cloud ca set`, `register`, the USB-only commands and `discover`. Over a cloud
 connection they refuse with a message pointing to the web app, the Python SDK or
 pytest plugin (which take `embeddedci:<name>` for those too), or a network/USB
@@ -339,10 +339,9 @@ benchpod status --json     # the pod's raw status reply
 # Hardware (network):
 benchpod la voltage 3.3V                          # the DUT's I/O voltage for now (it normally comes from the wiring profile)
 benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (see the 5 V page linked under la voltage)
-benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
+benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1 --offset-v 1.65 --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --output csv      # ADC snapshot
-benchpod stream ...
 benchpod test ...
 benchpod la pull 3 up                             # LA pin pull resistor: up, down or off (digital v3r4: every pin, strength picked by the pod)
 benchpod la status
@@ -400,8 +399,8 @@ benchpod cloud proxy clear
 
 Flags that take a physical quantity accept it with its unit: `--freq 2kHz`,
 `--sample-rate 10MHz`, `--duration 2s`, `--delay 50us`, and `benchpod la voltage 3.3V`.
-The older flags with the unit in their name (`--sample-rate-mhz`, `--duration-ms`,
-`--delay-us`) keep working; pass one or the other, not both.
+CLI 0.10 dropped the older flags with the unit in their name (`--sample-rate-mhz`,
+`--duration-ms`, `--delay-us`).
 
 `deregister` is the inverse of `register`: it detaches the pod from the
 logged-in account and clears the pod's cloud configuration so it stops
@@ -1244,11 +1243,10 @@ shows them.
 
 Start DAC waveform output (network or embeddedci.com).
 
-Give the waveform in volts with `--path`, `--amplitude-v` and `--offset-v` (or in mA on the 4-20 mA
-output with `--amplitude-ma` and `--offset-ma`): firmware 3.9.1 and later calibrates it and plays it
-at the DAC's full 16 bits, about 50 µV a step on the 3.3 V output. The CLI checks the pod has it
-first and refuses on older firmware. `--amplitude` and `--offset` are the older 8-bit levels: 256
-steps over the output, no calibration.
+Give the waveform in volts with `--path`, `--amplitude-v` and `--offset-v`, or in mA on the 4-20 mA
+output with `--amplitude-ma` and `--offset-ma`: the pod calibrates it and plays it at the DAC's
+full 16 bits, about 50 µV a step on the 3.3 V output. One of the two is required: firmware 4.0
+has no 8-bit levels for `generate` (CLI 0.10 dropped `--amplitude` and `--offset` here).
 
 ```bash
 benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1.48 --offset-v 1.65
@@ -1258,17 +1256,13 @@ benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1.48 --of
 |---------------------|---------|-----------------------------------------------------------|
 | `--waveform`        | (required) | `sine`, `square` or `sawtooth`.                        |
 | `--freq`            | `1kHz`  | Output frequency with its unit, e.g. `2kHz`; a bare number is Hz. |
-| `--path`            |         | DAC output for the volts: `3v3`, `5v` or `12v` (firmware 3.9.1+). |
-| `--amplitude-v`     |         | Peak in volts on `--path`, 16-bit and calibrated (firmware 3.9.1+). |
+| `--path`            |         | DAC output for the volts: `3v3`, `5v` or `12v`.           |
+| `--amplitude-v`     |         | Peak in volts on `--path`, 16-bit and calibrated.         |
 | `--offset-v`        |         | Center in volts on `--path`, with `--amplitude-v`.        |
-| `--amplitude-ma`    |         | Peak in mA on the 4-20 mA output (J9), 16-bit (firmware 3.9.1+). |
+| `--amplitude-ma`    |         | Peak in mA on the 4-20 mA output (J9), 16-bit.            |
 | `--offset-ma`       |         | Center in mA on the 4-20 mA output, with `--amplitude-ma`. |
-| `--amplitude`       | `127`   | Half-scale amplitude in 8-bit levels, 0-127.              |
-| `--offset`          | `128`   | DC offset in 8-bit levels, 0-255.                         |
 | `--duration`        | `0`     | How long to play, e.g. `2s` or `500ms`; `0` runs until the next command. |
-| `--duration-ms`     | `0`     | The same in ms (older form of `--duration`).              |
 | `--sample-rate`     | auto    | FPGA sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
-| `--sample-rate-mhz` | auto    | The same in MHz (older form of `--sample-rate`).          |
 
 ### `benchpod capture`
 
@@ -1279,22 +1273,11 @@ Blocking ADC snapshot (network). Prints the samples.
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
 | `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
 | `--sample-rate`     | max     | ADC sample rate, e.g. `100kHz`; leave it out for the maximum (400 kSPS). |
-| `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
-
-### `benchpod stream`
-
-Asynchronous ADC capture (network). Same flags and output as `capture`.
-
-| Flag                | Default | Purpose                                              |
-|---------------------|---------|------------------------------------------------------|
-| `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
-| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
-| `--sample-rate`     | max     | ADC sample rate, e.g. `100kHz`; leave it out for the maximum (400 kSPS). |
-| `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod measure`
 
-DAC plus ADC loopback capture (network): play a waveform and capture the ADC.
+DAC plus ADC loopback capture (network): play a waveform and capture the ADC. It keeps the
+8-bit `--amplitude` and `--offset` codes (the pod builds the waveform at 8 bits for it).
 
 | Flag                | Default | Purpose                                              |
 |---------------------|---------|------------------------------------------------------|
@@ -1305,7 +1288,6 @@ DAC plus ADC loopback capture (network): play a waveform and capture the ADC.
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
 | `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
 | `--sample-rate`     | auto    | Sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
-| `--sample-rate-mhz` | auto    | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod test`
 
@@ -1556,12 +1538,6 @@ benchpod la pull 7 down
 benchpod la pull 7 off
 ```
 
-### `benchpod la pullup PIN STATE`
-
-The older form of `la pull`: `STATE` `on` engages the pin's resistor in its own
-direction (up on LA1-LA6, down on LA7/LA8), `off` switches it off. Still accepted;
-use `la pull`. No flags.
-
 ### `benchpod la status [PIN]`
 
 Report the pull state of one pin, or the bitmask of the engaged ones. No flags.
@@ -1574,8 +1550,7 @@ Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
 |---------------|---------|--------------------------------------------------------------|
 | `--la`        | (required) | LA pin to pulse, e.g. `6` or `la6`.                       |
 | `--steps`     | (required) | Number of pulses, positive.                               |
-| `--delay`     | (required) | High and low half-period, e.g. `50us` or `1ms` (this or `--delay-us`). |
-| `--delay-us`  | (required) | The same in microseconds (older form of `--delay`).       |
+| `--delay`     | (required) | High and low half-period, e.g. `50us` or `1ms`.           |
 | `--dir-la`    | (none)  | Direction pin, driven before stepping.                       |
 | `--direction` | `0`     | Level for `--dir-la`: `0` or `1`.                            |
 

@@ -216,7 +216,7 @@ func (r *ciRunner) powerOn(ctx context.Context, w io.Writer) error {
 			fmt.Fprintf(w, "I/O voltage %d mV from the wiring profile\n", mv)
 		}
 	}
-	req := map[string]any{"cmd": "target_power", "efuse": rail, "state": 1}
+	req := map[string]any{"cmd": "target_power", "efuse": rail, "enabled": true}
 	if r.wiring.Name != "" {
 		req["profile"] = r.wiring.Name
 	}
@@ -229,7 +229,7 @@ func (r *ciRunner) powerOn(ctx context.Context, w io.Writer) error {
 
 func (r *ciRunner) powerOff(ctx context.Context, w io.Writer) error {
 	rail := r.wiring.rail()
-	if _, err := r.pod.Command(ctx, map[string]any{"cmd": "target_power", "efuse": rail, "state": 0}); err != nil {
+	if _, err := r.pod.Command(ctx, map[string]any{"cmd": "target_power", "efuse": rail, "enabled": false}); err != nil {
 		return fmt.Errorf("power off (eFuse %d): %w", rail, err)
 	}
 	fmt.Fprintf(w, "power off, eFuse %d\n", rail)
@@ -246,9 +246,9 @@ func (r *ciRunner) railOn(ctx context.Context, rail int) bool {
 		return false
 	}
 	if rail == 2 {
-		return tp.Efuse2.Enabled == 1
+		return bool(tp.Efuse2.Enabled)
 	}
-	return tp.Efuse1.Enabled == 1
+	return bool(tp.Efuse1.Enabled)
 }
 
 // uartRequest is uart_proxy_start on the profile's UART.
@@ -477,7 +477,7 @@ func (r *ciRunner) measurePower(ctx context.Context, m *ci.MeasurePower, w io.Wr
 	var stats *powerStats
 	if r.pod.Transport() == "cloud" {
 		// The cloud command channel takes start/stop, not the one-shot (it waits on a stream).
-		start := map[string]any{"cmd": "power_profile", "action": "start", "efuse": rail, "rate_hz": 500, "keep_samples": 0, "max_duration_ms": ms + 10000}
+		start := map[string]any{"cmd": "power_profile", "action": "start", "efuse": rail, "sample_rate_hz": 500, "keep_samples": 0, "max_duration_ms": ms + 10000}
 		if _, err := r.pod.Command(ctx, start); err != nil {
 			return nil, fmt.Errorf("power_profile start: %w", err)
 		}
@@ -494,7 +494,7 @@ func (r *ciRunner) measurePower(ctx context.Context, m *ci.MeasurePower, w io.Wr
 		}
 		stats = st
 	} else {
-		lines, err := r.pod.Chunks(ctx, map[string]any{"cmd": "power_profile", "efuse": rail, "duration_ms": ms, "rate_hz": 500, "keep_samples": 0})
+		lines, err := r.pod.Chunks(ctx, map[string]any{"cmd": "power_profile", "efuse": rail, "duration_ms": ms, "sample_rate_hz": 500, "keep_samples": 0})
 		if err != nil {
 			return nil, fmt.Errorf("power_profile: %w", err)
 		}

@@ -181,6 +181,12 @@ func markUsageErrors(cmd *cobra.Command) {
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err: err} })
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
+		// A command group (subcommands, nothing to run) prints its help; an unknown subcommand of
+		// it is a usage error, not the help with exit 0.
+		if c.HasSubCommands() && c.Run == nil && c.RunE == nil && c.HasParent() {
+			c.Args = cobra.NoArgs
+			c.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+		}
 		if args := c.Args; args != nil {
 			c.Args = func(c *cobra.Command, a []string) error {
 				if err := args(c, a); err != nil {

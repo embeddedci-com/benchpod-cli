@@ -9,10 +9,9 @@
 // first packet uses "status":"ok", later packets use "status":"chunk", and every
 // packet carries a "more" boolean — the client reads until "more":false.
 //
-// Samples asks for base64 ("enc":"b64"): a pod with the capture_b64 capability then sends
-// "b64" (unpadded base64url of little-endian uint16) instead of the decimal "data" array,
-// which reads back several times faster. Older firmware ignores the key and still sends
-// "data", so both are decoded.
+// Samples come as "b64" (unpadded base64url of little-endian uint16), firmware 4.0's default,
+// which reads back several times faster than the decimal "data" array; a request with
+// "enc":"dec" gets "data", so both are decoded.
 package tcpclient
 
 import (
@@ -62,7 +61,7 @@ type Client struct {
 type reply struct {
 	Status  string          `json:"status"` // "ok" | "error" | "chunk"
 	Data    json.RawMessage `json:"data"`
-	B64     *string         `json:"b64"` // replaces Data when the request asked for "enc":"b64"
+	B64     *string         `json:"b64"` // the samples (the default); Data with "enc":"dec"
 	Message string          `json:"message"`
 	More    bool            `json:"more"`
 	Code    string          `json:"code"` // the stable error code of an error reply (newer firmware)
@@ -103,14 +102,6 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 // used by capture, stream, measure, and test. Samples are stored as []int rather
 // than []byte to avoid encoding/json's base64 special-casing of byte slices.
 func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error) {
-	if _, set := req["enc"]; !set {
-		withEnc := make(map[string]any, len(req)+1)
-		for k, v := range req {
-			withEnc[k] = v
-		}
-		withEnc["enc"] = "b64"
-		req = withEnc
-	}
 	conn, reader, err := c.dialAndSend(ctx, req)
 	if err != nil {
 		return nil, err

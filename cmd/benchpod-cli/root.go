@@ -76,7 +76,7 @@ func newRootCmd() *cobra.Command {
 			"Over USB every pod command sends JSON over the pod's USB network adapter; the\n" +
 			"USB console is only for status, dfu, bootsel, identity, lan-policy, usb-network\n" +
 			"and net-reset. USB networking off: `benchpod usb-network on --connection usb`.\n" +
-			"Through embeddedci.com: status, ping, la voltage, la pull, la pullup, la status, la step,\n" +
+			"Through embeddedci.com: status, ping, la voltage, la pull, la status, la step,\n" +
 			"la pins, la dir, i2c, generate, sensor, lan-policy, sig-policy, cloud ca\n" +
 			"show/clear, cloud proxy, the Wi-Fi commands, deregister and flash-self\n" +
 			"(embeddedci.com runs the update). flash-self reflashes the pod over USB DFU\n" +
@@ -152,7 +152,7 @@ func newRootCmd() *cobra.Command {
 		}},
 		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{
 			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),
-			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g), newI2CCmd(g), newExpansionCmd(g),
+			newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g), newI2CCmd(g), newExpansionCmd(g),
 		}},
 		{"ci", "Continuous integration:", []*cobra.Command{newCICmd(g)}},
 		{"cloud", "embeddedci.com:", []*cobra.Command{

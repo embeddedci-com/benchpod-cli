@@ -49,7 +49,7 @@ func (p *fakeCIPod) cmds() []string {
 	for _, r := range p.reqs {
 		s := r["cmd"].(string)
 		if s == "target_power" {
-			s += fmt.Sprintf(":%v:%v", r["efuse"], r["state"])
+			s += fmt.Sprintf(":%v:%v", r["efuse"], map[any]int{true: 1, false: 0}[r["enabled"]])
 		}
 		out = append(out, s)
 	}
@@ -87,7 +87,7 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 	case "calibrate":
 		return json.RawMessage(`{"offset":{"current_in":12}}`), nil
 	case "target_power":
-		if req["state"] == 1 {
+		if req["enabled"] == true {
 			p.mu.Lock()
 			w := p.uart
 			p.mu.Unlock()
@@ -98,9 +98,9 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 				}()
 			}
 		}
-		return json.RawMessage(`{"efuse":1,"enabled":1}`), nil
+		return json.RawMessage(`{"efuse":1,"enabled":true}`), nil
 	case "target_status":
-		return json.RawMessage(`{"efuse1":{"enabled":0},"efuse2":{"enabled":0}}`), nil
+		return json.RawMessage(`{"efuse1":{"enabled":false},"efuse2":{"enabled":false}}`), nil
 	}
 	return json.RawMessage(`{}`), nil
 }

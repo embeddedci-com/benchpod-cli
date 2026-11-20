@@ -206,7 +206,7 @@ type i2cSession struct {
 	Active  *bool  `json:"active"`
 	SDA     int    `json:"sda"`
 	SCL     int    `json:"scl"`
-	Hz      int    `json:"hz"`
+	Hz      int    `json:"clock_hz"`
 	Pullups string `json:"pullups"`
 }
 
@@ -272,7 +272,7 @@ func newI2CStartCmd(g *globalFlags) *cobra.Command {
 			}
 			defer cancel()
 			var s i2cSession
-			req := map[string]any{"cmd": "i2c_start", "sda": sdaPin, "scl": sclPin, "hz": hz, "pullups": pullups}
+			req := map[string]any{"cmd": "i2c_start", "sda": sdaPin, "scl": sclPin, "clock_hz": hz, "pullups": pullups}
 			if err := busCommand(ctx, t, "i2c start", "I2C master", req, &s); err != nil {
 				return err
 			}
