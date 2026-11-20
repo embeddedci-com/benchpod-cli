@@ -548,9 +548,6 @@ func checkImageFitsPod(ctx context.Context, dfuPath, file string) error {
 	return nil
 }
 
-// skipUSBNetForBlobs keeps installBlobsAfterFlash on the console (tests).
-var skipUSBNetForBlobs = false
-
 // flashedPodSerial is the USB serial number of the pod flash-self rebooted into DFU over its
 // console ("" when it was put in DFU by hand): it finds the pod again after the update.
 var flashedPodSerial string
@@ -562,6 +559,7 @@ var (
 	// adapter), and Windows installs drivers and may assign a new COM port before the console appears.
 	flashedConsoleWait  = 150 * time.Second
 	flashedConsoleRetry = time.Second
+	flashedNetTries     = 20 // seconds the computer may need to bring the USB network adapter up
 	openFlashedConsole  = func(g *globalFlags) (*serialconsole.Console, error) {
 		device := g.serialDevice()
 		if flashedPodSerial != "" {
@@ -607,32 +605,26 @@ func installBlobsAfterFlash(g *globalFlags, src blobSource) (after podVersions, 
 	ctx, cancel := context.WithTimeout(context.Background(), blobsInstallTimeout)
 	defer cancel()
 	after = consoleVersions(ctx, console)
-	target := blobTarget(consoleBlobs{Console: console, path: "the USB console"})
-	if !skipUSBNetForBlobs {
-		// Firmware before 3.9.0: the console. 3.9.0+: the USB network (or the pod's network
-		// address), which may need some seconds on the computer's side after the reboot.
-		var lastErr error
-		for i := 0; i < 20; i++ {
-			t, closeT, err := blobTargetFor(ctx, console, "the USB console")
-			if err == nil {
-				target = t
-				defer closeT()
-				lastErr = nil
-				if _, ok := t.(lanBlobs); ok || i >= 10 {
-					break
-				}
-				if u, uerr := console.USBNetwork(ctx); uerr != nil || !u.On {
-					break // older firmware, or USB networking off: no point waiting for it
-				}
-			} else {
-				lastErr = err
-			}
-			time.Sleep(time.Second)
+	// The USB network (or the pod's network address), which may need some seconds on the
+	// computer's side after the reboot.
+	var target blobTarget
+	var lastErr error
+	for i := 0; i < flashedNetTries; i++ {
+		t, closeT, err := blobTargetFor(ctx, console, "the USB console")
+		if err == nil {
+			target, lastErr = t, nil
+			defer closeT()
+			break
 		}
-		if lastErr != nil {
-			return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but its blobs are not installed: %w "+
-				"(retry with `benchpod install-blobs`)", lastErr)
+		lastErr = err
+		if u, uerr := console.USBNetwork(ctx); uerr != nil || !u.On {
+			break // firmware before 3.9.0, or USB networking off: no point waiting for it
 		}
+		time.Sleep(time.Second)
+	}
+	if lastErr != nil {
+		return after, installed, fmt.Errorf("flash-self: the firmware is flashed, but its blobs are not installed: %w "+
+			"(retry with `benchpod install-blobs`)", lastErr)
 	}
 	if _, err := target.Blobs(ctx); err != nil {
 		if errors.Is(err, serialconsole.ErrNoBlobSlots) {

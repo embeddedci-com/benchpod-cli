@@ -26,7 +26,7 @@ import (
 
 const blobsManifestName = "blobs-manifest.json"
 
-// blobsInstallTimeout bounds a whole install: ~1.3 MB over the USB console plus the slot writes.
+// blobsInstallTimeout bounds a whole install: ~1.3 MB over USB plus the slot writes.
 const blobsInstallTimeout = 10 * time.Minute
 
 type blobEntry struct {
@@ -267,19 +267,6 @@ func espLast(todo []blobEntry) []blobEntry {
 	return append(out, esp...)
 }
 
-// podFirmwareRelease is the release tag of the firmware a pod runs ("v3.4.0"), "" if unknown.
-func podFirmwareRelease(ctx context.Context, console *serialconsole.Console) string {
-	raw, err := console.Status(ctx)
-	if err != nil {
-		return ""
-	}
-	v := serialconsole.FirmwareVersion(raw)
-	if v != "" && !strings.HasPrefix(v, "v") {
-		v = "v" + v
-	}
-	return v
-}
-
 func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 	var dir, release, only string
 	var force bool
@@ -288,8 +275,9 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 		Short: "Install the gateware and ESP32-C3 images the pod's firmware goes with (over USB)",
 		Long: "The pod keeps its iCE40 gateware images and its ESP32-C3 Wi-Fi image in the\n" +
 			"W25Q flash next to the FPGA, not in its firmware. This sends the ones it lacks\n" +
-			"over USB: the pod's USB network adapter when it is up (firmware 3.9.0+), else its\n" +
-			"USB console. By default they come from the GitHub release that matches\n" +
+			"over the pod's USB network adapter (firmware 3.9.0+), else its network address.\n" +
+			"USB networking off: `benchpod usb-network on --connection usb` (the console's\n" +
+			"`usb-network on`). By default they come from the GitHub release that matches\n" +
 			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).\n\n" +
 			"Each blob's signature (blob-*.bin.sig) is checked and reported, and handed to\n" +
 			"firmware that checks it too; for now a missing or failing one never stops an install.",
@@ -301,8 +289,8 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(blobsInstallTimeout))
 			defer cancel()
-			// This computer's end of the pod's USB network link (firmware 3.9.0+) needs no console;
-			// else the console names the way in: the USB network when it is up, else the console.
+			// This computer's end of the pod's USB network link needs no console; else the console
+			// names the way in: the USB network when it is up, else the pod's network address.
 			target, closeTarget := g.localBlobTarget(ctx)
 			path := "the USB network"
 			if target == nil {

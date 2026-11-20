@@ -18,6 +18,12 @@ import (
 // needs the network and is given a USB connection uses it; the console stays for the commands
 // that only the console runs and as the fallback.
 
+// usbNetworkOffHint is how a user brings the pod's USB network adapter back, for the commands
+// that run over it (JSON over USB) when it is off.
+const usbNetworkOffHint = "Turn USB networking on with `benchpod usb-network on --connection usb` (the pod's console " +
+	"`usb-network on`); Wi-Fi set on the pod keeps it off: clear it with `benchpod clear-wifi` over the pod's network " +
+	"address, or `benchpod net-reset` over USB"
+
 // usbNetProbeTimeout bounds the TCP check of the pod's address on the USB link.
 const usbNetProbeTimeout = 2 * time.Second
 
@@ -70,9 +76,9 @@ func (g *globalFlags) usbNetAddr(device string) (string, error) {
 	var why error
 	switch {
 	case !u.On && u.OffBySetting:
-		why = errors.New("USB networking is turned off on the pod (`benchpod usb-network on` over its USB console turns it back on)")
+		why = errors.New("USB networking is turned off on the pod (`benchpod usb-network on --connection usb`, the pod's console `usb-network on`, turns it back on)")
 	case !u.On:
-		why = errors.New("USB networking is off because Wi-Fi is configured on the pod (`benchpod clear-wifi` turns it back on)")
+		why = errors.New("USB networking is off because Wi-Fi is configured on the pod (`benchpod clear-wifi` over its network address, or `benchpod net-reset` over USB, turns it back on)")
 	case !u.Link:
 		why = fmt.Errorf("the pod's USB network adapter (%s) is not up on this computer; "+
 			"macOS ignores a new adapter while the screen is locked: unlock and run `benchpod usb-reattach`", u.PodIP)

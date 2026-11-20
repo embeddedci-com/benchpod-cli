@@ -42,23 +42,14 @@ func (c *textConsole) Close() error { return nil }
 
 var _ io.ReadWriteCloser = (*textConsole)(nil)
 
-// New CLI + firmware without a usable USB network: install-blobs keeps today's console path.
-func TestBlobTargetFallsBackToTheConsole(t *testing.T) {
-	cases := map[string]string{
-		"firmware before 3.9.0": "  device : benchpod\r\n  ip     : 192.168.1.220\r\n",
-	}
-	for name, status := range cases {
-		c := serialconsole.NewConsole(&textConsole{status: status})
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		target, closeT, err := blobTargetFor(ctx, c, "/dev/cu.usbmodem1")
-		cancel()
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		closeT()
-		if _, ok := target.(consoleBlobs); !ok || target.Via() != "/dev/cu.usbmodem1" {
-			t.Fatalf("%s: target %T via %s, want the console", name, target, target.Via())
-		}
+// Firmware before 3.9.0 has no USB network adapter: its console upload is gone, so a clear error
+// that names flash-self.
+func TestBlobTargetBefore39IsAnError(t *testing.T) {
+	c := serialconsole.NewConsole(&textConsole{status: "  device : benchpod\r\n  ip     : 192.168.1.220\r\n"})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, _, err := blobTargetFor(ctx, c, "/dev/cu.usbmodem1"); err == nil || !strings.Contains(err.Error(), "benchpod flash-self") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -72,7 +63,7 @@ func TestBlobTargetOn39WithoutANetworkIsAnError(t *testing.T) {
 		"  usb    : net off (Wi-Fi configured) pod 10.237.8.85 host 10.237.8.86 link down rx 0 (drop 0) tx 0 (full 0)\r\n"})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if _, _, err := blobTargetFor(ctx, c, "/dev/cu.usbmodem1"); err == nil || !strings.Contains(err.Error(), "clear-wifi") {
+	if _, _, err := blobTargetFor(ctx, c, "/dev/cu.usbmodem1"); err == nil || !strings.Contains(err.Error(), "usb-network on") {
 		t.Fatalf("err = %v", err)
 	}
 }

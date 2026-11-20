@@ -204,7 +204,7 @@ the pod reports (the `usb` line of its console `status`), never from its own ver
 
 | | Pod firmware before 3.9.0 | Pod firmware 3.9.0 and later |
 |---|---|---|
-| **This CLI (0.6.0+)** | Works as before: the USB console for `status`, `la voltage`, `install-blobs`, `flash-self`, `set-wifi`, the policies, `cloud ca`/`proxy` and `identity`; the network commands need the pod's network address, as before, and say so. The serial auto-detect still finds `0483:5740` and `2E8A` consoles. | Over `usb`, every command uses the pod's USB network adapter when it is up (including `flash`, which the STM32 pod's console never ran), and the console for the commands that stay there. When USB networking is off (Wi-Fi configured) or not up, the network commands use the pod's Ethernet or Wi-Fi address from its console `status` if this computer reaches it, say so, and are subject to the pod's external LAN policy there (`benchpod clear-wifi` turns USB networking back on). |
+| **This CLI (0.6.0+)** | Works as before: the USB console for `status`, `la voltage`, `flash-self`, `set-wifi`, the policies, `cloud ca`/`proxy` and `identity` (not `install-blobs`, whose console upload CLI 0.10 dropped: update the pod with `flash-self`); the network commands need the pod's network address, as before, and say so. The serial auto-detect still finds `0483:5740` and `2E8A` consoles. | Over `usb`, every command uses the pod's USB network adapter when it is up (including `flash`, which the STM32 pod's console never ran), and the console for the commands that stay there. When USB networking is off (Wi-Fi configured) or not up, the network commands use the pod's Ethernet or Wi-Fi address from its console `status` if this computer reaches it, say so, and are subject to the pod's external LAN policy there (`benchpod clear-wifi` turns USB networking back on). |
 | **An older CLI (0.5.x)** | Unchanged. | The kept console commands keep their names and replies (`status`, `dfu`, `identity`, `identity wipe`, `lan-policy`, `sig-policy`, `set-wifi`, `show-network`, `clear-wifi`, `cloud ca show`/`clear`, `cloud proxy`), so those still work, and `flash-self` still flashes over DFU. What 3.9.0 moved to the network API (`la voltage` over USB, and every upload: `install-blobs`, the blob step of `flash-self` and `set-wifi`, `cloud ca set`) prints the pod's "moved to the network API ... update the benchpod CLI to 0.6.0 or later" line: update the CLI with the firmware. Over a network address everything works. |
 
 Which command works over which connection:
@@ -1866,7 +1866,10 @@ download's checksum does not match, or dfu-util fails. A local file's signature 
 ### `benchpod install-blobs`
 
 Install the gateware and ESP32-C3 images the pod's firmware goes with (USB: over the
-pod's USB network adapter when it is up, firmware 3.9.0+, else its console). By
+pod's USB network adapter when it is up, else the pod's network address; firmware 3.9.0
+and later). Firmware before 3.9.0 took blobs over its console, which this CLI no longer
+uses: update such a pod with `benchpod flash-self` (USB DFU). With USB networking off,
+`benchpod usb-network on --connection usb` turns it back on. By
 default they come from the release that matches the firmware the pod runs. Each
 blob's signature is reported; for now a missing or failing one never stops it.
 When the pod does not list its blob slots (its `blob_status` command fails), it installs
