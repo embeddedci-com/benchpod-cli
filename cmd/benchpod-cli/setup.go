@@ -120,6 +120,10 @@ type setupEnv interface {
 	save(target string) error
 	// latestFirmware is the latest firmware release tag, "" when it could not be read.
 	latestFirmware() string
+	// pair makes sure this computer may drive the pod over the network (LAN pairing, firmware
+	// 4.0.1+): over the USB console when the pod is on USB, else through embeddedci.com. It returns
+	// a line to print ("" for nothing), or errNotPaired when it cannot pair.
+	pair(p setupPod) (string, error)
 }
 
 // errNeedsAnswer is returned under --yes when a step needs an answer that no flag gave.
@@ -219,6 +223,13 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 	}
 	p := pods[0]
 	fmt.Fprintf(out, "     Found %s.\n", describeSetupPod(p))
+	// Pair first: on firmware 4.0.1+ the steps below talk to the pod over the network, which an
+	// unpaired computer may only ask for status.
+	if msg, err := env.pair(p); err != nil {
+		return err
+	} else if msg != "" {
+		fmt.Fprintf(out, "     %s\n", msg)
+	}
 	if latest := env.latestFirmware(); latest != "" && p.firmware != "" && versionLess(p.firmware, latest) {
 		// A nudge, not a step: the update reboots the pod, so the user runs it when it suits them.
 		fmt.Fprintf(out, "     Firmware %s is out of date: %s is the latest. Update it with the pod on USB:\n"+
@@ -583,14 +594,19 @@ func (e *realSetupEnv) find() ([]setupPod, error) {
 			return nil, err
 		}
 		var pods []setupPod
-		for _, sp := range serialPods {
-			if spec.Device == "" || sp.Device == spec.Device {
-				p := setupPodFromSerial(sp)
-				if spec.Pod != "" {
-					p.usbConn = raw
-				}
-				pods = append(pods, p)
+		for _, sp := range usbPodsFor(serialPods, spec) {
+			p := setupPodFromSerial(sp)
+			if spec.Pod != "" {
+				p.usbConn = raw
 			}
+			pods = append(pods, p)
+		}
+		if len(pods) == 0 && spec.Pod != "" && len(serialPods) > 0 {
+			var ids []string
+			for _, sp := range serialPods {
+				ids = append(ids, "usb:benchpod-"+sp.ShortID)
+			}
+			return nil, fmt.Errorf("no pod %s on USB; found %s", raw, strings.Join(ids, ", "))
 		}
 		return pods, nil
 	}
@@ -606,6 +622,23 @@ func (e *realSetupEnv) find() ([]setupPod, error) {
 	}
 	correlate(netPods, serialPods)
 	return mergeSetupPods(serialPods, netPods), nil
+}
+
+// usbPodsFor keeps the USB pods a connection names: a device path picks that port, usb:<name>
+// the pod with that identity short id (also as benchpod-<id>), plain usb all of them.
+func usbPodsFor(pods []serialconsole.SerialPod, spec ConnSpec) []serialconsole.SerialPod {
+	want := serialconsole.NormalizePodName(spec.Pod)
+	var out []serialconsole.SerialPod
+	for _, sp := range pods {
+		if spec.Device != "" && sp.Device != spec.Device {
+			continue
+		}
+		if want != "" && serialconsole.NormalizePodName(sp.ShortID) != want {
+			continue
+		}
+		out = append(out, sp)
+	}
+	return out
 }
 
 // mergeSetupPods turns discover's two lists into one entry per physical pod. A network pod that
@@ -720,3 +753,26 @@ func (e *realSetupEnv) saveLaMV(deviceID string, mv int) (bool, error) {
 func (e *realSetupEnv) save(target string) error { return runSetConnection(e.g, target) }
 
 func (e *realSetupEnv) latestFirmware() string { return latestFirmwareRelease() }
+
+func (e *realSetupEnv) pair(p setupPod) (string, error) {
+	if p.device != "" {
+		return pairOverConsole(e.g, p.device, p.lanAddr)
+	}
+	if p.addr == "" || isUSBLinkAddr(p.addr) {
+		return "", nil
+	}
+	known, required, paired := lanPairing(p.addr)
+	if !known || !required || paired {
+		return "", nil
+	}
+	if p.cloud.Configured && e.signedIn() != "" {
+		if name, ok := e.accountDevices()[strings.TrimSpace(p.cloud.DeviceID)]; ok {
+			msg, err := pairOverCloud(e.g, name)
+			if err != nil {
+				return "", fmt.Errorf("pair this computer through embeddedci.com: %w. %v", err, errNotPaired)
+			}
+			return msg, nil
+		}
+	}
+	return "", errNotPaired
+}

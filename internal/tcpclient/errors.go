@@ -39,7 +39,8 @@ const (
 	// Refused is any other refusal: a bad argument, a missing feature, a failed operation, and
 	// every refusal without a code (the client never reads a refusal's text).
 	Refused RefusalKind = iota
-	// Locked is the LAN policy refusing a command on the LAN (BP0040).
+	// Locked is the LAN refusing a command: the LAN policy (BP0040), or a computer that is not
+	// paired with the pod (BP0081).
 	Locked
 	// Busy is the pod or one of its engines in use: a lease, the PSRAM bus, another session.
 	Busy
@@ -138,6 +139,8 @@ var codeKinds = map[string]RefusalKind{
 	"BP0078": Refused,        // usb_host_no_crystal
 	"BP0079": Refused,        // usb_host_other_port
 	"BP0080": Refused,        // dac_pinout_mismatch
+	"BP0081": Locked,         // lan_not_paired
+	"BP0082": Refused,        // lan_clients_full
 }
 
 // CodeKind is the kind of a refusal code; ok is false for a code the table does not have.

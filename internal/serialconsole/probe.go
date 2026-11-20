@@ -42,6 +42,9 @@ type SerialPod struct {
 	// different addresses (USB shows the wired IP, mDNS may answer on Wi-Fi) and the pod is not
 	// registered yet, so there is no device id to match on. "" on firmware without `identity`.
 	PublicKey string
+	// ShortID is the identity short id ("30a9f1"), what usb:<name> names a pod by; "" on firmware
+	// without `identity`.
+	ShortID string
 }
 
 // Addressed reports whether the pod holds a usable IP address (it has a DHCP
@@ -91,6 +94,7 @@ func ProbeSerial(preferred string, probeTimeout time.Duration) (pods []SerialPod
 		ctx, cancel = context.WithTimeout(context.Background(), probeTimeout)
 		if id, idErr := c.Identity(ctx); idErr == nil {
 			pod.PublicKey = id.PublicKey
+			pod.ShortID = id.ShortID
 		}
 		cancel()
 		_ = c.Close()

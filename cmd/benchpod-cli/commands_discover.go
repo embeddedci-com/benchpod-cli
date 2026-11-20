@@ -50,7 +50,11 @@ type discoveredPod struct {
 	reachable bool
 	healthErr string // why the API check failed, when it did
 	cloud     cloudState
-	sameAs    string // serial device of the pod this is (the same physical pod)
+	// LAN pairing (firmware 4.0.1+): pairingKnown when the pod reports it; unpaired when this
+	// computer must pair before it can do more than read status.
+	pairingKnown bool
+	unpaired     bool
+	sameAs       string // serial device of the pod this is (the same physical pod)
 }
 
 // cloudState is the pod's view of its registration, from `cloud_status`.
@@ -200,6 +204,8 @@ func checkPod(p *discoveredPod) {
 			p.cloud.known = true
 		}
 	}
+	known, required, paired := lanPairing(p.addr)
+	p.pairingKnown, p.unpaired = known, known && required && !paired
 }
 
 // correlate marks each network pod that is the same physical device as one of
@@ -782,6 +788,11 @@ func describeHealth(p discoveredPod) string {
 		default:
 			parts = append(parts, fmt.Sprintf("registered, cloud %s", strings.ToLower(strings.TrimSpace(p.cloud.State))))
 		}
+	}
+	if p.unpaired {
+		parts = append(parts, "this computer is not paired (status only: plug the pod into it over USB-C and run `benchpod setup`)")
+	} else if p.pairingKnown && p.reachable {
+		parts = append(parts, "paired")
 	}
 	if v := apiVerdict(p.api); v != "" {
 		parts = append(parts, v)
