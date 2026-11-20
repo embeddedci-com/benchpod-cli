@@ -601,8 +601,8 @@ intelligence and OpenOCD's exit code is the verdict. The pod runs a CMSIS-DAP
 processor locally and OpenOCD's `cmsis-dap` **TCP backend** ships whole DAP
 transfers (`DAP_Transfer`/`DAP_TransferBlock`), so a flash is one round-trip per
 DAP command instead of thousands of per-bit round-trips — fast even over the
-network. Works on **TCP** (`dap_start`) and **USB** (the console `dap-start`
-command). It needs a **recent OpenOCD with the `cmsis_dap_tcp` backend**
+network. Works on **TCP** (`dap_start`), over the network or over USB on the pod's
+USB network adapter (firmware 4.0 has no probe on its console). It needs a **recent OpenOCD with the `cmsis_dap_tcp` backend**
 (post-0.12.0; e.g. `brew install --HEAD open-ocd`); the CLI checks for the
 backend up front and fails with clear advice if it is missing.
 
@@ -2014,11 +2014,12 @@ Show whether the background service is installed and running. No flags.
 
 ### `benchpod usb-reattach`
 
-Make the pod drop off the USB bus for half a second and connect again (USB). The
-computer then sets up the console and the USB network adapter anew, as after
-replugging the cable. macOS ignores a new network adapter while the screen is
-locked: run this after unlocking when the pod was plugged in or rebooted meanwhile.
-Needs firmware 3.9.0 or later. No flags.
+Make the pod drop off the USB bus for half a second and connect again (`usb_reattach`). The
+computer then sets up the console and the USB network adapter anew, as after replugging the
+cable. macOS ignores a new network adapter while the screen is locked: run this after
+unlocking when the pod was plugged in or rebooted meanwhile. The CLI sends it over the pod's
+USB network adapter when that is up, else over the pod's network address from its console
+`status` (or the `--connection` given); with neither, replug the cable. No flags.
 
 ### `benchpod login`
 

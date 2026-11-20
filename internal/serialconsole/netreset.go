@@ -14,7 +14,9 @@ var ErrNoNetReset = errors.New("the pod's console has no net-reset (it needs fir
 // and puts Ethernet back to autonegotiation with a PHY reset and a new DHCP lease. It returns
 // the pod's `net-reset ...` lines: first the Ethernet one, then the Wi-Fi outcome.
 func (c *Console) NetReset(ctx context.Context) ([]string, error) {
-	done := func(acc string) bool { return strings.Contains(acc, "net-reset wifi") || strings.Contains(acc, "net-reset error") }
+	done := func(acc string) bool {
+		return strings.Contains(acc, "net-reset wifi") || strings.Contains(acc, "net-reset error")
+	}
 	out, err := c.sendCommandUntil(ctx, "net-reset", "net-reset", "", done)
 	var lines []string
 	for _, ln := range consoleLines(out) {

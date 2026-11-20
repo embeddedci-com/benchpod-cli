@@ -45,7 +45,9 @@ func withFakeIdentityConsole(t *testing.T, fc *fakeIdentityConsole, tty bool) {
 	}
 	stdinIsTerminal = func() bool { return tty }
 	savedWipe := wipeIdentity
-	wipeIdentity = func(ctx context.Context, _ *globalFlags, _, token string) (string, error) { return fc.IdentityWipe(ctx, token) }
+	wipeIdentity = func(ctx context.Context, _ *globalFlags, _, token string) (string, error) {
+		return fc.IdentityWipe(ctx, token)
+	}
 	t.Cleanup(func() { openIdentityConsole, stdinIsTerminal, wipeIdentity = saved, savedTTY, savedWipe })
 }
 

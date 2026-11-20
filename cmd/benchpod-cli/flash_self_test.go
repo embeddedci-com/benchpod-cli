@@ -113,4 +113,3 @@ func TestInstallBlobsAfterFlashFailsWhenTheConsoleNeverReturns(t *testing.T) {
 		t.Fatalf("err = %v, want an error naming install-blobs", err)
 	}
 }
-

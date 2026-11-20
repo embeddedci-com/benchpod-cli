@@ -468,7 +468,7 @@ func openLAN(ctx context.Context, addr string) (lanSession, error) {
 }
 
 type caReply struct {
-	Present bool                   `json:"present"`
+	Present bool        `json:"present"`
 	Certs   []podCACert `json:"certs"`
 }
 

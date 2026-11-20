@@ -140,22 +140,22 @@ func newLanTLSCmd(g *globalFlags) *cobra.Command {
 		onOffCmd("https-only", "https_only", "Take only TLS on Ethernet and Wi-Fi (on, the default) or plaintext 8080 too (off)"),
 		onOffCmd("scpi", "scpi", "Turn SCPI on the pod's TCP ports on or off (off by default)"),
 		&cobra.Command{
-		Use:   "regenerate",
-		Short: "Make a new key and self-signed certificate on the pod",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return run(func(out, warn io.Writer) error {
-				return runLanTLS(g, map[string]any{"regenerate": true}, out, warn)
-			})
-		},
-	}, setCert, trust, &cobra.Command{
-		Use:   "forget",
-		Short: "Drop this computer's pin for the pod",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return run(func(out, _ io.Writer) error { return runLanTLSForget(g, out) })
-		},
-	})
+			Use:   "regenerate",
+			Short: "Make a new key and self-signed certificate on the pod",
+			Args:  cobra.NoArgs,
+			RunE: func(_ *cobra.Command, _ []string) error {
+				return run(func(out, warn io.Writer) error {
+					return runLanTLS(g, map[string]any{"regenerate": true}, out, warn)
+				})
+			},
+		}, setCert, trust, &cobra.Command{
+			Use:   "forget",
+			Short: "Drop this computer's pin for the pod",
+			Args:  cobra.NoArgs,
+			RunE: func(_ *cobra.Command, _ []string) error {
+				return run(func(out, _ io.Writer) error { return runLanTLSForget(g, out) })
+			},
+		})
 	return root
 }
 
