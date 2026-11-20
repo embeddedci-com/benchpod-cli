@@ -81,12 +81,11 @@ func parseTarget(raw string) (ConnSpec, error) {
 			"or save one with `benchpod set-connection <address|device|usb|embeddedci:name>`")
 	}
 	switch strings.ToLower(raw) {
-	// "usb" is the name this keyword goes by everywhere the CLI speaks to a
-	// user — it names what the person plugged in. "serial" is the older
-	// spelling, still accepted so saved configs and BENCHPOD_CONNECTION values
-	// written before the rename keep working; it is not advertised anywhere.
-	case "usb", "serial":
+	// "usb" names what the person plugged in (CLI 0.10 dropped the older "serial").
+	case "usb":
 		return ConnSpec{Kind: connSerial}, nil
+	case "serial":
+		return ConnSpec{}, usageErrorf("connection %q: CLI 0.10 calls it usb (--connection usb, or `benchpod set-connection usb`)", raw)
 	}
 	if strings.HasPrefix(strings.ToLower(raw), "usb:") {
 		pod := serialconsole.NormalizePodName(raw[len("usb:"):])
@@ -180,7 +179,6 @@ const cloudCommandList = "status, ping, la voltage, la pull, la status, la step,
 func newSetConnectionCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:     "set-connection <address|name|device|usb|embeddedci:name>",
-		Aliases: []string{"set-bench-pod"},
 		Short:   `Store the default connection: a network address, a pod name, a device path, "usb", or embeddedci:<name>`,
 		Long: "Store the default connection in the config file, so later commands can leave out\n" +
 			"--connection. The value is what --connection takes: the pod's network address\n" +

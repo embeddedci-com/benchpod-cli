@@ -16,7 +16,6 @@ func TestClassifyConnection(t *testing.T) {
 		{"192.168.1.5:9000", true, "192.168.1.5:9000", ""},
 		{"benchpod.local", true, "benchpod.local:8080", ""},
 		{"  10.0.0.2  ", true, "10.0.0.2:8080", ""},
-		{"serial", false, "", ""},
 		{"USB", false, "", ""},
 		{"/dev/tty.usbmodem1101", false, "", "/dev/tty.usbmodem1101"},
 		{"COM3", false, "", "COM3"},
@@ -101,9 +100,7 @@ func TestRequireNetwork(t *testing.T) {
 	if err != nil && strings.Contains(err.Error(), "`usb`") {
 		t.Errorf("RequireNetwork(cloud) offers USB to a network-only command: %v", err)
 	}
-	// "serial" is still accepted as an input spelling, so both forms must land
-	// on the same USB transport and the same guidance.
-	for _, conn := range []string{"usb", "serial", "/dev/tty.usbmodem1101"} {
+	for _, conn := range []string{"usb", "/dev/tty.usbmodem1101"} {
 		spec, _ := classifyConnection(conn)
 		err := spec.RequireNetwork("ping")
 		if err == nil {
@@ -132,8 +129,11 @@ func TestIsSerialDevice(t *testing.T) {
 
 func TestDescribeConnSpeaksUSBNotSerial(t *testing.T) {
 	// The keyword the user types and the wording the CLI echoes back must agree:
-	// "serial" is accepted as a legacy input spelling but is never presented.
-	for _, conn := range []string{"usb", "serial"} {
+	// CLI 0.10 dropped the older "serial" spelling: it is a usage error naming usb.
+	if _, err := classifyConnection("serial"); err == nil || !strings.Contains(err.Error(), "usb") || exitCode(err) != exitUsage {
+		t.Errorf("serial: %v", err)
+	}
+	for _, conn := range []string{"usb"} {
 		spec, err := classifyConnection(conn)
 		if err != nil {
 			t.Fatalf("classifyConnection(%q): %v", conn, err)

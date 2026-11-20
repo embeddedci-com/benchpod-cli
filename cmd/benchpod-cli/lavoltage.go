@@ -30,7 +30,7 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 			"DUT's I/O voltage. The pod refuses LA capture, UART, SWD flash, pull-ups and\n" +
 			"sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
-			"VOLTAGE is 1.8V or 3.3V (also 1800mV, 3.3, or 3300).\n\n" +
+			"VOLTAGE is 1.8V or 3.3V (also 1800mV, or 3.3: a bare number is volts).\n\n" +
 			"5V (5.0, 5000) works on a pod with the digital board v3r4: pin 21, the pull-up rail,\n" +
 			"goes to 5V and outputs reach 5V through their pull-ups (benchpod la pull PIN up). The\n" +
 			"output then shows pin 21. BP0028: 5V did not come up. Other pods refuse 5000. Details:\n" +

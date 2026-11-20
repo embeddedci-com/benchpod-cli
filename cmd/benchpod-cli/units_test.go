@@ -42,20 +42,20 @@ func near(a, b float64) bool {
 }
 
 func TestParseLAVoltage(t *testing.T) {
-	for in, want := range map[string]int{"3.3V": 3300, "3.3v": 3300, "1.8V": 1800, "1800mV": 1800, "3.3": 3300, "1.8": 1800, "3300": 3300, "1800": 1800,
-		"5V": 5000, "5.0": 5000, "5000": 5000, "5000mV": 5000} { // 5 V: digital v3r4 (other pods refuse it)
+	for in, want := range map[string]int{"3.3V": 3300, "3.3v": 3300, "1.8V": 1800, "1800mV": 1800, "3.3": 3300, "1.8": 1800,
+		"5V": 5000, "5.0": 5000, "5000mV": 5000} { // 5 V: digital v3r4 (other pods refuse it)
 		if got, err := parseLAVoltage(in); err != nil || got != want {
 			t.Errorf("parseLAVoltage(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"2.5", "1234", "4.9", "x", ""} {
+	// A bare number is volts: CLI 0.10 dropped "a number above 5 means mV".
+	for _, in := range []string{"2.5", "1234", "4.9", "x", "", "3300", "1800"} {
 		if _, err := parseLAVoltage(in); err == nil {
 			t.Errorf("parseLAVoltage(%q) accepted", in)
 		}
 	}
 }
 
-// The SI-unit flags send exactly what the older unit-in-the-name flags send.
 // generate and la step send firmware 4.0's names and units (Hz, volts), from the SI flags.
 func TestSIFlagsAndFirmware4Names(t *testing.T) {
 	t.Setenv("BENCHPOD_CONNECTION", "")
