@@ -227,7 +227,7 @@ const laPinCount = 14
 // parseLAPin parses a logic-analyzer pin reference for SWD wiring. These are no
 // longer GPIO numbers: they are the pod's LA pins (1-14) that map to the
 // ice40/FPGA. Accepts an optional "la" prefix, so "la1", "1", "la14", and "14"
-// are all valid. LA13/LA14 need pod firmware 3.1 or newer; older firmware rejects them.
+// are all valid.
 func parseLAPin(s string) (int, error) {
 	orig := strings.TrimSpace(s)
 	v := strings.TrimPrefix(strings.ToLower(orig), "la")

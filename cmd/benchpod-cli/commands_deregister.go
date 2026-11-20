@@ -58,12 +58,12 @@ func newDeregisterCmd(g *globalFlags) *cobra.Command {
 // that case there is nothing to unprovision locally, so the pod-side step is skipped.
 func runDeregister(g *globalFlags, serverURL, tokenFile, deviceName, deviceID string, keepPodConfig bool) error {
 	if strings.TrimSpace(serverURL) == "" {
-		return errors.New("--server-url cannot be empty")
+		return usageErrorf("--server-url cannot be empty")
 	}
 	deviceName = strings.TrimSpace(deviceName)
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceName != "" && deviceID != "" {
-		return errors.New("pass only one of --device-name or --device-id")
+		return usageErrorf("pass only one of --device-name or --device-id")
 	}
 	// Only the default (identify-by-key) path talks to the pod; an explicit selector means the
 	// pod may be unreachable, which is exactly why the selector exists.

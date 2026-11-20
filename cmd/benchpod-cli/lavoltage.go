@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -31,7 +30,7 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 			"DUT's I/O voltage. The pod refuses LA capture, UART, SWD flash, pull-ups and\n" +
 			"sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
-			"VOLTAGE is 1.8V or 3.3V (also 1800mV, 3.3, or 3300).\n\n" +
+			"VOLTAGE is 1.8V or 3.3V (also 1800mV, or 3.3: a bare number is volts).\n\n" +
 			"5V (5.0, 5000) works on a pod with the digital board v3r4: pin 21, the pull-up rail,\n" +
 			"goes to 5V and outputs reach 5V through their pull-ups (benchpod la pull PIN up). The\n" +
 			"output then shows pin 21. BP0028: 5V did not come up. Other pods refuse 5000. Details:\n" +
@@ -63,21 +62,6 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 			return runLAVoltage(g, mv, out, os.Stderr)
 		},
 	}
-}
-
-// laVoltageConsole is the part of the USB console la voltage uses.
-type laVoltageConsole interface {
-	LAVoltage(ctx context.Context, mv int) (int, error)
-	Close() error
-}
-
-// openLAVoltageConsole opens the pod's USB console; tests replace it with a fake.
-var openLAVoltageConsole = func(g *globalFlags, device string, timeout time.Duration) (laVoltageConsole, string, context.Context, context.CancelFunc, error) {
-	console, path, ctx, cancel, err := g.openSerialConsole(device, timeout)
-	if err != nil {
-		return nil, "", nil, cancel, err
-	}
-	return console, path, ctx, cancel, nil
 }
 
 // laVoltageReply is the pod's JSON answer to la_voltage.
@@ -141,48 +125,10 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 			fmt.Fprintln(warn, "Warning: "+w)
 		}
 	}
-	if mv != 0 && podStoresWiring(g) {
-		fmt.Fprintln(out, "Not saved: the pod uses the I/O voltage in its wiring profile after a restart (change it there with `benchpod wiring save`, or in the Pins pane).")
-		return nil
-	}
 	if mv != 0 {
-		if id := accountDeviceForConnection(g); id != "" {
-			changed, err := saveLaMVToProfile(id, rep.MV)
-			switch {
-			case err != nil:
-				fmt.Fprintf(warn, "Warning: could not save it to the pod's wiring profile on embeddedci.com: %v\n", err)
-			case changed:
-				fmt.Fprintln(out, "Saved to the pod's wiring profile on embeddedci.com (applied on every connect).")
-			}
-		}
+		fmt.Fprintln(out, "Not saved: the pod uses the I/O voltage in its wiring profile after a restart (change it there with `benchpod wiring save`, or in the Pins pane).")
 	}
 	return nil
-}
-
-// accountDeviceForConnection returns the cloud device id of the pod behind g's network or
-// embeddedci.com connection when this machine is signed in and the pod is registered to that
-// account, so its wiring profile can be written; "" otherwise (also over USB, and whenever it
-// cannot tell). It never prompts or fails. A variable so tests can replace it.
-var accountDeviceForConnection = func(g *globalFlags) string {
-	spec, err := g.resolveTarget()
-	if err != nil {
-		return ""
-	}
-	if spec = g.preferUSBNetwork(spec, "la voltage"); spec.IsSerial() {
-		return ""
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	api := newServerAPI(cloudServerURL())
-	cred, err := cloudCredential(ctx, api)
-	if err != nil {
-		return ""
-	}
-	id, err := cloudDeviceID(ctx, api, cred, spec)
-	if err != nil {
-		return ""
-	}
-	return id
 }
 
 // saveLaMVToProfile stores mv as la_mv in the wiring profile of the pod with this cloud device id
@@ -208,28 +154,12 @@ func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
 	if err != nil {
 		return "", laVoltageReply{}, err
 	}
-	spec = g.preferUSBNetwork(spec, what)
 	var rep laVoltageReply
 	if spec.IsSerial() {
-		console, path, ctx, cancel, err := openLAVoltageConsole(g, spec.Device, g.effectiveTimeout(15*time.Second))
-		if err != nil {
+		// Over USB: the pod's USB network adapter (podClient says why when it is not usable).
+		if _, err := g.networkTarget(what); err != nil {
 			return "", rep, err
 		}
-		defer cancel()
-		defer console.Close()
-		rep.MV, err = console.LAVoltage(ctx, mv)
-		if errors.Is(err, serialconsole.ErrMovedToNetwork) ||
-			(errors.Is(err, serialconsole.ErrUnknownCommand) && consoleHasUSBNet(ctx, console)) {
-			// Firmware 3.9.0+ moved la-voltage from the console to the JSON API; preferUSBNetwork
-			// already found the USB network unusable, so say why.
-			_, nerr := g.networkTarget(what)
-			return "", rep, fmt.Errorf("%s: this pod's console has no la-voltage (firmware 3.9.0+ sets it over the "+
-				"network API) and its USB network is not usable: %v", what, nerr)
-		}
-		if err != nil {
-			return "", rep, laVoltageError(what, err)
-		}
-		return "the pod on " + path, rep, nil
 	}
 	ctx, cancel, pod, err := g.podClient(what, 15*time.Second)
 	if err != nil {
@@ -262,29 +192,13 @@ func laVoltageLAN(ctx context.Context, client podCommander, mv int) (laVoltageRe
 
 // laVoltageError says when the firmware is too old, and leaves other refusals to the pod.
 func laVoltageError(what string, err error) error {
-	if errors.Is(err, serialconsole.ErrUnknownCommand) {
-		return errors.New(laVoltageMissing)
-	}
 	if pe, ok := tcpclient.AsPodError(err); ok {
 		if isUnknownCommand(err) {
 			return errors.New(laVoltageMissing)
 		}
-		return refusedError(what, pe, pe.Cmd == "")
+		return refusedError(what, pe)
 	}
 	return fmt.Errorf("%s: %w", what, err)
-}
-
-// consoleHasUSBNet: the pod's console reports a USB network adapter (firmware 3.9.0+), which
-// tells a console that moved a command to the JSON API from one too old to have it.
-func consoleHasUSBNet(ctx context.Context, c laVoltageConsole) bool {
-	u, ok := c.(interface {
-		USBNetwork(context.Context) (serialconsole.USBNet, error)
-	})
-	if !ok {
-		return false
-	}
-	_, err := u.USBNetwork(ctx)
-	return err == nil
 }
 
 // formatMV is 3300 -> "3.3 V".

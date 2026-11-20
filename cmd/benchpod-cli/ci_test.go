@@ -49,7 +49,7 @@ func (p *fakeCIPod) cmds() []string {
 	for _, r := range p.reqs {
 		s := r["cmd"].(string)
 		if s == "target_power" {
-			s += fmt.Sprintf(":%v:%v", r["efuse"], r["state"])
+			s += fmt.Sprintf(":%v:%v", r["efuse"], map[any]int{true: 1, false: 0}[r["enabled"]])
 		}
 		out = append(out, s)
 	}
@@ -69,7 +69,7 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 		if p.statusErr != nil {
 			return nil, p.statusErr
 		}
-		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": 4, "la_vccio_mv": 3300}
+		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": 4, "la_vccio_mv": 3300, "api": 2, "min_client_api": 2}
 		p.mu.Lock()
 		if len(p.uptimes) > 0 {
 			st["uptime_ms"] = p.uptimes[0]
@@ -87,7 +87,7 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 	case "calibrate":
 		return json.RawMessage(`{"offset":{"current_in":12}}`), nil
 	case "target_power":
-		if req["state"] == 1 {
+		if req["enabled"] == true {
 			p.mu.Lock()
 			w := p.uart
 			p.mu.Unlock()
@@ -98,9 +98,9 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 				}()
 			}
 		}
-		return json.RawMessage(`{"efuse":1,"enabled":1}`), nil
+		return json.RawMessage(`{"efuse":1,"enabled":true}`), nil
 	case "target_status":
-		return json.RawMessage(`{"efuse1":{"enabled":0},"efuse2":{"enabled":0}}`), nil
+		return json.RawMessage(`{"efuse1":{"enabled":false},"efuse2":{"enabled":false}}`), nil
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -653,7 +653,7 @@ func TestLocalLeaseRequests(t *testing.T) {
 	renewErr = &tcpclient.PodError{Reason: "lease not held", Code: "BP0027"}
 	mu.Unlock()
 	time.Sleep(70 * time.Millisecond)
-	if !strings.Contains(l.Lost(), "lease not held") {
+	if !strings.Contains(l.Lost(), "lease was lost") {
 		t.Errorf("lost %q", l.Lost())
 	}
 	l.Release(context.Background())
@@ -750,7 +750,7 @@ func TestCICommandExitCodes(t *testing.T) {
 	if code := run([]string{"ci", "run", "-f", bad}); code != 1 {
 		t.Errorf("run bad: %d", code)
 	}
-	if code := run([]string{"ci", "run", "--no-such-flag"}); code != 1 {
+	if code := run([]string{"ci", "run", "--no-such-flag"}); code != exitUsage {
 		t.Errorf("usage error under ci: %d", code)
 	}
 	if code := run([]string{"ci", "-f", filepath.Join(dir, "nope.yaml")}); code != 1 {
@@ -768,7 +768,7 @@ func TestCICommandExitCodes(t *testing.T) {
 	}
 	a, b := mk("a", ci.Passed), mk("b", ci.Failed)
 	out := filepath.Join(dir, "diff.json")
-	if code := run([]string{"ci", "diff", a, filepath.Join(b, "run.json"), "--json", "--output-filename", out}); code != 0 {
+	if code := run([]string{"ci", "diff", a, filepath.Join(b, "run.json"), "--json", "--out", out}); code != 0 {
 		t.Errorf("diff: %d", code)
 	}
 	if code := run([]string{"ci", "diff", a, filepath.Join(dir, "missing")}); code != 1 {

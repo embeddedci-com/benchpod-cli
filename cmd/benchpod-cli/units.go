@@ -101,16 +101,12 @@ func formatSI(v float64, unit string) string {
 
 // parseLAVoltage reads the LA bank voltage as the pod takes it, in millivolts (1800, 3300, or 5000
 // for 5 V I/O on the digital board v3r4; other pods refuse 5000 themselves). It accepts "3.3V",
-// "1800mV", "3.3" (volts) or "3300" (a bare number above 5 is millivolts, as the pod's own commands
-// take it).
+// "1800mV" or "3.3" (a bare number is volts).
 func parseLAVoltage(s string) (int, error) {
 	in := strings.TrimSpace(s)
 	v, err := parseSI(in, "V")
 	if err != nil {
 		return 0, err
-	}
-	if !strings.HasSuffix(strings.ToLower(in), "v") && v > 5 {
-		v /= 1000 // a bare 1800 or 3300
 	}
 	mv := int(math.Round(v * 1000))
 	if mv != 1800 && mv != 3300 && mv != 5000 {
@@ -119,27 +115,11 @@ func parseLAVoltage(s string) (int, error) {
 	return mv, nil
 }
 
-// sampleRateMHz resolves --sample-rate (any unit) and the older --sample-rate-mhz into MHz; 0
-// means neither was given. Both at once is a usage error.
-func sampleRateMHz(cmd *cobra.Command, hz, mhz float64) (float64, error) {
-	if cmd.Flags().Changed("sample-rate") {
-		if cmd.Flags().Changed("sample-rate-mhz") {
-			return 0, usageErrorf("pass only one of --sample-rate or --sample-rate-mhz")
-		}
-		return hz / 1e6, nil
-	}
-	return mhz, nil
-}
-
-// wholeUnits resolves a duration flag and its older integer flag (in unit) into whole units:
-// the duration flag when set (it must be a whole number of units), else the integer flag. Both
-// at once is a usage error.
-func wholeUnits(cmd *cobra.Command, durFlag string, d time.Duration, intFlag string, n int, unit time.Duration) (int, error) {
+// wholeUnits resolves a duration flag into whole units (0 when not set); it must be a whole
+// number of them.
+func wholeUnits(cmd *cobra.Command, durFlag string, d time.Duration, unit time.Duration) (int, error) {
 	if !cmd.Flags().Changed(durFlag) {
-		return n, nil
-	}
-	if cmd.Flags().Changed(intFlag) {
-		return 0, usageErrorf("pass only one of --%s or --%s", durFlag, intFlag)
+		return 0, nil
 	}
 	if d < 0 || d%unit != 0 {
 		return 0, usageErrorf("--%s %s: must be a whole number of %s", durFlag, d, unitName(unit))

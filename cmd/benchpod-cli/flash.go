@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/openocd"
-	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/embeddedci-com/benchpod-cli/internal/serverapi"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
@@ -158,7 +157,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 		return fmt.Errorf("pass either --file or an uploaded build (--build, --repo, --ref, --artifact), not both")
 	}
 	if !fromBuild && f.serverSideSet {
-		return fmt.Errorf("--server-side only applies to an uploaded build (--build, --repo, --ref)")
+		return usageErrorf("--server-side only applies to an uploaded build (--build, --repo, --ref)")
 	}
 	serverSide := spec.IsCloud()
 	if f.serverSideSet {
@@ -170,7 +169,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 			cloudConnPrefix, spec.Name)
 	}
 	if spec.IsCloud() && !serverSide {
-		return fmt.Errorf("--server-side=false needs a direct link to the pod: pass its network address or `usb` as --connection")
+		return usageErrorf("--server-side=false needs a direct link to the pod: pass its network address or `usb` as --connection")
 	}
 	if !isESPTarget(f.target) && (spec.IsNetwork() || spec.IsCloud()) {
 		f.fillFromWiring(g) // an ESP32 target uses no SWD settings
@@ -199,27 +198,27 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 		}
 	}
 	if strings.TrimSpace(f.swclk) == "" || strings.TrimSpace(f.swdio) == "" {
-		return fmt.Errorf("--swclk and --swdio are required (or set swd_swclk and swd_swdio in the pod's wiring profile)")
+		return usageErrorf("--swclk and --swdio are required (or set swd_swclk and swd_swdio in the pod's wiring profile)")
 	}
 	swclk, err := parseLAPin(f.swclk)
 	if err != nil {
-		return fmt.Errorf("--swclk: %w", err)
+		return usageErrorf("--swclk: %w", err)
 	}
 	swdio, err := parseLAPin(f.swdio)
 	if err != nil {
-		return fmt.Errorf("--swdio: %w", err)
+		return usageErrorf("--swdio: %w", err)
 	}
 	if swclk == swdio {
-		return fmt.Errorf("--swclk and --swdio must be different pins")
+		return usageErrorf("--swclk and --swdio must be different pins")
 	}
 	if strings.TrimSpace(f.file) != "" && strings.TrimSpace(f.target) == "" {
 		if fromBuild {
-			return fmt.Errorf("--target is required: the build recorded none and the wiring profile has no swd_target")
+			return usageErrorf("--target is required: the build recorded none and the wiring profile has no swd_target")
 		}
-		return fmt.Errorf("--file requires --target")
+		return usageErrorf("--file requires --target")
 	}
 	if f.targetPower != 0 && f.targetPower != 1 && f.targetPower != 2 {
-		return fmt.Errorf("--target-power must be 1 (internal 5V) or 2 (external)")
+		return usageErrorf("--target-power must be 1 (internal 5V) or 2 (external)")
 	}
 	if fromBuild && serverSide {
 		return f.flashOnServer(g, spec, art, swclk, swdio)
@@ -361,16 +360,16 @@ func printTargetUnreachableHint(f *flashFlags) {
 	}
 }
 
-// openDAP optionally powers the target, then arms the pod's CMSIS-DAP probe over
-// the selected transport (dap_start over the network, the dap-start console command
-// over USB) and returns the length-framed DAP stream to bridge to OpenOCD.
+// openDAP optionally powers the target, then arms the pod's CMSIS-DAP probe (dap_start over
+// the network, or over USB on the pod's USB network adapter) and returns the length-framed DAP
+// stream to bridge to OpenOCD.
 // powerEfuse 0 leaves target power untouched; 1/2 enables that eFuse first.
 func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse int) (io.ReadWriteCloser, bool, error) {
 	spec, err := g.resolveConnection()
 	if err != nil {
 		return nil, false, err
 	}
-	spec = g.preferUSBNetwork(spec, "flash") // the probe over the USB network is much faster
+	spec = g.preferUSBNetwork(spec, "flash")
 	if spec.IsNetwork() {
 		client := &tcpclient.Client{Addr: spec.Addr}
 		// Ask the pod whether it has the dedicated reset pin BEFORE arming the
@@ -395,43 +394,9 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 		return conn, hasNRST, nil
 	}
 
-	// Serial transport: open the console, optionally power the target, perform
-	// the dap-start handshake, and hand back the framed stream. DAPStart's
-	// returned closer owns the port (its Close sends a leave frame and closes it),
-	// so we only close the console explicitly when we bail out before the
-	// handshake succeeds. Same auto-detect as the other serial commands: explicit
-	// device verbatim, else probe USB serial ports for the bench-pod identifier.
-	console, path, err := g.openBenchpodSerial(spec.Device, 2*time.Second)
-	if err != nil {
-		return nil, false, err
-	}
-	// Same probe as the network path, on the console this time — and for the same
-	// reason it has to happen before dap-start: the console stops taking text
-	// commands once the probe is armed. The port is already open, so this costs
-	// one `status` round-trip and no extra connection.
-	hasNRST := true
-	if v, err := console.HasNRSTPin(ctx); err == nil {
-		hasNRST = v
-	}
-	if powerEfuse != 0 {
-		if err := console.TargetPower(ctx, powerEfuse, true); err != nil {
-			console.Close()
-			if errors.Is(err, serialconsole.ErrMovedToNetwork) || errors.Is(err, serialconsole.ErrUnknownCommand) {
-				return nil, false, fmt.Errorf("flash: this pod's console has no power command (firmware 3.9.0+ switches " +
-					"target power over the network API) and its USB network is not usable; drop --target-power, " +
-					"or connect over the network")
-			}
-			return nil, false, fmt.Errorf("flash: enable target-power eFuse %d over %s: %w", powerEfuse, path, err)
-		}
-		fmt.Fprintf(os.Stderr, "flash: target-power eFuse %d on\n", powerEfuse)
-		settle(ctx, targetPowerSettle)
-	}
-	conn, err := console.DAPStart(ctx, swclk, swdio)
-	if err != nil {
-		console.Close()
-		return nil, false, fmt.Errorf("flash: dap-start over %s: %w", path, err)
-	}
-	return conn, hasNRST, nil
+	// USB without a usable USB network adapter: firmware 4.0 has no probe on its console.
+	_, err = g.networkTarget("flash")
+	return nil, false, err
 }
 
 // settle waits for d or until ctx is cancelled, whichever comes first, so the
@@ -516,7 +481,7 @@ func buildOpenOCDArgs(target, file, loadAddr string, noVerify, noReset, connectU
 		prog := []string{"program", word}
 		if a := strings.TrimSpace(loadAddr); a != "" {
 			if !loadAddrRe.MatchString(a) {
-				return nil, fmt.Errorf("--load-address must be a number like 0x08000000, not %q", loadAddr)
+				return nil, usageErrorf("--load-address must be a number like 0x08000000, not %q", loadAddr)
 			}
 			prog = append(prog, a)
 		}

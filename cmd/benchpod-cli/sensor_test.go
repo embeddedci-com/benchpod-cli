@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"io"
 	"net"
 	"os"
@@ -46,7 +47,9 @@ func newFakeSensorPod(t *testing.T, caps ...string) (*fakeSensorPod, *globalFlag
 			_ = json.Unmarshal([]byte(line), &req)
 			data, msg := p.handle(req)
 			var out []byte
-			if msg != "" {
+			if code, args, ok := codedFakeError(msg); ok {
+				out, _ = json.Marshal(map[string]any{"status": "error", "code": code, "args": args})
+			} else if msg != "" {
 				out, _ = json.Marshal(map[string]any{"status": "error", "message": msg})
 			} else {
 				out, _ = json.Marshal(map[string]any{"status": "ok", "data": data})
@@ -61,6 +64,21 @@ func newFakeSensorPod(t *testing.T, caps ...string) (*fakeSensorPod, *globalFlag
 	return p, &globalFlags{connection: ln.Addr().String(), configFile: filepath.Join(t.TempDir(), "config.json")}
 }
 
+// codedFakeError reads a fake's error "BP0061" or "BP0061 {"la":1}" as a coded refusal (firmware
+// 4.0 sends a code and its args, no message).
+func codedFakeError(msg string) (string, map[string]any, bool) {
+	if len(msg) < 6 || !strings.HasPrefix(msg, "BP") {
+		return "", nil, false
+	}
+	var args map[string]any
+	if rest := strings.TrimSpace(msg[6:]); rest != "" {
+		if json.Unmarshal([]byte(rest), &args) != nil {
+			return "", nil, false
+		}
+	}
+	return msg[:6], args, true
+}
+
 func (p *fakeSensorPod) handle(req map[string]any) (any, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -72,7 +90,13 @@ func (p *fakeSensorPod) handle(req map[string]any) (any, string) {
 	}
 	switch req["cmd"] {
 	case "status":
-		return map[string]any{"board": "stm32h563", "caps": p.caps}, ""
+		st := map[string]any{"board": "stm32h563", "api": 2, "min_client_api": 2}
+		for _, c := range p.caps {
+			if c == "sensors" { // a pod with the feature: the table decides from features_rev
+				st["features_rev"], st["gateware"], st["fpga_image"] = features.Revision(), 60, "emu"
+			}
+		}
+		return st, ""
 	case "sensor_define", "sensor_stimulus":
 		key, _ := req["instance"].(string)
 		chunk, _ := base64.StdEncoding.DecodeString(req["data_b64"].(string))

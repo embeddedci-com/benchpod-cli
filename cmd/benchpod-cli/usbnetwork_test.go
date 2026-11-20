@@ -10,7 +10,7 @@ import (
 
 // Over Ethernet/Wi-Fi the setting is read; changing it is refused before anything is sent.
 func TestUSBNetworkOnTheLANReadsOnly(t *testing.T) {
-	addr, got := fakeLANPod(t, `{"status":"ok","data":{"setting":"on"}}`)
+	addr, got := fakeLANPod(t, `{"status":"ok","data":{"enabled":true}}`)
 	g := &globalFlags{connection: addr}
 	var out bytes.Buffer
 	if err := runUSBNetwork(g, "", &out); err != nil || !strings.Contains(out.String(), ": on") {
@@ -27,7 +27,7 @@ func TestUSBNetworkOnTheLANReadsOnly(t *testing.T) {
 
 // Over USB, `off` goes over the pod's USB link itself (no console); the pod's reply is printed.
 func TestUSBNetworkOffOverTheUSBLink(t *testing.T) {
-	addr, got := fakeLANPod(t, `{"status":"ok","data":{"setting":"off"}}`)
+	addr, got := fakeLANPod(t, `{"status":"ok","data":{"enabled":false}}`)
 	old := localUSBPod
 	t.Cleanup(func() { localUSBPod = old })
 	localUSBPod = func(string) string { return addr }
@@ -35,7 +35,7 @@ func TestUSBNetworkOffOverTheUSBLink(t *testing.T) {
 	if err := runUSBNetwork(&globalFlags{connection: "usb"}, "off", &out); err != nil {
 		t.Fatal(err)
 	}
-	if req := <-got; !strings.Contains(req, `"set":"off"`) || !strings.Contains(req, `"usb_network"`) {
+	if req := <-got; !strings.Contains(req, `"enabled":false`) || !strings.Contains(req, `"usb_network"`) {
 		t.Fatalf("request %s", req)
 	}
 	if !strings.Contains(out.String(), "now off") || !strings.Contains(out.String(), "usb-network on") {
@@ -64,7 +64,7 @@ func TestParseUSBNetOffBySetting(t *testing.T) {
 	if u.On || u.OffBySetting {
 		t.Fatalf("wifi: %+v", u)
 	}
-	if got := describeUSB(podUSB{Net: "off", OffReason: "setting"}); !strings.Contains(got, "usb-network on") {
+	if got := describeUSB(podUSB{Net: false, OffReason: "setting"}); !strings.Contains(got, "usb-network on") {
 		t.Fatalf("status row %q", got)
 	}
 }

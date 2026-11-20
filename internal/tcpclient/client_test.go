@@ -162,7 +162,7 @@ func TestSamplesMultiPacket(t *testing.T) {
 	}
 }
 
-func TestSamplesAsksForAndDecodesB64(t *testing.T) {
+func TestSamplesDecodesB64(t *testing.T) {
 	// "AAABAP__" = 0, 1, 65535; "NBL_fw" = 0x1234, 32767; "AIA=" = 32768 (padding tolerated).
 	addr, gotReq := mockServer(t, []string{
 		`{"status":"ok","bits":16,"b64":"AAABAP__","more":true}`,
@@ -179,8 +179,8 @@ func TestSamplesAsksForAndDecodesB64(t *testing.T) {
 	if want := []int{0, 1, 65535, 0x1234, 32767, 32768}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
-	if sent := <-gotReq; sent["enc"] != "b64" {
-		t.Fatalf("server received enc = %v, want b64", sent["enc"])
+	if sent := <-gotReq; sent["enc"] != nil {
+		t.Fatalf("server received enc = %v: b64 is firmware 4.0's default", sent["enc"])
 	}
 	if _, touched := req["enc"]; touched {
 		t.Fatal("Samples modified the caller's request map")

@@ -111,14 +111,14 @@ func TestPreferredPodIPPicksTheUSBLink(t *testing.T) {
 
 func TestDescribeUSBWarnsAboutDefaultPower(t *testing.T) {
 	ma := 500
-	got := describeUSB(podUSB{Net: "on", Link: true, IP: "10.237.8.85", HostIP: "10.237.8.86", Source: "default", SourceMA: &ma})
+	got := describeUSB(podUSB{Net: true, Link: true, IP: "10.237.8.85", HostIP: "10.237.8.86", Source: "default", SourceMA: &ma})
 	if !strings.Contains(got, "10.237.8.85") || !strings.Contains(got, "500 mA") || !strings.Contains(got, "1.5 A") {
 		t.Fatalf("got %q", got)
 	}
-	if got := describeUSB(podUSB{Net: "on", Source: "3.0A"}); strings.Contains(got, "500 mA") || !strings.Contains(got, "power 3.0A") {
+	if got := describeUSB(podUSB{Net: true, Source: "3.0A"}); strings.Contains(got, "500 mA") || !strings.Contains(got, "power 3.0A") {
 		t.Fatalf("3.0A: %q", got)
 	}
-	if got := describeUSB(podUSB{Net: "off"}); !strings.Contains(got, "Wi-Fi") {
+	if got := describeUSB(podUSB{Net: false}); !strings.Contains(got, "Wi-Fi") {
 		t.Fatalf("off: %q", got)
 	}
 }
@@ -131,7 +131,7 @@ func TestDescribePowerDraw(t *testing.T) {
 		TotalUA *int `json:"total_ua"`
 	}{powerRail{OK: true, BusMV: 5012, CurrentUA: 231000}, &total}
 	tp := &targetPower{}
-	tp.Efuse1.Enabled = 1
+	tp.Efuse1.Enabled = true
 	got := describePowerDraw(d, tp)
 	for _, want := range []string{"internal 5 V rail 142 mA", "pod 231 mA", "total from USB 373 mA"} {
 		if !strings.Contains(got, want) {

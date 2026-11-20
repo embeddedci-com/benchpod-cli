@@ -23,11 +23,11 @@ func TestRunOutcomeAndExitCodes(t *testing.T) {
 	}{
 		{true, Counts{Passed: 3}, false, Passed, 0},
 		{true, Counts{Passed: 3, Skipped: 2, XFailed: 1}, false, Passed, 0},
-		{true, Counts{Passed: 3, Failed: 1}, false, Failed, 2},
-		{true, Counts{Passed: 3}, true, Failed, 2},
-		{true, Counts{Failed: 1, Error: 1}, false, Errored, 2},
-		{false, Counts{Passed: 3}, false, Invalid, 4},
-		{false, Counts{Error: 3}, false, Invalid, 4},
+		{true, Counts{Passed: 3, Failed: 1}, false, Failed, 10},
+		{true, Counts{Passed: 3}, true, Failed, 10},
+		{true, Counts{Failed: 1, Error: 1}, false, Errored, 10},
+		{false, Counts{Passed: 3}, false, Invalid, 12},
+		{false, Counts{Error: 3}, false, Invalid, 12},
 	}
 	for _, c := range cases {
 		got := RunOutcome(c.valid, c.counts, c.required)

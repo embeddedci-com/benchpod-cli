@@ -20,14 +20,18 @@ import (
 
 // ── benchpod ci ─────────────────────────────────────────────────────────────
 
-const ciExitCodesHelp = "Exit codes:\n" +
-	"  0  passed\n" +
-	"  1  a file, usage or setup error (the YAML, the firmware build, no pod)\n" +
-	"  2  a test failed (or errored)\n" +
-	"  3  the run passed, but a gated measurement drifted beyond its allowance against the\n" +
-	"     baseline (baseline: with fail_on_drift, or gate: drift)\n" +
-	"  4  the run is not valid: the pod is in use, require is not met, the pod rebooted\n" +
-	"     or was lost, the lease was lost, a capture lost data, or the run was interrupted"
+const ciExitCodesHelp = "Exit codes (0 to 7 as for every benchpod command, a run's results 10 and up):\n" +
+	"  0   passed\n" +
+	"  1   a file or setup error (the YAML, the firmware build, a missing wiring profile)\n" +
+	"  2   usage: a bad flag or argument\n" +
+	"  5   the pod did not answer, or no pod was found\n" +
+	"  6   the pod's firmware needs a newer benchpod CLI\n" +
+	"  7   the pod's firmware is too old for this CLI (`benchpod flash-self`)\n" +
+	"  10  a test failed (or errored)\n" +
+	"  11  the run passed, but a gated measurement drifted beyond its allowance against the\n" +
+	"      baseline (baseline: with fail_on_drift, or gate: drift)\n" +
+	"  12  the run is not valid: the pod is in use, require is not met, the pod rebooted\n" +
+	"      or was lost, the lease was lost, a capture lost data, or the run was interrupted"
 
 func newCICmd(g *globalFlags) *cobra.Command {
 	o := &ciOptions{}
@@ -71,7 +75,7 @@ func addCIRunFlags(cmd *cobra.Command, o *ciOptions) {
 	f.BoolVar(&o.keepGoing, "keep-going", false, "go on after a required step fails")
 	f.IntVar(&o.repeat, "repeat", 1, "run the steps N times (the firmware is flashed once); each case records its attempt")
 	f.BoolVar(&o.json, "json", false, "print run.json on stdout instead of the summary")
-	f.DurationVar(&o.wait, "wait", 0, "wait this long for a pod another session holds, e.g. 10m (default: fail at once with exit 4)")
+	f.DurationVar(&o.wait, "wait", 0, "wait this long for a pod another session holds, e.g. 10m (default: fail at once with exit 12)")
 }
 
 func runCICommand(g *globalFlags, o *ciOptions, cmd *cobra.Command) error {
@@ -196,29 +200,24 @@ func takeCILease(ctx context.Context, c *ciConnected, join *tcpclient.LeaseJoin,
 type leaseHas int
 
 const (
-	leaseUnknown leaseHas = iota // no features_rev (the caps-list form, or no status)
+	leaseUnknown leaseHas = iota // no features_rev, or no status
 	leaseNo
 	leaseYes
 )
 
-// leaseFeature decides the lease feature from a {"cmd":"status","caps":false} reply: with
-// features_rev the embedded features table decides; without it (a pod that sent the frozen caps
-// list) it is unknown. form says which reply it was, for the log.
+// leaseFeature decides the lease feature from a status reply: the embedded features table
+// decides from features_rev; without it, it is unknown. form says which reply it was, for the log.
 func leaseFeature(st json.RawMessage, err error) (leaseHas, string) {
 	if err != nil {
 		return leaseUnknown, "no status (" + err.Error() + ")"
 	}
 	var v struct {
-		FeaturesRev *int     `json:"features_rev"`
-		Caps        []string `json:"caps"`
+		FeaturesRev *int `json:"features_rev"`
 	}
 	if json.Unmarshal(st, &v) != nil {
 		return leaseUnknown, "an unreadable status"
 	}
 	if v.FeaturesRev == nil {
-		if v.Caps != nil {
-			return leaseUnknown, `the caps list (no features_rev: the pod ignored "caps":false)`
-		}
 		return leaseUnknown, "no features_rev"
 	}
 	form := fmt.Sprintf("features_rev %d", *v.FeaturesRev)
@@ -394,13 +393,20 @@ func validatePod(g *globalFlags, cfg *ci.Config, podFlag string, res *ciValidate
 // ── benchpod ci diff ────────────────────────────────────────────────────────
 
 // ciCommandExit maps the error of a `benchpod ci` command to its exit code: the ci codes, with a
-// usage error as 1 (file/usage/setup) instead of the CLI's usual 2.
+// setup failure that is an unreachable pod or a firmware or CLI level mismatch as the CLI's own
+// code for it (5, 6, 7).
 func ciCommandExit(err error) (int, bool) {
 	var ce *ciExit
-	if errors.As(err, &ce) {
-		return ce.code, true
+	if !errors.As(err, &ce) {
+		return 0, false
 	}
-	return 0, false
+	if ce.code == ci.ExitSetup && ce.err != nil {
+		switch c := exitCode(ce.err); c {
+		case exitUnreachable, exitUpdateCLI, exitUpdatePod:
+			return c, true
+		}
+	}
+	return ce.code, true
 }
 
 // isCICommand says cmd is `benchpod ci` or one of its subcommands.

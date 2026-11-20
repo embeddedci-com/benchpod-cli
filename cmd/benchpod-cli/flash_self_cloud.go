@@ -49,7 +49,7 @@ func (g *globalFlags) explicitCloud() (string, bool) {
 func runFlashSelfCloud(g *globalFlags, f *flashSelfFlags, changed func(string) bool, args []string, name string) error {
 	for _, flag := range dfuOnlyFlags {
 		if changed(flag) {
-			return fmt.Errorf("--%s is for USB DFU and does not apply through embeddedci.com", flag)
+			return usageErrorf("--%s is for USB DFU and does not apply through embeddedci.com", flag)
 		}
 	}
 	arg := ""

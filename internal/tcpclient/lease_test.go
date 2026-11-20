@@ -73,7 +73,7 @@ func TestLeaseTagOnEveryCommand(t *testing.T) {
 		mu.Lock()
 		got = append(got, req)
 		mu.Unlock()
-		return `{"status":"ok","data":{}}`
+		return `{"status":"ok","data":{"api":2,"min_client_api":2}}`
 	})
 	SetLeaseJoin(&LeaseJoin{ID: "L-1", TTL: 300})
 	t.Cleanup(func() { SetLeaseJoin(nil) })

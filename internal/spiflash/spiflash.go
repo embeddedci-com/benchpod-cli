@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/features"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // Firmware limits per command.
@@ -55,7 +56,7 @@ type Started struct {
 	MOSI int `json:"mosi"`
 	MISO int `json:"miso"`
 	CS   int `json:"cs"`
-	Hz   int `json:"hz"`
+	Hz   int `json:"clock_hz"`
 	Mode int `json:"mode"`
 }
 
@@ -98,7 +99,7 @@ func (p *Pod) call(ctx context.Context, timeout time.Duration, req map[string]an
 func (p *Pod) Start(ctx context.Context, c Config) (Started, error) {
 	req := map[string]any{"cmd": "spi_start", "sck": c.SCK, "mosi": c.MOSI, "miso": c.MISO, "cs": c.CS, "mode": c.Mode}
 	if c.Hz > 0 {
-		req["hz"] = c.Hz
+		req["clock_hz"] = c.Hz
 	}
 	var s Started
 	err := p.call(ctx, cmdTimeout, req, &s)
@@ -287,9 +288,10 @@ func Session(ctx context.Context, main, cleanup Commander, cfg Config, nreset bo
 	return fn(ctx, p, s)
 }
 
+// isSPIBusy is spi_start refused because another session has the SPI master (BP0004) or the bus
+// engine (BP0005).
 func isSPIBusy(err error) bool {
-	m := err.Error()
-	return strings.Contains(m, "spi busy") || strings.Contains(m, "swd or spi busy")
+	return tcpclient.HasCode(err, "BP0004") || tcpclient.HasCode(err, "BP0005")
 }
 
 // HasCap reports whether the pod whose status reply this is has capability name: from the

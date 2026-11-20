@@ -1,8 +1,8 @@
 # benchpod-cli
 
 `benchpod` is the EmbeddedCI **BenchPod** command-line tool. It talks to a
-pod over its network TCP/JSON API (port 8080), over its USB console (CDC-ACM), or
-through embeddedci.com (`--connection embeddedci:<name>`), and drives the pod's hardware: signal generation, ADC capture,
+pod over its network JSON API (TLS on port 8443), over USB (the pod's USB network adapter,
+and its console for recovery), or through embeddedci.com (`--connection embeddedci:<name>`), and drives the pod's hardware: signal generation, ADC capture,
 logic-analyzer pins, Wi-Fi configuration, firmware flashing over SWD, SPI NOR
 flash programming, and the pod's own firmware, policies and cloud link. Every
 command and flag is listed in the [command reference](#command-reference).
@@ -12,6 +12,44 @@ New pod? `benchpod setup` walks the
 for you: it finds the pod, gets it on the network, sets the board I/O voltage,
 registers it with embeddedci.com and saves the connection, skipping whatever is
 already done.
+
+## Breaking changes in 0.10
+
+CLI 0.10 drives BenchPod firmware 4.0 (client API 2). Keep CLI 0.9 for pods you do not update.
+
+- **Firmware 4.0 only.** Against firmware 3.x only `status`, `flash-self`, `install-blobs`,
+  `dfu`, `bootsel`, `discover` and `identity` run; every other command exits with the new code
+  `7` and `this pod needs firmware 4.0: benchpod flash-self`. A newer pod still exits `6`.
+  `discover` marks such pods from their mDNS `api`.
+- **Error codes only.** The CLI classifies and words every refusal by its code (`BP0001` and
+  up) from the catalog it ships with, never by its text. `BP0002`, `BP0017` and `BP0060` exit
+  `7`; the busy codes `4`; the others `3`. A refusal without a code is shown as the pod wrote it.
+- **TLS on the LAN.** Firmware 4.0 answers its JSON API on Ethernet and Wi-Fi on 8443 (TLS)
+  only; the CLI uses it and pins the certificate on first use. `--tls off` only works after
+  `benchpod lan-tls https-only off`. New: `benchpod lan-tls scpi on|off`. The `lan-tls`
+  switches only work over USB or embeddedci.com.
+- **JSON over USB.** `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity wipe`,
+  `sig-policy`, `cloud ca`, `cloud proxy`, `install-blobs`, `usb-reattach`, `la voltage` and
+  `flash` over USB send JSON over the pod's USB network adapter; the console is only for
+  `status`, `dfu`, `identity`, `lan-policy`, `usb-network`, `log` and the new `net-reset`.
+  With USB networking off: `benchpod usb-network on --connection usb`. The console blob
+  upload for firmware before 3.9.0 is gone.
+- **Signatures.** `sig-policy set` is gone: firmware 4.0 always requires signatures (`BP0074`).
+- **Removed commands and flags.** `stream`, `la pullup`, `set-bench-pod` (use
+  `set-connection`), `--connection serial` (use `usb`), `generate --amplitude/--offset` (8-bit
+  levels; use `--path` with `--amplitude-v`/`--offset-v`, or `--amplitude-ma`/`--offset-ma`),
+  `--sample-rate-mhz`, `--duration-ms`, `--delay-us`. `la voltage 3300` (bare millivolts) is
+  refused: a bare number is volts.
+- **Renamed flags.** `--output-filename` is `--out` (`BENCHPOD_OUT`); `capture`, `measure` and
+  `test` take `--format` (was `--output`); `sensor export` writes to `--out`/`-o`;
+  `flash-self` and `sensor start` take `--addr` (was `--address`).
+- **Exit codes.** Usage mistakes the commands find exit `2` (some exited `1`). `benchpod ci`
+  results moved to `10` (failed), `11` (drift regression) and `12` (invalid), so they never
+  clash with the codes 0 to 7 of [Exit codes](#exit-codes); a ci usage error is `2`, an
+  unreachable pod `5`, update the CLI `6`, update the pod `7`.
+- **Wiring profiles** come from the pod only (firmware 3.10.8 moved them there); the
+  embeddedci.com profile fallback and `la voltage` saving to it are gone.
+- The `--json` output is unchanged.
 
 ## Installation
 
@@ -147,10 +185,11 @@ reach the pod; the transport is inferred from its value:
 | `embeddedci:<name>`              | Through embeddedci.com to the pod with that name on your account (see below). |
 | *(omitted)*                      | the default saved by `benchpod discover --save`, `benchpod setup` or `benchpod set-connection`. |
 
-**TLS.** Pods with firmware 3.9.3 or later also serve the API on port 8443 with
-TLS. For a network address on the default port (`192.168.1.5`, `:8080`, a pod
-name) `benchpod` connects to 8443 first and falls back to plaintext 8080 only when
-the pod has no TLS port and has never been pinned. The pod's certificate is
+**TLS.** Firmware 4.0 serves the API on Ethernet and Wi-Fi on port 8443 with TLS only
+(plaintext 8080 answers on its USB network adapter). For a network address on the default
+port (`192.168.1.5`, `:8080`, a pod name) `benchpod` connects to 8443 first, with nothing to
+set up, and falls back to plaintext 8080 only when the pod has no TLS port (firmware before
+3.9.3, for `flash-self`) and has never been pinned. The pod's certificate is
 pinned the first time (trust on first use) in `known_pods.json` next to the
 config; a different certificate later stops the command with both fingerprints.
 `:8443` means TLS only, any other port and the USB network adapter mean
@@ -166,20 +205,22 @@ system resolver as before.
 
 The global flags are also settable via a `BENCHPOD_*` environment variable
 (`BENCHPOD_CONNECTION=usb`, `BENCHPOD_TIMEOUT=2m`, `BENCHPOD_CONFIG_FILE`,
-`BENCHPOD_OUTPUT_FILENAME`), with precedence flag > env > default. Command flags
+`BENCHPOD_OUT`), with precedence flag > env > default. Command flags
 are flags only.
 
 The firmware itself is unauthenticated; `benchpod login` is independent of the
 device path and authenticates with `embeddedci-server` (device-login flow) for
 cloud features. Direct firmware commands on the network or USB do not send tokens.
 
-**USB networking (firmware 3.9.0+).** The pod's USB device is also a network
-adapter that carries the full network API on a fixed address (`10.237.x.y`, its own
-point-to-point link: the computer keeps its default route and DNS). With a USB
-connection (`usb` or a device path), a command that needs the network uses that
-adapter, so the whole CLI works over one USB cable; the console is still used for
-the commands it runs (below) and as the fallback. USB networking is off while Wi-Fi
-is configured on the pod (`set-wifi` turns it off, `clear-wifi` back on). If a
+**USB networking.** The pod's USB device is also a network adapter that carries the
+full network API on a fixed address (`10.237.x.y`, its own point-to-point link: the
+computer keeps its default route and DNS, and the link is plaintext 8080). With a USB
+connection (`usb` or a device path) every pod command sends its JSON over that adapter,
+so the whole CLI works over one USB cable. The USB console is only used for what firmware
+4.0 keeps there: `status`, `dfu`, `identity`, `lan-policy`, `usb-network` and
+`net-reset`. USB networking is off while Wi-Fi is configured on the pod (`set-wifi` turns
+it off; `clear-wifi` over the pod's network address, or `net-reset` over USB, back on) or
+when its `usb-network` setting is off (`benchpod usb-network on --connection usb`). If a
 command says the adapter is not up, unlock the screen (macOS ignores a new adapter
 while it is locked) and run `benchpod usb-reattach`. `benchpod usb-bridge` carries
 the pod's cloud link over the same cable.
@@ -198,22 +239,20 @@ WSL2 and Docker on Windows are not tested: Windows routes the pod's `10.237.x.y`
 itself, so a WSL2 distribution or a container on the host network should reach it with
 `--connection <that address>`, but USB auto-detect and mDNS may not work from inside them.
 
-**Compatibility with older firmware and older CLIs.** The CLI decides per pod, from what
-the pod reports (the `usb` line of its console `status`), never from its own version:
-
-| | Pod firmware before 3.9.0 | Pod firmware 3.9.0 and later |
-|---|---|---|
-| **This CLI (0.6.0+)** | Works as before: the USB console for `status`, `la voltage`, `install-blobs`, `flash-self`, `set-wifi`, the policies, `cloud ca`/`proxy` and `identity`; the network commands need the pod's network address, as before, and say so. The serial auto-detect still finds `0483:5740` and `2E8A` consoles. | Over `usb`, every command uses the pod's USB network adapter when it is up (including `flash`, which the STM32 pod's console never ran), and the console for the commands that stay there. When USB networking is off (Wi-Fi configured) or not up, the network commands use the pod's Ethernet or Wi-Fi address from its console `status` if this computer reaches it, say so, and are subject to the pod's external LAN policy there (`benchpod clear-wifi` turns USB networking back on). |
-| **An older CLI (0.5.x)** | Unchanged. | The kept console commands keep their names and replies (`status`, `dfu`, `identity`, `identity wipe`, `lan-policy`, `sig-policy`, `set-wifi`, `show-network`, `clear-wifi`, `cloud ca show`/`clear`, `cloud proxy`), so those still work, and `flash-self` still flashes over DFU. What 3.9.0 moved to the network API (`la voltage` over USB, and every upload: `install-blobs`, the blob step of `flash-self` and `set-wifi`, `cloud ca set`) prints the pod's "moved to the network API ... update the benchpod CLI to 0.6.0 or later" line: update the CLI with the firmware. Over a network address everything works. |
+**Firmware 3.x.** This CLI drives firmware 4.0. Against a pod with firmware 3.x it runs only
+what upgrades or inspects the pod: `status`, `flash-self`, `install-blobs` (firmware 3.9.0
+and later), `dfu`, `bootsel`, `discover` and `identity`; every other command stops with exit
+code `7` and `this pod needs firmware 4.0: benchpod flash-self`. See
+[Firmware and CLI levels](#firmware-and-cli-levels). CLI 0.9 keeps working with firmware 3.x.
 
 Which command works over which connection:
 
 | Connection          | Commands |
 |---------------------|----------|
-| Network address     | Every pod command except the USB-only ones below. |
-| USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD), `install-blobs`, `cloud ca` and `cloud proxy`; without it the pod's Ethernet or Wi-Fi address, and the console where it still has the command. Firmware before 3.9.0: the console, as before. `lan-policy`, `sig-policy` and `identity` always use the console (physical presence). |
-| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pull`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
-| USB only            | `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU (or, with `--connection embeddedci:<name>`, embeddedci.com). These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
+| Network address     | Every pod command except the USB console ones below. Settings the pod changes only over USB or the cloud (`lan-tls` switches, `cloud ca`/`proxy` changes, `identity wipe`, `usb-network`) are refused there with their code. |
+| USB                 | Every pod command, as JSON over the pod's USB network adapter. With USB networking off (Wi-Fi configured), the pod's Ethernet or Wi-Fi address from its console `status` when this computer reaches it (its external LAN policy applies there), and the command says so. |
+| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pull`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `deregister`. |
+| USB console only    | `dfu`, `bootsel`, `net-reset`, `usb-network`, `usb-bridge`, `lan-policy set` over USB; `flash-self` uses USB DFU (or, with `--connection embeddedci:<name>`, embeddedci.com). A saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
 A command that cannot use the connection it is given says so and names what to use
 instead.
@@ -255,7 +294,7 @@ when the pod is in another of your organizations, the `--org` that reaches it. A
 key belongs to the organization it was created in.
 
 Commands that stream data or need a direct link to the pod do not go through
-embeddedci.com: `capture`, `stream`, `measure`, `test`, `flash --file`, `spi-flash`,
+embeddedci.com: `capture`, `measure`, `test`, `flash --file`, `spi-flash`,
 `cloud ca set`, `register`, the USB-only commands and `discover`. Over a cloud
 connection they refuse with a message pointing to the web app, the Python SDK or
 pytest plugin (which take `embeddedci:<name>` for those too), or a network/USB
@@ -264,9 +303,10 @@ cloud connection: embeddedci.com runs OpenOCD. The CLI has no UART command; use 
 
 ### One wiring profile
 
-The pod's wiring profile on embeddedci.com (the web app's Wiring tab; the SDK and
-MCP read the same one) says which LA channel carries which signal. `flash` and
-`spi-flash` take the pins you leave out from it:
+The pod keeps its wiring profiles itself (the web app's Pins pane, the SDK and MCP read the
+same ones; `benchpod wiring` lists and saves them): which LA channel carries which signal.
+Commands that take pins (`flash`, `spi-flash`, `i2c`, `sensor start`, ...) take the ones you
+leave out from the profile named by `--wiring-profile`, else the pod's default:
 
 | Command     | Flag         | Profile field |
 |-------------|--------------|---------------|
@@ -276,16 +316,9 @@ MCP read the same one) says which LA channel carries which signal. `flash` and
 | `flash`     | `--target`   | `swd_target`  |
 | `spi-flash` | `--sck`, `--mosi`, `--miso`, `--cs` | `spi_sclk`, `spi_mosi`, `spi_miso`, `spi_cs` |
 
-That happens when the connection is the pod's network address (or, for `flash --build`,
-`embeddedci:<pod>`), this machine is
-signed in (`benchpod login` or `BENCHPOD_API_KEY`) and the pod is on that account
-(its `cloud_status` device id is in the account's pod list, as `status` and
-`discover` check). Flags always win. The log says which values came from the
-profile (`[benchpod] flash: SWCLK LA11, SWDIO LA12 from the pod's wiring profile on
-embeddedci.com; ...`) or that the flags were used. Without a profile (over USB, not
-signed in, another account) the command behaves as before: the pin flags are
-required. If the lookup fails (it gives up after a few seconds), the CLI prints one
-warning line and goes on with the flags.
+Flags always win. The log says which values came from the profile (`[benchpod] flash: SWCLK
+LA11, SWDIO LA12 from the pod's wiring profile; ...`) or that the flags were used. Firmware
+before 3.10.8 kept one profile on embeddedci.com instead; CLI 0.10 reads only the pod's.
 
 ### Shared config
 
@@ -338,10 +371,9 @@ benchpod status --json     # the pod's raw status reply
 # Hardware (network):
 benchpod la voltage 3.3V                          # the DUT's I/O voltage for now (it normally comes from the wiring profile)
 benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (see the 5 V page linked under la voltage)
-benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
+benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1 --offset-v 1.65 --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
-benchpod capture --samples 1024 --output csv      # ADC snapshot
-benchpod stream ...
+benchpod capture --samples 1024 --format csv      # ADC snapshot
 benchpod test ...
 benchpod la pull 3 up                             # LA pin pull resistor: up, down or off (digital v3r4: every pin, strength picked by the pod)
 benchpod la status
@@ -352,13 +384,14 @@ benchpod la dir 9,10 dut_output                   # the pod refuses push-pull dr
 benchpod i2c start --sda 1 --scl 2 --hz 400000    # the pod as an I2C master (gateware v55+)
 benchpod i2c xfer 0x48 --write 0d --read 2        # hex in, hex out
 
-# Network (always over the USB console):
+# Network (over the pod's USB network adapter):
 benchpod set-wifi
 benchpod show-network     # the pod's IP (wired lease included), SSID, state, RSSI
-benchpod scan-wifi        # networks the pod's Wi-Fi sees (firmware 3.9.4+)
+benchpod scan-wifi        # networks the pod's Wi-Fi sees
 benchpod clear-wifi
+benchpod net-reset        # no network reaches the pod: forget Wi-Fi, reset Ethernet (USB console)
 
-# One USB cable (firmware 3.9.0+, no Wi-Fi configured):
+# One USB cable (no Wi-Fi configured):
 benchpod capture --connection usb ...   # network commands use the pod's USB network adapter
 benchpod usb-bridge                     # the pod's cloud link through this computer (Ctrl-C stops it)
 benchpod usb-reattach                   # re-enumerate on USB (macOS: after unlocking the screen)
@@ -383,10 +416,9 @@ benchpod logout
 # Pod policies (cloud with --device-name, or USB):
 benchpod lan-policy --device-name benchpod-baea06          # show
 benchpod lan-policy set locked --device-name benchpod-baea06
-benchpod sig-policy --connection usb                       # show
-benchpod sig-policy set permissive --connection usb
+benchpod sig-policy --connection usb                       # show (always required)
 
-# Device identity (USB console only):
+# Device identity (USB only):
 benchpod identity --connection usb                         # show
 benchpod identity wipe --connection usb                    # erase the key, make a new one
 
@@ -399,8 +431,8 @@ benchpod cloud proxy clear
 
 Flags that take a physical quantity accept it with its unit: `--freq 2kHz`,
 `--sample-rate 10MHz`, `--duration 2s`, `--delay 50us`, and `benchpod la voltage 3.3V`.
-The older flags with the unit in their name (`--sample-rate-mhz`, `--duration-ms`,
-`--delay-us`) keep working; pass one or the other, not both.
+CLI 0.10 dropped the older flags with the unit in their name (`--sample-rate-mhz`,
+`--duration-ms`, `--delay-us`).
 
 `deregister` is the inverse of `register`: it detaches the pod from the
 logged-in account and clears the pod's cloud configuration so it stops
@@ -437,16 +469,16 @@ Two settings the pod keeps in its config flash:
 | `locked`     | read and instrument control only; config and firmware need cloud or USB   |
 | `off`        | nothing: no LAN listener, no mDNS. The cloud and USB keep working          |
 
-| `sig-policy` | How firmware and blob signatures are treated                              |
-|--------------|---------------------------------------------------------------------------|
-| `audit`      | every image is accepted; signatures are only reported                     |
-| `permissive` | unsigned images are accepted, a bad signature is refused                  |
-| `required`   | unsigned images are refused                                               |
+`sig-policy` (how firmware and blob signatures are treated) is always `required` from
+firmware 4.0: the pod installs only signed images on every path, and the policy cannot be
+loosened (`BP0074`). Install firmware you built yourself over USB DFU (`benchpod flash-self
+./fw.bin`).
 
-`benchpod lan-policy` and `benchpod sig-policy` show the policy; `... set <value>`
-changes it. Pick the pod with `--device-name` / `--device-id` (through
-embeddedci.com, like `deregister`) or with `--connection usb`. Over the LAN the
-commands can only show the policy: the pod refuses changes from the LAN.
+`benchpod lan-policy` and `benchpod sig-policy` show the policy; `lan-policy set <value>`
+changes the LAN policy. Pick the pod with `--device-name` / `--device-id` (through
+embeddedci.com, like `deregister`) or with `--connection usb` (`sig-policy` over the pod's
+USB network adapter, `lan-policy set` over its console). Over the LAN the commands can only
+show the policy: the pod refuses changes from the LAN.
 
 ```
 $ benchpod lan-policy --device-name benchpod-baea06
@@ -455,9 +487,6 @@ LAN policy of benchpod-baea06: locked (read and instrument control only on the L
 
 - Over the cloud a change needs an organization owner or admin (an API key needs
   the `benchpod:admin` scope).
-- The cloud can only make `sig-policy` stricter. Only the USB console can loosen
-  it (`benchpod sig-policy set permissive --connection usb`); the CLI says so when
-  the pod refuses.
 - With `lan-policy off`, LAN tools stop working until it is set back: SCPI/VISA,
   hwe2e `TestHW` and LAN `discover`. Set it back over the cloud or USB.
 - Firmware without these commands gets "this firmware has no LAN policy; update
@@ -465,15 +494,18 @@ LAN policy of benchpod-baea06: locked (read and instrument control only on the L
 
 #### LAN TLS: encrypted LAN API
 
-The pod's API on port 8443 is the same as on 8080, over TLS (firmware 3.9.3+). The
-pod makes its own key and self-signed certificate on first boot; `benchpod`
-pins it on first use. `benchpod lan-tls` shows it:
+The pod's API on port 8443 is the same as on 8080, over TLS. From firmware 4.0 it is the only
+port the JSON API answers on over Ethernet and Wi-Fi (HTTPS-only is on by default), and SCPI is
+off until you switch it on. The pod makes its own key and self-signed certificate on first boot
+and keeps it across updates; `benchpod` pins it on first use, so this needs no action from you.
+`benchpod lan-tls` shows it:
 
 ```
 $ benchpod lan-tls --connection 192.168.1.220
 LAN TLS of 192.168.1.220:8080 (connected over TLS)
   port        8443
-  https-only  off
+  https-only  on
+  scpi        off
   sessions    1
   certificate CN=benchpod-baea06 (generated, EC P-256), valid to 9999-12-31
   names       benchpod-baea06, benchpod-baea06.local
@@ -481,9 +513,11 @@ LAN TLS of 192.168.1.220:8080 (connected over TLS)
   pinned      yes, for 192.168.1.220:8443
 ```
 
-- `benchpod lan-tls https-only on` turns plaintext 8080 off on Ethernet and Wi-Fi
-  (the pod keeps it on its USB link). Use it when the LAN path is shared, for
-  example through a Wi-Fi bridge.
+- `benchpod lan-tls https-only off` turns plaintext 8080 back on for Ethernet and
+  Wi-Fi (for older tools); `on`, the default, takes only TLS there. The pod keeps
+  8080 on its USB link either way.
+- `benchpod lan-tls scpi on` turns SCPI on: it then answers on 8443 and on 8080 (on
+  the LAN, 8080 takes SCPI only while HTTPS-only is on); `off` turns it off again.
 - `benchpod lan-tls set-cert --cert pod.pem --key pod.key` installs your own
   certificate (with its chain) and unencrypted key; `regenerate` makes a new
   self-signed one. Both update this computer's pin.
@@ -494,9 +528,11 @@ LAN TLS of 192.168.1.220:8080 (connected over TLS)
 - A TLS handshake costs the pod about 0.5 s; `benchpod` keeps the pod's session
   ticket for an hour in `tls_sessions.json` (mode 0600, next to the pins), so later
   runs resume in about 40 ms.
-- The pod refuses `https-only off`, `regenerate` and `set-cert` over plaintext
-  Ethernet or Wi-Fi: use TLS (the default), `--connection usb` or
-  `--connection embeddedci:<name>`.
+- `https-only`, `scpi`, `regenerate` and `set-cert` only work over USB
+  (`--connection usb`, the pod's USB network adapter) or through embeddedci.com
+  (`--connection embeddedci:<name>`): the pod refuses them from Ethernet and Wi-Fi,
+  TLS or not (`BP0042`). The pod's USB console has the same switches
+  (`lan-tls https-only on|off`, `lan-tls scpi on|off`).
 - `benchpod lan-tls show --pem > pod.pem` saves the certificate, for curl or socat
   (VISA raw sockets have no TLS; see the firmware API docs, LAN TLS).
 
@@ -516,8 +552,10 @@ The pod stays offline without an identity. Recover it with: benchpod identity wi
 ```
 
 `benchpod identity wipe` erases the key and makes a new one. It works only over
-the pod's USB console (`--connection usb` or a serial device path): the pod
-refuses it over the LAN and the cloud, so it needs someone at the pod. The CLI
+USB (`--connection usb` or a serial device path): the CLI reads the identity on the
+pod's console and sends the wipe (`identity_wipe`) over its USB network adapter; the
+pod refuses it over the LAN and the cloud (`BP0043`), so it needs someone at the pod.
+With USB networking off, `benchpod usb-network on --connection usb` turns it on. The CLI
 shows the current identity and asks before it wipes (`--yes` skips the question
 for scripts); the pod also checks a confirmation token (the current short id, or
 `unknown`), so a stray command cannot wipe a key.
@@ -540,26 +578,26 @@ belongs to the old record.
 On a network whose proxy inspects TLS, the pod's cloud link fails: the proxy
 re-signs embeddedci.com with a company root the pod does not trust. Some networks
 also only reach the internet through an HTTP proxy. `benchpod cloud` sets both
-over the USB console (`--connection usb`) or through embeddedci.com
+over the pod's USB network adapter (`--connection usb`) or through embeddedci.com
 (`--connection embeddedci:<name>`: `cloud proxy` show, set and clear, `cloud ca` show
 and clear; the CA upload needs USB, and a change needs an organization owner or
-admin). The LAN (`--connection <address>`) can show them; current firmware refuses
-changes from the LAN:
+admin). The LAN (`--connection <address>`) can show them; the pod refuses changes
+from the LAN. With USB networking off, `benchpod usb-network on --connection usb`
+turns it back on:
 
 ```
 $ benchpod cloud ca set acme-root.pem --connection usb
 acme-root.pem: 1 certificate
   CN=Acme Root CA,O=Acme Corp
     SHA-256 3b1f...c2d9
-Uploading 652 bytes to the pod on /dev/cu.usbmodem1101 ...
-Company CA of the pod on /dev/cu.usbmodem1101 is now 1 certificate
+Company CA of 10.237.8.85:8080 is now 1 certificate
   CN=Acme Root CA,O=Acme Corp
     SHA-256 3b1f...c2d9
 The pod reconnects to the cloud, trusting this CA in addition to its built-in roots.
 
 $ benchpod cloud proxy set proxy.corp:3128 --user alice --connection usb
 Proxy password:
-HTTP proxy of the pod on /dev/cu.usbmodem1101 is now proxy.corp:3128 (with a user and password)
+HTTP proxy of 10.237.8.85:8080 is now proxy.corp:3128 (with a user and password)
 The pod reconnects to the cloud through proxy.corp:3128.
 ```
 
@@ -576,19 +614,14 @@ The pod reconnects to the cloud through proxy.corp:3128.
   TCP and the password would cross the network unencrypted.
 - `show` (the default) reports what the pod holds. The pod reconnects to the
   cloud after every change.
-- Current firmware refuses `set` and `clear` from the LAN, whatever its LAN
-  policy: only USB or the cloud link may change the company CA or the proxy. The
-  CLI then prints the pod's reason and a hint to rerun with `--connection usb`:
+- The pod refuses `set` and `clear` from the LAN, whatever its LAN policy: only
+  USB or the cloud link may change the company CA or the proxy (`BP0042`). The
+  CLI shows the code, the reason and to rerun with `--connection usb`:
 
   ```
   $ benchpod cloud proxy clear --connection 192.168.1.50
-  [benchpod] cloud proxy clear: the pod refused: cloud_proxy: change it from the cloud or over USB (the pod only takes this change over USB or from the cloud, never from Ethernet or Wi-Fi; run it with --connection usb)
+  [benchpod] cloud proxy clear: the pod refused: BP0042: cloud_proxy cannot be changed over the LAN: change it from the cloud or over USB; run this over USB with --connection usb, or from the cloud (https://embeddedci.com/docs/errors#BP0042)
   ```
-
-  Older firmware with its LAN policy `locked` refuses the same way, with its own
-  message.
-- Firmware without them gets "this firmware has no company CA support; update the
-  pod's firmware" (or the same for the HTTP proxy).
 
 Run `benchpod <command> -h` for the flags of any subcommand.
 
@@ -599,8 +632,8 @@ intelligence and OpenOCD's exit code is the verdict. The pod runs a CMSIS-DAP
 processor locally and OpenOCD's `cmsis-dap` **TCP backend** ships whole DAP
 transfers (`DAP_Transfer`/`DAP_TransferBlock`), so a flash is one round-trip per
 DAP command instead of thousands of per-bit round-trips — fast even over the
-network. Works on **TCP** (`dap_start`) and **USB** (the console `dap-start`
-command). It needs a **recent OpenOCD with the `cmsis_dap_tcp` backend**
+network. Works on **TCP** (`dap_start`), over the network or over USB on the pod's
+USB network adapter (firmware 4.0 has no probe on its console). It needs a **recent OpenOCD with the `cmsis_dap_tcp` backend**
 (post-0.12.0; e.g. `brew install --HEAD open-ocd`); the CLI checks for the
 backend up front and fails with clear advice if it is missing.
 
@@ -611,9 +644,9 @@ speaks it.
 
 `spi-flash` reads, erases and programs a 25-series SPI NOR flash (W25Q, MX25,
 GD25, IS25, ...) wired to four LA pins, through the pod's SPI master. It needs
-gateware v45 or newer (`spi_master` in the `status` caps; the CLI checks first)
+gateware v45 or newer (`spi_master` in the features table; the CLI checks first)
 and the LA voltage set. Network (TCP) connection only for now. Pins you leave out
-come from the pod's wiring profile on embeddedci.com when you are signed in (see
+come from the pod's wiring profile (see
 [One wiring profile](#one-wiring-profile)).
 
 ```bash
@@ -776,10 +809,10 @@ dies it expires on its own after 5 minutes. Every command the run sends to the p
 the lease's id, and so do the commands of its pytest and run steps (the SDK reads
 `BENCHPOD_LEASE`).
 
-A pod that is in use when the run starts ends it at once with exit code 4 and who holds it;
+A pod that is in use when the run starts ends it at once with exit code 12 and who holds it;
 `--wait 10m` waits for it instead. A pod whose firmware has no lease gets one warning and the
 run goes on without one. A lease lost during the run (someone stopped the run from the web
-app, the pod rebooted) makes the run invalid (exit code 4). The step that is running stops
+app, the pod rebooted) makes the run invalid (exit code 12). The step that is running stops
 at once (a pytest or run step is stopped like at its timeout, and the cases it recorded so far
 are kept), the steps left are skipped, and cleanup still runs, without the lease (if another session took the pod meanwhile, the pod
 refuses it, and `logs/cleanup.log` says so).
@@ -855,7 +888,7 @@ suite: process-node-hil          # required: the name runs are stored and compar
 dut: process-node                # required: the board on the pod; "none" for a pod-only suite
 wiring: process-node             # the pod's stored wiring profile (default: the pod's default)
 require:
-  pod_firmware: ">=3.10.12"      # not met: the run is invalid (exit 4) and nothing is driven
+  pod_firmware: ">=3.10.12"      # not met: the run is invalid (exit 12) and nothing is driven
 firmware:
   build: make -C firmware        # optional; runs in this file's directory before flashing
   file: firmware/build/app.elf   # the image to flash (relative to this file)
@@ -868,7 +901,7 @@ keep: {traces: failed}           # all | failed | none
 cleanup: default                 # or none, or a list: [dac_stop, power_off, sensors_off, pulls_off]
 upload: auto                     # auto (when signed in) | true | false
 baseline: main                   # after the upload, compare with the last valid run on this branch
-gate: drift                      # optional: every drift allowance gates (exit 3); default: per metric
+gate: drift                      # optional: every drift allowance gates (exit 11); default: per metric
 steps:
   - id: boot                     # stable id: the case id across runs (default: from name)
     power_cycle: {until: "APP_OK", timeout: 10s, off_ms: 500}
@@ -940,10 +973,10 @@ Baseline main (run 3f9c...): 0 newly failing, 1 fixed, 2 drifted, 1 beyond a gat
 ```
 
 A measurement whose change against the baseline is beyond its `drift` allowance fails the run
-with exit code 3 when the metric says `fail_on_drift: true`, or the file says `gate: drift`
+with exit code 11 when the metric says `fail_on_drift: true`, or the file says `gate: drift`
 (every measurement with a drift allowance gates, including the ones a test records with
-`measure()`; `fail_on_drift: false` on a metric opts it out). Exit code 3 only replaces a
-passing run's 0: a failed or invalid run keeps its 2 or 4. Without a baseline run on the
+`measure()`; `fail_on_drift: false` on a metric opts it out). Exit code 11 only replaces a
+passing run's 0: a failed or invalid run keeps its 10 or 12. Without a baseline run on the
 branch yet, or when the run was not uploaded, the compare is skipped with a note and gates
 nothing.
 
@@ -974,13 +1007,21 @@ from a repository the organization trusts.
 
 ### Exit codes of `benchpod ci`
 
+Codes 0 to 7 mean what they mean for every other command ([Exit codes](#exit-codes)); a run's
+results are 10 and up, so a script never mistakes one for the other (CLI 0.10 moved them from 2,
+3 and 4).
+
 | Code | Meaning |
 |---|---|
 | `0` | Every case passed (skipped and expected failures included). |
-| `1` | A file, usage or setup error: the YAML, the firmware build, no pod, a missing wiring profile, `upload: true` without a sign-in. |
-| `2` | A test failed or errored, or a required step failed. |
-| `3` | The run passed, but a gated measurement drifted beyond its allowance against the baseline (see [Baseline gating](#baseline-gating)). |
-| `4` | The run is not valid: the pod was in use, `require` was not met, the pod rebooted or stopped answering, the lease was lost, a capture lost samples, or the run was interrupted. |
+| `1` | A file or setup error: the YAML, the firmware build, a missing wiring profile, `upload: true` without a sign-in. |
+| `2` | Usage: a bad flag or argument. |
+| `5` | The pod did not answer, or no pod was found. |
+| `6` | The pod's firmware needs a newer benchpod CLI. |
+| `7` | The pod's firmware is too old for this CLI (firmware before 4.0: `benchpod flash-self`). |
+| `10` | A test failed or errored, or a required step failed. |
+| `11` | The run passed, but a gated measurement drifted beyond its allowance against the baseline (see [Baseline gating](#baseline-gating)). |
+| `12` | The run is not valid: the pod was in use, `require` was not met, the pod rebooted or stopped answering, the lease was lost, a capture lost samples, or the run was interrupted. |
 
 ## Command reference
 
@@ -1001,9 +1042,9 @@ and `token.json` for the embeddedci.com session.
 |---------------------|----------------------------------|-------------------------------------------------------------------|
 | `--connection`      | (saved `set-connection` target)  | Network address, pod name (`benchpod-a1b2c3`), device path, `usb`, or `embeddedci:<name>` (through embeddedci.com); see [Connection](#connection). |
 | `--config-file`     | `~/.config/benchpod-cli/config.json` | The CLI's config file, where `set-connection` saves the default. |
-| `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.              |
+| `--out`             | (stdout)                         | Write command output to this file instead of stdout (`benchpod ci` takes `--out` as its run folder). Also `BENCHPOD_OUT`. |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
-| `--tls`             | `auto`                           | TLS to the pod's LAN API: `auto` (8443 when the pod has it, pinned on first use), `on` (TLS only) or `off` (plaintext 8080). Also `BENCHPOD_TLS`. See [Connection](#connection). |
+| `--tls`             | `auto`                           | TLS to the pod's LAN API: `auto` (8443 when the pod has it, pinned on first use), `on` (TLS only) or `off` (plaintext 8080; firmware 4.0 answers it on the LAN only after `benchpod lan-tls https-only off`). Also `BENCHPOD_TLS`. See [Connection](#connection). |
 | `--tls-ca`          | (none)                           | PEM file of CA certificates: verify the pod's certificate and name against them instead of pinning. Also `BENCHPOD_TLS_CA`. |
 | `--org`             | (the active organization)        | The embeddedci.com organization cloud calls act in: its id, slug or name. Also `BENCHPOD_ORG`. See [Organizations](#organizations). |
 | `--wiring-profile`  | (the pod's default profile)      | The wiring profile stored on the pod that fills in the pins a command leaves out (`flash`, `i2c`, `spi-flash`, ...). Also `BENCHPOD_WIRING_PROFILE`. See [`benchpod wiring`](#benchpod-wiring). |
@@ -1038,25 +1079,33 @@ stderr with a `[benchpod]` prefix.
 | `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
 | `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
 | `5`  | Unreachable: nothing answered on the pod's address, no pod was found on USB, or the pod is offline on embeddedci.com. |
-| `6`  | Update the CLI: the pod's firmware needs a newer benchpod CLI (see [Firmware newer than the CLI](#firmware-newer-than-the-cli)). |
+| `6`  | Update the CLI: the pod's firmware needs a newer benchpod CLI (see [Firmware and CLI levels](#firmware-and-cli-levels)). |
+| `7`  | Update the pod: its firmware is older than this CLI drives (firmware before 4.0: run `benchpod flash-self`), or it lacks what the command needs (`BP0002`, `BP0017`, `BP0060`). |
 
 `benchpod ci` has its own exit codes (a CI result, not a command's): see
 [Exit codes of `benchpod ci`](#exit-codes-of-benchpod-ci).
 
-#### Firmware newer than the CLI
+#### Firmware and CLI levels
 
 Every JSON command the CLI sends to the pod (on the LAN, over USB networking and through
-embeddedci.com) carries `"client_api"`, the pod API level this CLI was built for, and
-`"client"`, its name and version (`"cli 0.9.5"`). Firmware 3.10.13 and older ignores both.
-Newer firmware announces its own level in `status`; it goes up only when the firmware changes
-a reply in a way an older CLI would misread. When the pod's level is above this CLI's (a pod
-without one counts as level 1), a command that reads the pod's status stops with exit code
-`6` and says so. `status`, `flash-self`, `install-blobs`, `dfu`, `bootsel`, `discover` and
-`identity` still run: `status` prints the same line as a warning, and the firmware commands are
-how such a pod is updated or rolled back.
+embeddedci.com) carries `"client_api"`, the pod API level this CLI was built for (2), and
+`"client"`, its name and version (`"cli 0.10.0"`). The pod announces its own level in `status`;
+it goes up only when the firmware changes a reply in a way an older CLI would misread.
+
+This CLI drives firmware 4.0 (level 2) only. Before a pod's first command it reads the pod's
+status once and stops when the level does not match:
+
+- A pod above level 2 needs a newer CLI: exit code `6`.
+- A pod below level 2 (firmware 3.x announces no level, which counts as 1) needs firmware 4.0:
+  exit code `7`, with `this pod needs firmware 4.0: benchpod flash-self`.
+
+`status`, `flash-self`, `install-blobs`, `dfu`, `bootsel`, `discover` and `identity` still run
+against a pod of any level: `status` prints the same line as a warning, and the firmware commands
+are how such a pod is updated or rolled back. Against firmware 3.x they send what 3.x takes.
 
 ```text
-[benchpod] la voltage: this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
+[benchpod] la voltage: this pod's firmware 3.10.13 is too old for this benchpod CLI (pod API 1, this CLI needs 2): this pod needs firmware 4.0: benchpod flash-self
+[benchpod] la voltage: this pod's firmware 5.0.0 needs a newer benchpod CLI (pod API 3, this CLI handles 2): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
 ```
 
 A pod that no longer takes commands from a CLI this old refuses them with `BP0030`, which
@@ -1064,19 +1113,21 @@ the CLI reports the same way. Update the CLI as you installed it (see
 [Installation](#installation)). Commands that only talk to embeddedci.com or work locally are
 not affected, and neither is the USB console.
 
-Firmware 3.10.8 and later sends more and more refusals with a stable error code (`BP0001` and up).
-The CLI then shows the code, what went wrong and what to run, from the error catalog it ships
-with, plus a link to the code's page; `benchpod explain <code>` prints the whole entry. The
-exit code follows the code: a session, the bus engine, the storage or a lease in use
-(`BP0003`, `BP0004`, `BP0005`, `BP0016`, `BP0025`) is `4`, every other code `3`.
+#### Error codes
 
-A refusal without a code (older firmware, or one that has no code yet) is printed word for
-word as the pod sent it. For a `locked:` (LAN policy),
-`busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
-So it does for `la voltage not set` (run `benchpod la voltage 3.3V` or 1.8V, or set it on
-the web app's Wiring tab) and for a `pin conflict: LA4 is in use by ...`, where the raw
-JSON command the firmware suggests is replaced by where to free the pin (the web app,
-the SDK or the MCP session that holds it).
+Every refusal a script or user acts on has a stable error code (`BP0001` and up), and firmware
+4.0 sends only the code and its values. The CLI shows the code, what went wrong and what to run,
+from the error catalog it ships with, plus a link to the code's page; `benchpod explain <code>`
+prints the whole entry. The exit code follows the code:
+
+- `4` (busy): a session, the bus engine, the storage, a lease or the pod in use (`BP0003`,
+  `BP0004`, `BP0005`, `BP0016`, `BP0025`, `BP0047` to `BP0052`, `BP0066`).
+- `7` (update the pod): `BP0002`, `BP0017`, `BP0060`.
+- `6` (update the CLI): `BP0030`.
+- `3` (refused): every other code.
+
+A refusal without a code (a bad argument, a failure only a person reads) is printed word for
+word as the pod sent it, with exit code `3`. The CLI never reads a refusal's text.
 
 ### `benchpod setup`
 
@@ -1170,6 +1221,11 @@ LAN address when the pod has one, and `usb` when it was only heard on its USB li
 `10.237.x.y` address only works while the pod is plugged into this computer, so it is
 never saved; `usb` finds the pod again on any port.
 
+The API level a pod advertises over mDNS (`api` in its TXT record, firmware 4.0 and later; none
+is level 1) marks a pod this CLI does not drive: `needs firmware update` for firmware before 4.0
+(update it with `benchpod flash-self`), `needs a newer CLI` for a pod above level 2. See
+[Firmware and CLI levels](#firmware-and-cli-levels).
+
 Each pod on USB also gets a `MAC` line: its Ethernet MAC and, on firmware after 3.10.7 with
 Wi-Fi, the MAC it uses on Wi-Fi (`not known yet` until a `benchpod scan-wifi` or a join). Give
 them to your network admin when the network hands out addresses only to registered devices.
@@ -1198,9 +1254,11 @@ the network address and link, the cloud registration (and, when this machine is
 signed in, whether the pod is on your account), and a cloud job's lease when one
 holds the pod. With firmware 3.9.0+ a `USB` line shows the pod's USB network address
 and warns when the USB port powering the pod offers only default USB power (500 mA),
-which may not carry the pod plus a DUT on the internal 5 V rail. Over USB it asks over
-the pod's USB network adapter when that is up, else it prints the console's `status`
-text.
+which may not carry the pod plus a DUT on the internal 5 V rail. On a two-board pod whose
+digital board and analog module use different flat-cable pinouts, a `DAC` line says
+`off: board/module pinout mismatch` (the pod keeps the DAC off and refuses DAC commands with
+`BP0080`). Over USB it asks over the pod's USB network adapter when that is up, else it prints
+the console's `status` text.
 
 ```text
 BenchPod at 192.168.1.220:8080
@@ -1227,11 +1285,10 @@ shows them.
 
 Start DAC waveform output (network or embeddedci.com).
 
-Give the waveform in volts with `--path`, `--amplitude-v` and `--offset-v` (or in mA on the 4-20 mA
-output with `--amplitude-ma` and `--offset-ma`): firmware 3.9.1 and later calibrates it and plays it
-at the DAC's full 16 bits, about 50 µV a step on the 3.3 V output. The CLI checks the pod has it
-first and refuses on older firmware. `--amplitude` and `--offset` are the older 8-bit levels: 256
-steps over the output, no calibration.
+Give the waveform in volts with `--path`, `--amplitude-v` and `--offset-v`, or in mA on the 4-20 mA
+output with `--amplitude-ma` and `--offset-ma`: the pod calibrates it and plays it at the DAC's
+full 16 bits, about 50 µV a step on the 3.3 V output. One of the two is required: firmware 4.0
+has no 8-bit levels for `generate` (CLI 0.10 dropped `--amplitude` and `--offset` here).
 
 ```bash
 benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1.48 --offset-v 1.65
@@ -1241,17 +1298,13 @@ benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1.48 --of
 |---------------------|---------|-----------------------------------------------------------|
 | `--waveform`        | (required) | `sine`, `square` or `sawtooth`.                        |
 | `--freq`            | `1kHz`  | Output frequency with its unit, e.g. `2kHz`; a bare number is Hz. |
-| `--path`            |         | DAC output for the volts: `3v3`, `5v` or `12v` (firmware 3.9.1+). |
-| `--amplitude-v`     |         | Peak in volts on `--path`, 16-bit and calibrated (firmware 3.9.1+). |
+| `--path`            |         | DAC output for the volts: `3v3`, `5v` or `12v`.           |
+| `--amplitude-v`     |         | Peak in volts on `--path`, 16-bit and calibrated.         |
 | `--offset-v`        |         | Center in volts on `--path`, with `--amplitude-v`.        |
-| `--amplitude-ma`    |         | Peak in mA on the 4-20 mA output (J9), 16-bit (firmware 3.9.1+). |
+| `--amplitude-ma`    |         | Peak in mA on the 4-20 mA output (J9), 16-bit.            |
 | `--offset-ma`       |         | Center in mA on the 4-20 mA output, with `--amplitude-ma`. |
-| `--amplitude`       | `127`   | Half-scale amplitude in 8-bit levels, 0-127.              |
-| `--offset`          | `128`   | DC offset in 8-bit levels, 0-255.                         |
 | `--duration`        | `0`     | How long to play, e.g. `2s` or `500ms`; `0` runs until the next command. |
-| `--duration-ms`     | `0`     | The same in ms (older form of `--duration`).              |
 | `--sample-rate`     | auto    | FPGA sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
-| `--sample-rate-mhz` | auto    | The same in MHz (older form of `--sample-rate`).          |
 
 ### `benchpod capture`
 
@@ -1260,24 +1313,13 @@ Blocking ADC snapshot (network). Prints the samples.
 | Flag                | Default | Purpose                                              |
 |---------------------|---------|------------------------------------------------------|
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
-| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
+| `--format`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
 | `--sample-rate`     | max     | ADC sample rate, e.g. `100kHz`; leave it out for the maximum (400 kSPS). |
-| `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
-
-### `benchpod stream`
-
-Asynchronous ADC capture (network). Same flags and output as `capture`.
-
-| Flag                | Default | Purpose                                              |
-|---------------------|---------|------------------------------------------------------|
-| `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
-| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
-| `--sample-rate`     | max     | ADC sample rate, e.g. `100kHz`; leave it out for the maximum (400 kSPS). |
-| `--sample-rate-mhz` | max     | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod measure`
 
-DAC plus ADC loopback capture (network): play a waveform and capture the ADC.
+DAC plus ADC loopback capture (network): play a waveform and capture the ADC. It keeps the
+8-bit `--amplitude` and `--offset` codes (the pod builds the waveform at 8 bits for it).
 
 | Flag                | Default | Purpose                                              |
 |---------------------|---------|------------------------------------------------------|
@@ -1286,9 +1328,8 @@ DAC plus ADC loopback capture (network): play a waveform and capture the ADC.
 | `--amplitude`       | `127`   | Half-scale amplitude code, 0-127.                    |
 | `--offset`          | `128`   | DC offset code, 0-255.                               |
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
-| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
+| `--format`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
 | `--sample-rate`     | auto    | Sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
-| `--sample-rate-mhz` | auto    | The same in MHz (older form of `--sample-rate`).     |
 
 ### `benchpod test`
 
@@ -1299,7 +1340,7 @@ A diagnostic sample pattern made by the pod's MCU, without the FPGA (network).
 | `--pattern` | `sine`  | `sine`, `counter`, `ramp` or `const` (`const` when only `--value` is set). |
 | `--value`   | `255`   | Constant byte value, 0-255, for the `const` pattern.                      |
 | `--samples` | `256`   | Number of samples, 1-4096.                                               |
-| `--output`  | `json`  | Output format: `json`, `csv` or `ndjson`.                                |
+| `--format`  | `json`  | Output format: `json`, `csv` or `ndjson`.                                |
 
 ### `benchpod adc-range [show|normal|low|test]`
 
@@ -1384,7 +1425,7 @@ your own part.
 
 | Flag              | Default | Purpose                                                       |
 |-------------------|---------|---------------------------------------------------------------|
-| `--output`, `-o`  | (stdout) | Write to this file.                                          |
+| `--out`, `-o`     | (stdout) | Write to this file.                                          |
 | `--version`       | (none)  | Library version (default: the pinned one, or the saved one).  |
 | `--format-doc`    | `false` | Write the library's format reference (`docs/format.md`) instead. |
 
@@ -1414,16 +1455,16 @@ replaces it. It prints the params `sensor set` takes.
 
 | Flag         | Default | Purpose |
 |--------------|---------|---------|
-| `--pin`      | (none)  | `role=channel`, repeatable. I2C `sda`, `scl` (default: the wiring profile's `i2c_sda`/`i2c_scl` on embeddedci.com) and `drdy`; SPI `sclk`, `mosi`, `miso`, `cs` (default: the profile's `spi_*`; the emulated SPI target has no data-ready pin); UART `tx` (pod to DUT RX) and `rx`; analog `output=dac` (default) or `output=current`. A channel is `1`-`14` or `la1`-`la14`; another word is a name in the wiring profile on embeddedci.com (a role such as `i2c_sda` or a signal such as `DRDY`), resolved to its channel here. |
+| `--pin`      | (none)  | `role=channel`, repeatable. I2C `sda`, `scl` (default: the wiring profile's `i2c_sda`/`i2c_scl`) and `drdy`; SPI `sclk`, `mosi`, `miso`, `cs` (default: the profile's `spi_*`; the emulated SPI target has no data-ready pin); UART `tx` (pod to DUT RX) and `rx`; analog `output=dac` (default) or `output=current`. A channel is `1`-`14` or `la1`-`la14`; another word is a name in the pod's wiring profile (a role such as `i2c_sda` or a signal such as `DRDY`), resolved to its channel here. |
 | `--instance` | (the definition's name) | Instance name, 1 to 16 characters of `a-z`, `0-9` and `_`. |
-| `--address`  | (none)  | I2C: the definition's address or one of its `alt_addresses` (`0x77`). |
+| `--addr`     | (none)  | I2C: the definition's address or one of its `alt_addresses` (`0x77`). |
 | `--set`      | (none)  | Initial value as `key=number`, repeatable. |
 | `--baud`     | `0` (the definition's) | UART: override the baud rate. |
 | `--version`  | (none)  | Library version for a library name. |
 
 ```bash
 benchpod sensor start gps_nmea --instance gps --pin tx=9 --set lat_deg=50.85 --set lon_deg=4.35
-benchpod sensor start sensors/my_adc.yaml --pin sda=2 --pin scl=1 --address 0x49
+benchpod sensor start sensors/my_adc.yaml --pin sda=2 --pin scl=1 --addr 0x49
 ```
 
 ### `benchpod sensor set <instance> <key=value>...`
@@ -1507,7 +1548,7 @@ embeddedci.com; `la voltage` also works over USB.
 ### `benchpod la voltage [VOLTAGE]`
 
 Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
-(also `1800mV`, `3.3` or `3300`), or `5V` on a pod with the digital board v3r4
+(also `1800mV` or `3.3`: a bare number is volts), or `5V` on a pod with the digital board v3r4
 ([5 V I/O](https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io): pin 21 goes to 5 V,
 and the output then shows pin 21). Leave it out to show the setting. The pod refuses
 LA capture, UART, SWD flash, pull-ups and sensor emulation until it is set;
@@ -1539,12 +1580,6 @@ benchpod la pull 7 down
 benchpod la pull 7 off
 ```
 
-### `benchpod la pullup PIN STATE`
-
-The older form of `la pull`: `STATE` `on` engages the pin's resistor in its own
-direction (up on LA1-LA6, down on LA7/LA8), `off` switches it off. Still accepted;
-use `la pull`. No flags.
-
 ### `benchpod la status [PIN]`
 
 Report the pull state of one pin, or the bitmask of the engaged ones. No flags.
@@ -1557,8 +1592,7 @@ Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
 |---------------|---------|--------------------------------------------------------------|
 | `--la`        | (required) | LA pin to pulse, e.g. `6` or `la6`.                       |
 | `--steps`     | (required) | Number of pulses, positive.                               |
-| `--delay`     | (required) | High and low half-period, e.g. `50us` or `1ms` (this or `--delay-us`). |
-| `--delay-us`  | (required) | The same in microseconds (older form of `--delay`).       |
+| `--delay`     | (required) | High and low half-period, e.g. `50us` or `1ms`.           |
 | `--dir-la`    | (none)  | Direction pin, driven before stepping.                       |
 | `--direction` | `0`     | Level for `--dir-la`: `0` or `1`.                            |
 
@@ -1827,7 +1861,7 @@ embeddedci.com. See [Flashing the pod itself](#flashing-the-pod-itself-stm32-usb
 | `--firmware-version` | (latest)     | Fetch this release tag instead of the latest.                 |
 | `--firmware-url`     | (latest)     | Download the firmware from this URL instead (https only).     |
 | `--allow-unsigned`   | off          | Flash a downloaded image whose signature is missing or fails (a local file is never refused). |
-| `--address`          | `0x08000000` | Flash base address (STM32 main flash).                        |
+| `--addr`             | `0x08000000` | Flash base address (STM32 main flash).                        |
 | `--dfu-util`         | (`PATH`)     | Path to the `dfu-util` binary.                                |
 | `--no-leave`         | off          | Stay in DFU after flashing instead of starting the firmware.  |
 | `--skip-blobs`       | off          | Do not install the gateware and ESP32-C3 images afterwards.   |
@@ -1843,7 +1877,10 @@ download's checksum does not match, or dfu-util fails. A local file's signature 
 ### `benchpod install-blobs`
 
 Install the gateware and ESP32-C3 images the pod's firmware goes with (USB: over the
-pod's USB network adapter when it is up, firmware 3.9.0+, else its console). By
+pod's USB network adapter when it is up, else the pod's network address; firmware 3.9.0
+and later). Firmware before 3.9.0 took blobs over its console, which this CLI no longer
+uses: update such a pod with `benchpod flash-self` (USB DFU). With USB networking off,
+`benchpod usb-network on --connection usb` turns it back on. By
 default they come from the release that matches the firmware the pod runs. Each
 blob's signature is reported; for now a missing or failing one never stops it.
 When the pod does not list its blob slots (its `blob_status` command fails), it installs
@@ -1887,14 +1924,19 @@ Reboot a (retired) RP2350 pod into its UF2 bootloader (USB).
 
 ### `benchpod set-wifi`
 
-Save Wi-Fi credentials and join (USB). With firmware 3.9.0+ this turns the pod's USB networking off (Wi-Fi and USB networking are one or the other; `clear-wifi` turns it back on). Installs the ESP32-C3 image first when the
-pod lacks it; if the pod's image slots cannot be read, it stops and says so
-(`--skip-blobs` sets Wi-Fi without the check).
+Save Wi-Fi credentials and join. The CLI sends them as JSON (`wifi_set`) over the pod's USB
+network adapter (or the `--connection` given: a network address or `embeddedci:<name>`).
+Wi-Fi and USB networking are one or the other: once the credentials are stored, USB networking
+turns off, and set-wifi follows the join on the address the pod's console reports. `clear-wifi`
+over the pod's network address, or `net-reset` over USB, turns it back on. Installs the
+ESP32-C3 image first when the pod lacks it; if the pod's image slots cannot be read, it stops
+and says so (`--skip-blobs` sets Wi-Fi without the check). With USB networking off,
+`benchpod usb-network on --connection usb` turns it back on.
 
-With a Wi-Fi bridge on the pod's Ethernet port (firmware with bridge support), the
-credentials go to the bridge instead (the pod sends the password sealed), no ESP32-C3
-image is needed, and set-wifi waits up to 45 s for the bridge to join: it reports a
-wrong password or a network the bridge cannot see. The pod keeps its Ethernet address.
+With a Wi-Fi bridge on the pod's Ethernet port, the credentials go to the bridge instead (the
+pod sends the password sealed), no ESP32-C3 image is needed, USB networking stays on, and
+set-wifi waits up to 45 s for the bridge to join: it reports a wrong password or a network the
+bridge cannot see. The pod keeps its Ethernet address.
 
 | Flag               | Default    | Purpose                                                   |
 |--------------------|------------|-----------------------------------------------------------|
@@ -1905,26 +1947,38 @@ wrong password or a network the bridge cannot see. The pod keeps its Ethernet ad
 
 ### `benchpod show-network`
 
-The pod's IP (the wired lease first) plus the stored Wi-Fi SSID, state and RSSI
-(USB). With a Wi-Fi bridge, `Via:` names it (MAC, firmware, paired or not), State is
-the bridge's (`joining`, `connected`, `auth-failed`, `no-ap`, ...) and `Problem:` says
-what the pod sees wrong with it. No flags.
+The pod's IP (the wired lease first) plus the stored Wi-Fi SSID, state and RSSI (`status` and
+`wifi_status` over the pod's USB network adapter, or the `--connection` given). With a Wi-Fi
+bridge, `Via: wifi-bridge`, State is the bridge's (`joining`, `connected`, `auth-failed`,
+`no-ap`, ...) and `Problem:` says what the pod sees wrong with it. No flags.
 
 ### `benchpod scan-wifi`
 
-List the Wi-Fi networks the pod sees, strongest first: RSSI, channel, security and SSID,
-to pick one for `set-wifi` (USB). The pod scans with its built-in Wi-Fi (firmware 3.9.4 or
-later), or with a Wi-Fi bridge on its Ethernet port when one is plugged in. A scan takes a few
-seconds; a pod that is joined to a network stays joined, and a pod that is joining finishes
-that first (up to 30 seconds). No flags.
-
-On older firmware the pod cannot scan, but it can still join a network: the command says so,
-suggests `benchpod flash-self` and `benchpod set-wifi --ssid <network name>`, and exits 0.
-It fails only on a pod with no Wi-Fi at all.
+List the Wi-Fi networks the pod sees, strongest first: RSSI, channel, security and SSID, to pick
+one for `set-wifi` (`wifi_scan` over the pod's USB network adapter, or the `--connection`
+given). The pod scans with its built-in Wi-Fi, or with a Wi-Fi bridge on its Ethernet port when
+one is plugged in. A scan takes a few seconds; a pod that is joined to a network stays joined,
+and a pod that is joining finishes that first (up to 30 seconds). No flags.
 
 ### `benchpod clear-wifi`
 
-Erase the stored Wi-Fi credentials (USB). Wi-Fi goes down at once, no reboot needed, and USB networking (firmware 3.9.0+) comes back on. Firmware after 3.7.0 also erases the copy older firmware left on the ESP32-C3 Wi-Fi chip, which takes a few seconds more. No flags.
+Erase the stored Wi-Fi credentials (`wifi_clear`). Wi-Fi goes down at once, no reboot needed,
+and USB networking comes back on. The pod also erases the copy older firmware left on the
+ESP32-C3 Wi-Fi chip, which takes a few seconds more. Over USB the CLI uses the pod's USB network
+adapter, else (it is off while Wi-Fi is set) the pod's network address from its console. When no
+network reaches the pod, use `benchpod net-reset`. No flags.
+
+### `benchpod net-reset`
+
+The way back to a pod that no network reaches (firmware 4.0, over the USB console): the pod
+forgets its Wi-Fi credentials (its own flash and the ESP32-C3's, or the Wi-Fi bridge's), which
+turns USB networking back on, and puts Ethernet back to autonegotiation with a PHY reset and a
+new DHCP lease. The LAN and signature policies, the cloud settings and the device key stay. It
+prints the pod's `net-reset` lines.
+
+| Flag    | Default | Purpose                        |
+|---------|---------|--------------------------------|
+| `--yes` | off     | Skip the confirmation prompt.  |
 
 ### `benchpod usb-bridge`
 
@@ -1977,11 +2031,12 @@ Show whether the background service is installed and running. No flags.
 
 ### `benchpod usb-reattach`
 
-Make the pod drop off the USB bus for half a second and connect again (USB). The
-computer then sets up the console and the USB network adapter anew, as after
-replugging the cable. macOS ignores a new network adapter while the screen is
-locked: run this after unlocking when the pod was plugged in or rebooted meanwhile.
-Needs firmware 3.9.0 or later. No flags.
+Make the pod drop off the USB bus for half a second and connect again (`usb_reattach`). The
+computer then sets up the console and the USB network adapter anew, as after replugging the
+cable. macOS ignores a new network adapter while the screen is locked: run this after
+unlocking when the pod was plugged in or rebooted meanwhile. The CLI sends it over the pod's
+USB network adapter when that is up, else over the pod's network address from its console
+`status` (or the `--connection` given); with neither, replug the cable. No flags.
 
 ### `benchpod login`
 
@@ -2187,8 +2242,8 @@ Every code is also on [embeddedci.com/docs/errors](https://embeddedci.com/docs/e
 
 ### `benchpod lan-tls`
 
-Show the pod's LAN TLS certificate, its SHA-256, the HTTPS-only setting and
-whether this computer has it pinned (firmware 3.9.3+). See
+Show the pod's LAN TLS certificate, its SHA-256, the HTTPS-only and SCPI settings
+and whether this computer has it pinned. See
 [LAN TLS](#lan-tls-encrypted-lan-api). Over the network, USB or embeddedci.com.
 
 | Flag    | Default | Purpose                                                          |
@@ -2205,20 +2260,28 @@ Same as `benchpod lan-tls`.
 
 ### `benchpod lan-tls https-only <on|off>`
 
-`on`: the pod refuses plaintext 8080 on Ethernet and Wi-Fi and answers only on
-8443 there; its USB link keeps 8080. `off` needs a TLS, USB or embeddedci.com
-connection. Stored on the pod.
+`on` (the default from firmware 4.0): the pod refuses plaintext 8080 on Ethernet and
+Wi-Fi and answers only on 8443 there; its USB link keeps 8080. `off`: plaintext 8080
+on the LAN too. Only over USB (`--connection usb`) or embeddedci.com. Stored on the pod.
+
+### `benchpod lan-tls scpi <on|off>`
+
+`on`: SCPI answers on the pod's TCP ports (8443, and 8080; on the LAN 8080 takes SCPI
+only while HTTPS-only is on), and the pod advertises `_scpi-raw._tcp`. `off` (the
+default from firmware 4.0) closes SCPI sessions. Only over USB (`--connection usb`)
+or embeddedci.com. Stored on the pod.
 
 ### `benchpod lan-tls regenerate`
 
 A new key and self-signed certificate on the pod; this computer's pin follows.
-Needs a TLS, USB or embeddedci.com connection.
+Only over USB (`--connection usb`) or embeddedci.com.
 
 ### `benchpod lan-tls set-cert`
 
 Install your own certificate and key. Checks them here first (they must match,
 the key must not be encrypted, at most 7.6 KB together), uploads them over the
-network (TLS or the USB network adapter), checks the pod reports the new
+pod's USB network adapter (`--connection usb`; the pod refuses the upload from
+Ethernet and Wi-Fi), checks the pod reports the new
 certificate and updates the pin.
 
 | Flag     | Default | Purpose                                                        |
@@ -2269,9 +2332,9 @@ benchpod log-level debug
 
 ### `benchpod sig-policy`
 
-Show the pod's signature policy: `audit`, `permissive` or `required`. Same
-transports as `lan-policy`; the cloud can only make it stricter. These flags apply
-to `show` and `set` too.
+Show the pod's signature policy (always `required` from firmware 4.0) and how many release
+keys it trusts. Over embeddedci.com, the pod's USB network adapter or the LAN. There is no
+`set`: CLI 0.10 dropped the loosening. These flags apply to `show` too.
 
 | Flag            | Default                      | Purpose                                                  |
 |-----------------|------------------------------|----------------------------------------------------------|
@@ -2284,10 +2347,6 @@ to `show` and `set` too.
 
 Same as `benchpod sig-policy`.
 
-### `benchpod sig-policy set <audit|permissive|required>`
-
-Set the signature policy. Loosening it needs the USB console.
-
 ### `benchpod identity`
 
 Show the pod's device identity (USB). See
@@ -2299,7 +2358,8 @@ Same as `benchpod identity`.
 
 ### `benchpod identity wipe`
 
-Erase the pod's device key and make a new one (USB only). The pod then needs to be
+Erase the pod's device key and make a new one (USB only: the console shows the
+identity, the wipe goes over the pod's USB network adapter). The pod then needs to be
 registered again.
 
 | Flag    | Default | Purpose                      |

@@ -29,10 +29,8 @@ func TestHasFromTheTable(t *testing.T) {
 		{`{"gateware":44,"features_rev":1}`, "spi_master", false},
 		{`{"gateware":56,"features_rev":1,"analog":false}`, "generate16", false},
 		{`{"gateware":56,"features_rev":1,"analog":false,"hw":[]}`, "wifi_scan", false},
-		// older firmware: the caps list decides
-		{`{"caps":["sensors","spi_master"]}`, "spi_master", true},
-		{`{"caps":["sensors"]}`, "generate16", false},
-		{`{"caps":["signal"]}`, "signal_alias", true}, // the table's name for the old "signal"
+		// no features_rev (firmware up to 3.10.10): CLI 0.10 reads no caps list
+		{`{"caps":["sensors","spi_master"]}`, "spi_master", false},
 	} {
 		got, err := Has(json.RawMessage(tc.status), tc.name)
 		if err != nil || got != tc.want {

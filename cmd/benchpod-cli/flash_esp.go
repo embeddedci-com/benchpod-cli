@@ -153,7 +153,7 @@ func (f *flashFlags) espPins(w *podWiring) (map[string]any, error) {
 		if strings.TrimSpace(val) != "" {
 			n, err := parseLAPin(val)
 			if err != nil {
-				return 0, fmt.Errorf("--%s: %w", flag, err)
+				return 0, usageErrorf("--%s: %w", flag, err)
 			}
 			return n, nil
 		}
@@ -178,14 +178,14 @@ func (f *flashFlags) espPins(w *podWiring) (map[string]any, error) {
 		return nil, err
 	}
 	if rx == 0 || tx == 0 {
-		return nil, fmt.Errorf("--rx and --tx are required (the LA pins on the target's TXD0 and RXD0), or set uart_rx and uart_tx in the pod's wiring profile")
+		return nil, usageErrorf("--rx and --tx are required (the LA pins on the target's TXD0 and RXD0), or set uart_rx and uart_tx in the pod's wiring profile")
 	}
 	boot, err := pin("boot", f.espBoot, "", espBootSignals)
 	if err != nil {
 		return nil, err
 	}
 	if boot == 0 {
-		return nil, fmt.Errorf("--boot is required: the LA pin on the target's IO0 (IO9 on the C3/C6), or a wiring-profile signal named BOOT, IO0 or IO9")
+		return nil, usageErrorf("--boot is required: the LA pin on the target's IO0 (IO9 on the C3/C6), or a wiring-profile signal named BOOT, IO0 or IO9")
 	}
 	pins := map[string]any{"rx": rx, "tx": tx, "boot": boot, "en": "nrst"}
 	if !f.nreset {

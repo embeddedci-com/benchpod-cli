@@ -36,7 +36,7 @@ var (
 )
 
 // dfuOnlyFlags are the flash-self flags that only mean something for DFU.
-var dfuOnlyFlags = []string{"enter-dfu", "no-leave", "dfu-util", "address", "wait"}
+var dfuOnlyFlags = []string{"enter-dfu", "no-leave", "dfu-util", "addr", "wait"}
 
 // podStatusInfo is what flash-self --network reads from the pod's JSON status.
 type podStatusInfo struct {
@@ -137,9 +137,8 @@ func uploadFirmwareLAN(ctx context.Context, lan lanSession, image, manifest []by
 	if err := lan.cmd(ctx, map[string]any{"cmd": "ota_commit"}, nil); err != nil && !lan.s.Broken() {
 		// A refusal (no verified image, busy, locked, signature policy) comes back as the pod's
 		// error reply. A connection that drops is the pod restarting: the expected end.
-		if pe, ok := tcpclient.AsPodError(err); ok && !strings.Contains(strings.ToLower(pe.Reason), "timeout") &&
-			!errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("commit: %s", pe.Reason)
+		if _, ok := tcpclient.AsPodError(err); ok && !errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("commit: %w", err)
 		}
 	}
 	return nil
@@ -187,7 +186,7 @@ func waitForPodOnNetwork(g *globalFlags, ctx context.Context) (lanSession, strin
 func runFlashSelfNetwork(g *globalFlags, f *flashSelfFlags, changed func(string) bool, args []string) error {
 	for _, name := range dfuOnlyFlags {
 		if changed(name) {
-			return fmt.Errorf("--%s is for USB DFU and does not apply with --network", name)
+			return usageErrorf("--%s is for USB DFU and does not apply with --network", name)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(flashSelfTimeout))

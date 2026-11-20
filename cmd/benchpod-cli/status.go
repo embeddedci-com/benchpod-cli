@@ -57,7 +57,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				return fmt.Errorf("status: %w", err)
 			}
 			if upd := tcpclient.CheckPodAPI(data); upd != nil {
-				// Shown, not refused: status is how the user finds out (see allowsNewerPod).
+				// Shown, not refused: status is how the user finds out (see allowsAnyPodAPI).
 				log.Printf("Warning: %v", upd)
 			}
 			out, closeOut, err := resolveOutput(g.outputFilename)
@@ -123,6 +123,13 @@ type podStatus struct {
 	SafeMode         bool    `json:"safe_mode"`
 	SafeReason       string  `json:"safe_reason"`
 	USB              *podUSB `json:"usb"` // firmware 3.9.0+
+	// Module is the analog module of a two-board pod (left out on other boards). DacPinoutOK is
+	// false when the digital board and the module use different flat-cable pinouts: the pod
+	// keeps the DAC off (BP0080).
+	Module *struct {
+		Present     bool  `json:"present"`
+		DacPinoutOK *bool `json:"dac_pinout_ok"`
+	} `json:"module"`
 	// The MACs (firmware after 3.10.7, full form only). WiFiMAC is absent on a pod without Wi-Fi
 	// and null until the pod knows it (a Wi-Fi scan or a join tells it).
 	EthMAC  string          `json:"eth_mac"`
@@ -136,14 +143,13 @@ type podStatus struct {
 
 // podUSB is status.usb: the USB network adapter and what the USB-C source advertises.
 type podUSB struct {
-	Net       string `json:"net"`
-	Setting   string `json:"setting"`    // the usb-network setting, "" before it existed
-	OffReason string `json:"off_reason"` // "setting" or "wifi" when Net is "off"
-	Link      bool   `json:"link"`
-	IP        string `json:"ip"`
-	HostIP    string `json:"host_ip"`
-	Source    string `json:"source"`    // "none", "default", "1.5A", "3.0A"; "" on v2
-	SourceMA  *int   `json:"source_ma"` // nil on v2
+	Net       flexBool `json:"net"`
+	OffReason string   `json:"off_reason"` // "setting" or "wifi" when Net is off
+	Link      bool     `json:"link"`
+	IP        string   `json:"ip"`
+	HostIP    string   `json:"host_ip"`
+	Source    string   `json:"source"`    // "none", "default", "1.5A", "3.0A"; "" on v2
+	SourceMA  *int     `json:"source_ma"` // nil on v2
 }
 
 // describeUSB is the status row for the USB side, with a warning when the port powering the pod
@@ -151,9 +157,9 @@ type podUSB struct {
 func describeUSB(u podUSB) string {
 	var parts []string
 	switch {
-	case u.Net == "off" && u.OffReason == "setting":
-		parts = append(parts, "network off (turned off on the pod: `benchpod usb-network on` over its USB console)")
-	case u.Net == "off":
+	case !bool(u.Net) && u.OffReason == "setting":
+		parts = append(parts, "network off (turned off on the pod: `benchpod usb-network on --connection usb`)")
+	case !bool(u.Net):
 		parts = append(parts, "network off (Wi-Fi is configured)")
 	case u.Link:
 		parts = append(parts, "network "+u.IP+" (this computer "+u.HostIP+")")
@@ -192,10 +198,10 @@ type powerRail struct {
 func describePowerDraw(d powerDraw, tp *targetPower) string {
 	ma := func(ua int) string { return fmt.Sprintf("%d mA", (ua+500)/1000) }
 	var parts []string
-	if d.Internal.OK && (tp == nil || tp.Efuse1.Enabled != 0) {
+	if d.Internal.OK && (tp == nil || bool(tp.Efuse1.Enabled)) {
 		parts = append(parts, fmt.Sprintf("internal 5 V rail %s at %s", ma(d.Internal.CurrentUA), formatMV(d.Internal.BusMV)))
 	}
-	if d.External.OK && (tp == nil || tp.Efuse2.Enabled != 0) {
+	if d.External.OK && (tp == nil || bool(tp.Efuse2.Enabled)) {
 		parts = append(parts, fmt.Sprintf("external rail %s at %s", ma(d.External.CurrentUA), formatMV(d.External.BusMV)))
 	}
 	if d.Pod != nil && d.Pod.OK {
@@ -211,13 +217,29 @@ func describePowerDraw(d powerDraw, tp *targetPower) string {
 // the external supply.
 type targetPower struct {
 	Efuse1 struct {
-		Enabled int `json:"enabled"`
-		Fault   int `json:"fault"`
+		Enabled flexBool `json:"enabled"`
+		Fault   flexBool `json:"fault"`
 	} `json:"efuse1"`
 	Efuse2 struct {
-		Enabled int `json:"enabled"`
-		Fault   int `json:"fault"`
+		Enabled flexBool `json:"enabled"`
+		Fault   flexBool `json:"fault"`
 	} `json:"efuse2"`
+}
+
+// flexBool reads a firmware 4.0 boolean (true/false) and, for status against firmware 3.x (which
+// status still shows), the 3.x forms: 1/0 and "on"/"off".
+type flexBool bool
+
+func (b *flexBool) UnmarshalJSON(data []byte) error {
+	switch strings.Trim(strings.TrimSpace(string(data)), `"`) {
+	case "true", "1", "on":
+		*b = true
+	case "false", "0", "off", "null", "":
+		*b = false
+	default:
+		return fmt.Errorf("not a boolean: %s", data)
+	}
+	return nil
 }
 
 // statusSummary is everything the summary prints; the extras are optional (nil/"" = unknown).
@@ -325,17 +347,21 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 		row("Lease", fmt.Sprintf("held by cloud job %s (%d s left); the LAN is read-only until it ends",
 			valueOrDash(st.Lease.Holder), st.Lease.LeftS))
 	}
+	if st.Module != nil && st.Module.DacPinoutOK != nil && !*st.Module.DacPinoutOK {
+		row("DAC", "off: board/module pinout mismatch (the digital board and the analog module use different "+
+			"flat-cable pinouts; `benchpod explain BP0080`)")
+	}
 	if st.SafeMode {
 		row("Safe mode", valueOrDash(st.SafeReason))
 	}
 }
 
 func describeTargetPower(p targetPower) string {
-	rail := func(name string, enabled, fault int) string {
+	rail := func(name string, enabled, fault flexBool) string {
 		switch {
-		case fault != 0:
+		case bool(fault):
 			return name + " FAULT"
-		case enabled != 0:
+		case bool(enabled):
 			return name + " on"
 		}
 		return ""

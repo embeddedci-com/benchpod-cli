@@ -109,7 +109,7 @@ func newLogoutCmd(g *globalFlags) *cobra.Command {
 
 func runLogin(serverURL, tokenFile string, noOpen bool) error {
 	if strings.TrimSpace(serverURL) == "" {
-		return errors.New("--server-url cannot be empty")
+		return usageErrorf("--server-url cannot be empty")
 	}
 	tokenPath, err := resolveTokenPath(tokenFile)
 	if err != nil {

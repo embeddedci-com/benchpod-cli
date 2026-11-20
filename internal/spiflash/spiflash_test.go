@@ -12,6 +12,7 @@ import (
 
 	"github.com/embeddedci-com/benchpod-cli/internal/spiflash"
 	"github.com/embeddedci-com/benchpod-cli/internal/spiflash/spiflashtest"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 func randBytes(n int) []byte {
@@ -202,7 +203,7 @@ func TestSessionStartFailureReleasesReset(t *testing.T) {
 		t.Fatal("fn ran without a session")
 		return nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "spi busy") {
+	if !tcpclient.HasCode(err, "BP0004") {
 		t.Fatalf("got %v", err)
 	}
 	// Busy means another session owns the engine: no spi_stop, but reset released.
@@ -225,11 +226,11 @@ func TestSessionWithoutReset(t *testing.T) {
 }
 
 func TestHasCap(t *testing.T) {
-	ok, err := spiflash.HasCap(json.RawMessage(`{"fw":"3.2.0","caps":["swd","spi_master"]}`), spiflash.Cap)
+	ok, err := spiflash.HasCap(json.RawMessage(`{"features_rev":11,"gateware":60}`), spiflash.Cap)
 	if err != nil || !ok {
 		t.Fatalf("HasCap = %v, %v", ok, err)
 	}
-	ok, _ = spiflash.HasCap(json.RawMessage(`{"caps":["swd"]}`), spiflash.Cap)
+	ok, _ = spiflash.HasCap(json.RawMessage(`{"features_rev":11,"gateware":44}`), spiflash.Cap)
 	if ok {
 		t.Fatal("HasCap true without the cap")
 	}

@@ -53,7 +53,7 @@ func jsonError(w http.ResponseWriter, status int, msg, code string) {
 
 func TestResolveAndCommand(t *testing.T) {
 	f := &fakeServer{reply: func(w http.ResponseWriter) {
-		_, _ = w.Write([]byte(`{"request_id":"r","device_id":"id-b","status":"ok","data":{"version":"3.8.0"}}`))
+		_, _ = w.Write([]byte(`{"request_id":"r","device_id":"id-b","status":"ok","data":{"version":"4.0.0","api":2}}`))
 	}}
 	api := f.start(t)
 	c, err := Resolve(context.Background(), api, "ApiKey eci_test", "bench-b")
@@ -72,7 +72,7 @@ func TestResolveAndCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != `{"version":"3.8.0"}` || f.command["cmd"] != "status" {
+	if string(data) != `{"version":"4.0.0","api":2}` || f.command["cmd"] != "status" {
 		t.Errorf("data %s, sent %v", data, f.command)
 	}
 	if f.timeout < 15000 || f.timeout > 20000 {
@@ -247,24 +247,36 @@ func TestCloudCommandCarriesTheClientFields(t *testing.T) {
 	}
 }
 
-// The status check and BP0030 work through embeddedci.com too.
-func TestCloudNewerPodNeedsANewerCLI(t *testing.T) {
+// The status check and BP0030 work through embeddedci.com too: a newer pod needs a newer CLI, a
+// pod older than firmware 4.0 (api 1, or none) needs a firmware update.
+func TestCloudPodAPILevels(t *testing.T) {
 	for _, c := range []struct {
 		cmd, reply string
-		bad        bool
+		newer, old bool
 	}{
-		{"status", `{"status":"ok","data":{"version":"3.11.0","api":2}}`, true},
-		{"status", `{"status":"ok","data":{"version":"3.10.13"}}`, false},
-		{"status", `{"status":"ok","data":{"api":1}}`, false},
-		{"ping", `{"status":"ok","data":{"api":2}}`, false},
-		{"la", `{"status":"error","code":"BP0030","args":{"client_api":1,"min_client_api":2,"api":2}}`, true},
+		{"status", `{"status":"ok","data":{"version":"5.0.0","api":3}}`, true, false},
+		{"status", `{"status":"ok","data":{"version":"4.0.0","api":2,"min_client_api":2}}`, false, false},
+		{"status", `{"status":"ok","data":{"version":"3.10.13"}}`, false, true},
+		{"status", `{"status":"ok","data":{"api":1}}`, false, true},
+		{"ping", `{"status":"ok","data":{"api":1}}`, false, false}, // no probe: tcpclient.SetAPIProbe is off
+		{"la", `{"status":"error","code":"BP0030","args":{"client_api":1,"min_client_api":3,"api":3}}`, true, false},
 	} {
 		f := &fakeServer{reply: func(w http.ResponseWriter) { _, _ = w.Write([]byte(c.reply)) }}
 		cl := &Client{API: f.start(t), Credential: "tok", DeviceID: "id-b", Name: "bench-b"}
 		_, err := cl.Command(context.Background(), map[string]any{"cmd": c.cmd})
 		var upd *tcpclient.UpdateRequiredError
-		if got := errors.As(err, &upd); got != c.bad || (!c.bad && err != nil) {
+		var old *tcpclient.FirmwareTooOldError
+		if errors.As(err, &upd) != c.newer || errors.As(err, &old) != c.old || (!c.newer && !c.old && err != nil) {
 			t.Errorf("%s %s: err = %v", c.cmd, c.reply, err)
 		}
+	}
+	// With the probe on, the first other command reads status first.
+	tcpclient.SetAPIProbe(true)
+	defer tcpclient.SetAPIProbe(false)
+	f := &fakeServer{reply: func(w http.ResponseWriter) { _, _ = w.Write([]byte(`{"status":"ok","data":{"version":"3.10.13"}}`)) }}
+	cl := &Client{API: f.start(t), Credential: "tok", DeviceID: "id-b", Name: "bench-b"}
+	var old *tcpclient.FirmwareTooOldError
+	if _, err := cl.Command(context.Background(), map[string]any{"cmd": "la_pins"}); !errors.As(err, &old) || f.command["cmd"] != "status" {
+		t.Fatalf("probe: err = %v, sent %v", err, f.command)
 	}
 }

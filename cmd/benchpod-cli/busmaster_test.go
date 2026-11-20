@@ -33,7 +33,7 @@ func TestI2CStartSendsPinsAndPrintsTheRate(t *testing.T) {
 	pod, g := newFakeSensorPod(t)
 	pod.reply = func(req map[string]any) (any, string) {
 		if req["cmd"] == "i2c_start" {
-			return map[string]any{"sda": 1, "scl": 2, "hz": 363636, "pullups": "pod"}, ""
+			return map[string]any{"sda": 1, "scl": 2, "clock_hz": 363636, "pullups": "pod"}, ""
 		}
 		return nil, ""
 	}
@@ -41,7 +41,7 @@ func TestI2CStartSendsPinsAndPrintsTheRate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reqJSON(pod.last("i2c_start")); got != `{"cmd":"i2c_start","hz":400000,"pullups":"pod","scl":2,"sda":1}` {
+	if got := reqJSON(pod.last("i2c_start")); got != `{"clock_hz":400000,"cmd":"i2c_start","pullups":"pod","scl":2,"sda":1}` {
 		t.Fatalf("request %s", got)
 	}
 	if out != "i2c: SDA LA1, SCL LA2 at 363.636 kHz, the pod's pull-ups" {
@@ -63,7 +63,7 @@ func TestI2CStartPinsFromTheWiringProfile(t *testing.T) {
 	if _, err := runBus(t, g, newI2CCmd(g), "start", "--pullups", "external"); err != nil {
 		t.Fatal(err)
 	}
-	if got := reqJSON(pod.last("i2c_start")); got != `{"cmd":"i2c_start","hz":100000,"pullups":"external","scl":4,"sda":3}` {
+	if got := reqJSON(pod.last("i2c_start")); got != `{"clock_hz":100000,"cmd":"i2c_start","pullups":"external","scl":4,"sda":3}` {
 		t.Fatalf("request %s", got)
 	}
 	// A wiring name for a pin.
@@ -168,7 +168,7 @@ func TestI2CStatusAndStop(t *testing.T) {
 			if !active {
 				return map[string]any{"active": false}, ""
 			}
-			return map[string]any{"active": true, "sda": 5, "scl": 6, "hz": 100000, "pullups": "external"}, ""
+			return map[string]any{"active": true, "sda": 5, "scl": 6, "clock_hz": 100000, "pullups": "external"}, ""
 		case "i2c_stop":
 			return "i2c stopped", ""
 		}
@@ -191,7 +191,7 @@ func TestBusMasterOnOldFirmwareNamesTheUpdate(t *testing.T) {
 	pod, g := newFakeSensorPod(t)
 	pod.reply = func(req map[string]any) (any, string) {
 		if req["cmd"] != "status" {
-			return nil, "unknown cmd"
+			return nil, "BP0002"
 		}
 		return nil, ""
 	}
@@ -207,19 +207,20 @@ func TestBusMasterOnOldFirmwareNamesTheUpdate(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "gateware v55 or later") || !strings.Contains(err.Error(), "benchpod flash-self") {
 			t.Fatalf("%v: err = %v", c.args, err)
 		}
-		if exitCode(err) != exitRefused {
+		if exitCode(err) != exitUpdatePod {
 			t.Fatalf("%v: exit %d", c.args, exitCode(err))
 		}
 	}
-	// The new firmware on old gateware says it itself; the CLI adds the command.
+	// Firmware 4.0 on old gateware says so with BP0017; the catalog names the command.
 	pod.reply = func(req map[string]any) (any, string) {
 		if req["cmd"] == "i2c_start" {
-			return nil, "the I2C master needs gateware v55+: update the pod's firmware"
+			return nil, `BP0017 {"feature":"I2C master","min":55}`
 		}
 		return nil, ""
 	}
 	_, err := runBus(t, g, newI2CCmd(g), "start", "--sda", "1", "--scl", "2")
-	if err == nil || !strings.Contains(err.Error(), "needs gateware v55+") || !strings.Contains(err.Error(), "benchpod flash-self") {
+	if err == nil || !strings.Contains(err.Error(), "I2C master needs gateware v55 or later") || !strings.Contains(err.Error(), "benchpod flash-self") ||
+		exitCode(err) != exitUpdatePod {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -228,7 +229,7 @@ func TestI2CPullupRefusalNamesTheCLICommand(t *testing.T) {
 	pod, g := newFakeSensorPod(t)
 	pod.reply = func(req map[string]any) (any, string) {
 		if req["cmd"] == "i2c_start" {
-			return nil, `I2C needs pull-ups: switch on LA1's with {"cmd":"la","la":1,"pullup":"on"}, or pass "pullups":"external"`
+			return nil, `BP0061 {"la":1}`
 		}
 		return nil, ""
 	}
@@ -236,24 +237,6 @@ func TestI2CPullupRefusalNamesTheCLICommand(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "benchpod la pull 1 up") || !strings.Contains(err.Error(), "--pullups external") ||
 		strings.Contains(err.Error(), `{"cmd"`) {
 		t.Fatalf("err = %v", err)
-	}
-	// firmware with la_pull_dir names the pull form
-	pod.reply = func(req map[string]any) (any, string) {
-		if req["cmd"] == "i2c_start" {
-			return nil, `I2C needs pull-ups: switch on LA2's with {"cmd":"la","la":2,"pull":"up"}, or pass "pullups":"external"`
-		}
-		return nil, ""
-	}
-	_, err = runBus(t, g, newI2CCmd(g), "start", "--sda", "1", "--scl", "2")
-	if err == nil || !strings.Contains(err.Error(), "benchpod la pull 2 up") || strings.Contains(err.Error(), `{"cmd"`) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestPinConflictWithTheI2CMaster(t *testing.T) {
-	shown, hint := translateRefusal(`pin conflict: LA1 is in use by i2cm_sda; stop the I2C session first ({"cmd":"i2c_stop"})`)
-	if shown != "pin conflict: LA1 is in use by i2cm_sda" || !strings.Contains(hint, "benchpod i2c stop") {
-		t.Fatalf("%q, %q", shown, hint)
 	}
 }
 

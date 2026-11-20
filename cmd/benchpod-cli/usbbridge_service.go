@@ -280,7 +280,7 @@ func newUSBBridgeInstallCmd(g *globalFlags) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if port <= 0 || port > 65535 {
-				return fmt.Errorf("usb-bridge install: --port %d is out of range", port)
+				return usageErrorf("usb-bridge install: --port %d is out of range", port)
 			}
 			exe, err := benchpodExecutable()
 			if err != nil {

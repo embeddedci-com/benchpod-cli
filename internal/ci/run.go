@@ -415,13 +415,15 @@ func RunOutcome(valid bool, c Counts, requiredFailed bool) string {
 	return Passed
 }
 
-// Exit codes of `benchpod ci` (spec section 6).
+// Exit codes of `benchpod ci`. They do not clash with the CLI's own table (0 to 7: usage 2,
+// unreachable 5, update the CLI 6, update the pod 7 mean the same in ci); a run's results are 10
+// and up.
 const (
 	ExitPassed     = 0
-	ExitSetup      = 1 // file, usage or setup error
-	ExitFailed     = 2 // a test failed (or errored)
-	ExitRegression = 3 // the run passed, but a gated measurement drifted beyond its allowance against the baseline
-	ExitInvalid    = 4 // the run cannot be trusted: require not met, pod or lease lost, pod busy
+	ExitSetup      = 1  // file or setup error
+	ExitFailed     = 10 // a test failed (or errored)
+	ExitRegression = 11 // the run passed, but a gated measurement drifted beyond its allowance against the baseline
+	ExitInvalid    = 12 // the run cannot be trusted: require not met, pod or lease lost, pod busy
 )
 
 // ExitCode is the exit code for a run outcome.

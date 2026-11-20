@@ -61,7 +61,7 @@ func (p *statusFormPod) reply(req map[string]any) []byte {
 	ok := func(data any) []byte { b, _ := json.Marshal(map[string]any{"status": "ok", "data": data}); return b }
 	switch req["cmd"] {
 	case "status":
-		st := map[string]any{"version": "3.10.13", "board_rev": "v3", "gateware": 58, "analog": true,
+		st := map[string]any{"version": "4.0.0", "board_rev": "v3", "gateware": 58, "analog": true, "api": 2, "min_client_api": 2,
 			"lease": map[string]any{"held": false, "holder": "", "left_s": 0}}
 		if caps, set := req["caps"]; p.featuresRev > 0 && set && caps == false {
 			st["features_rev"] = p.featuresRev
@@ -121,7 +121,7 @@ func TestCILeaseFromFeaturesRev(t *testing.T) {
 	}{
 		{5, true, true, ""},
 		{4, false, false, "features_rev 4; the lease needs features_rev 5"},
-		{0, false, true, "the caps list"}, // older firmware: lease_acquire answers unknown command
+		{0, false, true, "no features_rev"}, // lease_acquire answers unknown command
 	}
 	for _, c := range cases {
 		p := startStatusFormPod(t, c.rev)
@@ -152,7 +152,7 @@ func TestCILeaseFromFeaturesRev(t *testing.T) {
 func TestStatusJSONHasLocalLease(t *testing.T) {
 	p := startStatusFormPod(t, 5)
 	out := filepath.Join(t.TempDir(), "status.json")
-	if code := run([]string{"--connection", p.addr, "--tls", "off", "status", "--json", "--output-filename", out}); code != 0 {
+	if code := run([]string{"--connection", p.addr, "--tls", "off", "status", "--json", "--out", out}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	data, _ := os.ReadFile(out)

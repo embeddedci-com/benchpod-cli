@@ -16,8 +16,8 @@ import (
 )
 
 // blobTarget is where install-blobs reads the pod's W25Q slots and sends blobs: the pod's network
-// API (over its USB network adapter, firmware 3.9.0+: blob_status and ota_* with a target) or its
-// USB console (blobs and upload-*, older firmware).
+// API (blob_status and ota_* with a target), over its USB network adapter or its network address
+// (firmware 3.9.0 and later; older firmware had a console upload this CLI no longer sends).
 type blobTarget interface {
 	Blobs(ctx context.Context) ([]serialconsole.BlobSlot, error)
 	UploadSigned(ctx context.Context, target string, data []byte, version int, manifest []byte,
@@ -31,24 +31,6 @@ type blobTarget interface {
 	Identity(ctx context.Context) (publicKey, shortID string)
 	// Method is the firmware report's name for the way in: "usb_console", "usb_network", "lan".
 	Method() string
-}
-
-// consoleBlobs is the USB console.
-type consoleBlobs struct {
-	*serialconsole.Console
-	path string
-}
-
-func (c consoleBlobs) Release(ctx context.Context) string { return podFirmwareRelease(ctx, c.Console) }
-func (c consoleBlobs) Via() string                        { return c.path }
-func (c consoleBlobs) Method() string                     { return "usb_console" }
-
-func (c consoleBlobs) Identity(ctx context.Context) (string, string) {
-	id, err := c.Console.Identity(ctx)
-	if err != nil {
-		return "", ""
-	}
-	return id.PublicKey, id.ShortID
 }
 
 // lanBlobChunk is the raw bytes per ota_data line (as the LAN OTA in hwe2e sends).
@@ -244,7 +226,8 @@ func (l lanBlobs) waitApplied(ctx context.Context, target string) error {
 func blobTargetFor(ctx context.Context, console *serialconsole.Console, path string) (blobTarget, func(), error) {
 	u, err := console.USBNetwork(ctx)
 	if errors.Is(err, serialconsole.ErrNoUSBNet) {
-		return consoleBlobs{Console: console, path: path}, func() {}, nil // firmware before 3.9.0
+		return nil, func() {}, errors.New("this pod's firmware is older than 3.9.0 and takes blobs only over its USB console, " +
+			"which this CLI no longer uses: update the pod with `benchpod flash-self` (USB DFU), which installs its blobs")
 	}
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("read the pod's status: %w", err)
@@ -272,8 +255,8 @@ func blobTargetFor(ctx context.Context, console *serialconsole.Console, path str
 			return t, c, nil
 		}
 	}
-	return nil, func() {}, errors.New("this pod's firmware (3.9.0 or later) takes blobs over the network, and neither its USB " +
-		"network adapter (Wi-Fi configured on the pod turns it off: `benchpod clear-wifi`) nor its network address answers")
+	return nil, func() {}, errors.New("the pod takes blobs over the network, and neither its USB network adapter " +
+		"nor its network address answers. " + usbNetworkOffHint)
 }
 
 // localBlobTarget is the pod's network API on this computer's end of its USB network link

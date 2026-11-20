@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -37,29 +36,10 @@ import (
 // policy ("cloud_ca: change it from the cloud or over USB"); only reading works there.
 
 const (
-	caMaxPEM     = 16 * 1024   // the pod's limit on the stored PEM
-	caMaxFile    = 1024 * 1024 // refuse to even read a larger file
-	caLANChunk   = 768         // raw bytes per ota_data line (as the hwe2e LAN OTA sends)
-	caMissing    = "this firmware has no company CA support; update the pod's firmware"
-	proxyMissing = "this firmware has no HTTP proxy support; update the pod's firmware"
-	lanGateHint  = "the pod only takes this change over USB or from the cloud, never from Ethernet or Wi-Fi; run it with --connection usb"
+	caMaxPEM   = 16 * 1024   // the pod's limit on the stored PEM
+	caMaxFile  = 1024 * 1024 // refuse to even read a larger file
+	caLANChunk = 768         // raw bytes per ota_data line (as the hwe2e LAN OTA sends)
 )
-
-// lanGateRefusals are the tails of the firmware's refusal of a cloud link change from the LAN
-// (pod_policy_cloud_link_gate): "cloud_ca: ..." or "cloud_proxy: ...". Firmware 3.9.0 also takes
-// the change over its USB network adapter and says so; older firmware names the console.
-var lanGateRefusals = []string{": change it from the cloud or over USB", ": change it from the cloud or the USB console"}
-
-// isLANGateRefusal reports whether msg is the firmware's refusal to change the company CA or
-// the HTTP proxy from the LAN.
-func isLANGateRefusal(msg string) bool {
-	for _, tail := range lanGateRefusals {
-		if verb, ok := strings.CutSuffix(strings.TrimSpace(msg), tail); ok {
-			return verb == "cloud_ca" || verb == "cloud_proxy"
-		}
-	}
-	return false
-}
 
 func newCloudCmd(g *globalFlags) *cobra.Command {
 	root := &cobra.Command{
@@ -68,11 +48,12 @@ func newCloudCmd(g *globalFlags) *cobra.Command {
 		Long: "Configure the pod's link to embeddedci.com on networks that need it.\n\n" +
 			"  ca     a company root certificate, for networks whose proxy inspects TLS\n" +
 			"  proxy  an HTTP proxy the pod tunnels its cloud connection through\n\n" +
-			"Both work over the pod's USB console (--connection usb) and through\n" +
+			"Both work over the pod's USB network adapter (--connection usb) and through\n" +
 			"embeddedci.com (--connection embeddedci:<name>; a change there needs an\n" +
 			"organization owner or admin, and `cloud ca set` needs USB). The LAN\n" +
-			"(--connection <address>) can show them; current firmware refuses changes from\n" +
-			"the LAN, so change them over USB. The pod reconnects to the cloud after a change.",
+			"(--connection <address>) can show them; the pod refuses changes from the LAN,\n" +
+			"so change them over USB. The pod reconnects to the cloud after a change.\n" +
+			"USB networking off: `benchpod usb-network on --connection usb`.",
 		Args: cobra.NoArgs,
 	}
 	root.AddCommand(newCloudCACmd(g), newCloudProxyCmd(g))
@@ -171,7 +152,7 @@ func newCloudProxyCmd(g *globalFlags) *cobra.Command {
 				}
 				password = pw
 			} else if pf.password != "" || pf.passwordStdin {
-				return errors.New("cloud proxy set: --password needs --user")
+				return usageErrorf("cloud proxy set: --password needs --user")
 			}
 			return run(func(out, warn io.Writer) error {
 				return runCloudProxy(g, "set", args[0], pf.user, password, out, warn)
@@ -308,7 +289,7 @@ func readCAFile(path string) ([]byte, error) {
 }
 
 // printCACerts writes the certificate list the pod reports.
-func printCACerts(out io.Writer, label string, certs []serialconsole.CACert, changed bool) {
+func printCACerts(out io.Writer, label string, certs []podCACert, changed bool) {
 	verb := ":"
 	if changed {
 		verb = " is now"
@@ -356,31 +337,26 @@ func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error 
 		return err
 	}
 	var label string
-	var certs []serialconsole.CACert
+	var certs []podCACert
 	switch {
 	case spec.IsCloud() && action == "set":
 		return cloudCASetRefusal(what)
 	case spec.IsCloud():
 		label, certs, err = cloudCACloud(g, spec, action)
 	case spec.IsSerial():
-		// Firmware 3.9.0+: over the USB network link, which may change the CA (physical presence).
-		if addr := g.usbLinkAddr(spec.Device, spec.Pod); addr != "" {
-			label = addr
-			certs, err = cloudCALAN(g, addr, action, upload, warn)
-			break
+		// Over the USB network link, which may change the CA (physical presence).
+		var nt ConnSpec
+		if nt, err = g.networkTarget(what); err != nil {
+			return err
 		}
-		label, certs, err = cloudCAUSB(g, spec.Device, action, upload, warn)
-		if err != nil && strings.Contains(err.Error(), "moved to the network API") {
-			err = errors.New("this pod's firmware (3.9.0 or later) installs a CA over the network: its USB network " +
-				"adapter is not usable here (Wi-Fi configured on the pod turns it off: `benchpod clear-wifi`), so use the " +
-				"cloud (`--connection embeddedci:<name>`) or turn USB networking back on")
-		}
+		label = nt.Addr
+		certs, err = cloudCALAN(g, nt.Addr, action, upload, warn)
 	default:
 		label = spec.Addr
 		certs, err = cloudCALAN(g, spec.Addr, action, upload, warn)
 	}
 	if err != nil {
-		return cloudCfgError(what, caMissing, !spec.IsSerial(), err)
+		return cloudCfgError(what, err)
 	}
 
 	printCACerts(out, label, certs, action != "show")
@@ -396,7 +372,7 @@ func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error 
 	return nil
 }
 
-func sameCerts(local []caCert, pod []serialconsole.CACert) bool {
+func sameCerts(local []caCert, pod []podCACert) bool {
 	if len(local) != len(pod) {
 		return false
 	}
@@ -408,88 +384,26 @@ func sameCerts(local []caCert, pod []serialconsole.CACert) bool {
 	return true
 }
 
-// cloudCfgError turns a failed command into one clear line: old firmware, a locked LAN, a change
-// the pod refuses from the LAN, or the pod's own reason.
-func cloudCfgError(what, missing string, lan bool, err error) error {
-	if errors.Is(err, serialconsole.ErrUnknownCommand) {
-		return errors.New(missing)
-	}
-	// "unknown target": no code yet (a cloud_ca / cloud_proxy target older firmware lacks)
-	if isUnknownCommand(err) || strings.Contains(err.Error(), "unknown target") {
-		return errors.New(missing)
-	}
+// cloudCfgError turns a failed command into one clear line: the pod's refusal (a locked LAN, a
+// change the pod refuses from the LAN), worded from its code.
+func cloudCfgError(what string, err error) error {
 	if pe, ok := tcpclient.AsPodError(err); ok {
-		// A console refusal (Cmd set) came over USB, a JSON reply over the LAN.
-		lan = lan && pe.Cmd == ""
-		if lan && isLANGateRefusal(pe.Reason) {
-			return refusedWithHint(what, pe, lanGateHint)
-		}
-		return refusedError(what, pe, lan)
+		return refusedError(what, pe)
 	}
 	return fmt.Errorf("%s: %w", what, err)
-}
-
-// ── USB console ─────────────────────────────────────────────────────────────
-
-// cloudConsole is the part of the USB console the cloud ca/proxy commands use.
-type cloudConsole interface {
-	CloudCA(ctx context.Context) ([]serialconsole.CACert, error)
-	CloudCAClear(ctx context.Context) error
-	CloudProxy(ctx context.Context) (serialconsole.ProxyConfig, error)
-	CloudProxySet(ctx context.Context, addr, user, password string) (serialconsole.ProxyConfig, error)
-	CloudProxyClear(ctx context.Context) (serialconsole.ProxyConfig, error)
-	Upload(ctx context.Context, target string, data []byte, version int, progress func(done, total int)) error
-	Close() error
-}
-
-// openCloudConsole opens the pod's USB console; tests replace it with a fake.
-var openCloudConsole = func(g *globalFlags, device string, timeout time.Duration) (cloudConsole, string, context.Context, context.CancelFunc, error) {
-	console, path, ctx, cancel, err := g.openSerialConsole(device, timeout)
-	if err != nil {
-		return nil, "", nil, cancel, err
-	}
-	return console, path, ctx, cancel, nil
-}
-
-func cloudCAUSB(g *globalFlags, device, action string, upload []byte, warn io.Writer) (string, []serialconsole.CACert, error) {
-	console, path, ctx, cancel, err := openCloudConsole(g, device, g.effectiveTimeout(60*time.Second))
-	if err != nil {
-		return "", nil, err
-	}
-	defer cancel()
-	defer console.Close()
-	label := "the pod on " + path
-
-	switch action {
-	case "set":
-		// Ask first, so old firmware gets the clear message rather than a refused upload.
-		if _, err := console.CloudCA(ctx); err != nil {
-			return label, nil, err
-		}
-		fmt.Fprintf(warn, "Uploading %d bytes to %s ...\n", len(upload), label)
-		if err := console.Upload(ctx, "ca", upload, 0, nil); err != nil {
-			return label, nil, err
-		}
-	case "clear":
-		if err := console.CloudCAClear(ctx); err != nil {
-			return label, nil, err
-		}
-	}
-	certs, err := console.CloudCA(ctx)
-	return label, certs, err
 }
 
 // ── embeddedci.com ──────────────────────────────────────────────────────────
 
 // cloudCASetRefusal: installing a CA is an upload, which the command channel does not carry.
 func cloudCASetRefusal(what string) error {
-	return fmt.Errorf("%s does not work over embeddedci.com from the CLI: the certificate upload needs the pod's USB console. "+
+	return fmt.Errorf("%s does not work over embeddedci.com from the CLI: the certificate upload needs the pod's USB network adapter. "+
 		"Run it with --connection usb", what)
 }
 
 // cloudCACloud shows or clears the company CA through embeddedci.com. The pod reconnects after a
 // clear, so the reply to the clear is what it reports; a read-back could race the reconnect.
-func cloudCACloud(g *globalFlags, spec ConnSpec, action string) (string, []serialconsole.CACert, error) {
+func cloudCACloud(g *globalFlags, spec ConnSpec, action string) (string, []podCACert, error) {
 	req := map[string]any{"cmd": "cloud_ca"}
 	if action == "clear" {
 		req["clear"] = true
@@ -502,7 +416,7 @@ func cloudCACloud(g *globalFlags, spec ConnSpec, action string) (string, []seria
 // cloudProxyCloud shows, sets or clears the HTTP proxy through embeddedci.com (HTTPS, so a proxy
 // password does not cross the network in the clear). Like the CA, a change makes the pod
 // reconnect, so the change's own reply is what it reports.
-func cloudProxyCloud(g *globalFlags, spec ConnSpec, action, set, user, password string) (string, serialconsole.ProxyConfig, error) {
+func cloudProxyCloud(g *globalFlags, spec ConnSpec, action, set, user, password string) (string, proxyConfig, error) {
 	req := map[string]any{"cmd": "cloud_proxy"}
 	switch action {
 	case "set":
@@ -549,8 +463,8 @@ func openLAN(ctx context.Context, addr string) (lanSession, error) {
 }
 
 type caReply struct {
-	Present bool                   `json:"present"`
-	Certs   []serialconsole.CACert `json:"certs"`
+	Present bool        `json:"present"`
+	Certs   []podCACert `json:"certs"`
 }
 
 // otaReply is the pod's ota_* status.
@@ -559,7 +473,7 @@ type otaReply struct {
 	Error string `json:"error"`
 }
 
-func cloudCALAN(g *globalFlags, addr, action string, upload []byte, warn io.Writer) ([]serialconsole.CACert, error) {
+func cloudCALAN(g *globalFlags, addr, action string, upload []byte, warn io.Writer) ([]podCACert, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(60*time.Second))
 	defer cancel()
 	defer installSignalHandler(ctx, cancel)()
@@ -631,6 +545,18 @@ func uploadOTALAN(ctx context.Context, lan lanSession, data []byte, target strin
 	return nil
 }
 
+// podCACert is one company CA certificate the pod holds.
+type podCACert struct {
+	Subject string `json:"subject"`
+	SHA256  string `json:"sha256"` // hex SHA-256 of the DER certificate
+}
+
+// proxyConfig is the pod's HTTP proxy. Addr is "" when no proxy is set.
+type proxyConfig struct {
+	Addr string // host:port
+	Auth bool   // a user and password are stored (the pod never reports the password)
+}
+
 func valueOr(s, def string) string {
 	if strings.TrimSpace(s) == "" {
 		return def
@@ -644,7 +570,7 @@ func valueOr(s, def string) string {
 func checkProxyAddr(addr string) (string, error) {
 	addr = strings.TrimSpace(addr)
 	if strings.Contains(addr, "://") {
-		return "", fmt.Errorf("give the proxy as host:port, without a scheme (got %q)", addr)
+		return "", usageErrorf("give the proxy as host:port, without a scheme (got %q)", addr)
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -659,7 +585,7 @@ func checkProxyAddr(addr string) (string, error) {
 	return net.JoinHostPort(strings.ToLower(host), port), nil
 }
 
-func describeProxy(p serialconsole.ProxyConfig) string {
+func describeProxy(p proxyConfig) string {
 	switch {
 	case p.Addr == "":
 		return "none (the pod connects to the cloud directly)"
@@ -686,24 +612,24 @@ func runCloudProxy(g *globalFlags, action, addr, user, password string, out, war
 		return err
 	}
 	var label string
-	var p serialconsole.ProxyConfig
+	var p proxyConfig
 	switch {
 	case spec.IsCloud():
 		label, p, err = cloudProxyCloud(g, spec, action, addr, user, password)
 	case spec.IsSerial():
-		// Firmware 3.9.0+: over the USB network link, which may change the proxy (physical presence).
-		if link := g.usbLinkAddr(spec.Device, spec.Pod); link != "" {
-			label = link
-			p, err = cloudProxyLAN(g, link, action, addr, user, password)
-			break
+		// Over the USB network link, which may change the proxy (physical presence).
+		var nt ConnSpec
+		if nt, err = g.networkTarget(what); err != nil {
+			return err
 		}
-		label, p, err = cloudProxyUSB(g, spec.Device, action, addr, user, password)
+		label = nt.Addr
+		p, err = cloudProxyLAN(g, nt.Addr, action, addr, user, password)
 	default:
 		label = spec.Addr
 		p, err = cloudProxyLAN(g, spec.Addr, action, addr, user, password)
 	}
 	if err != nil {
-		err = cloudCfgError(what, proxyMissing, !spec.IsSerial(), err)
+		err = cloudCfgError(what, err)
 		if password != "" && strings.Contains(err.Error(), password) {
 			err = errors.New(strings.ReplaceAll(err.Error(), password, "***"))
 		}
@@ -724,26 +650,6 @@ func runCloudProxy(g *globalFlags, action, addr, user, password string, out, war
 	return nil
 }
 
-func cloudProxyUSB(g *globalFlags, device, action, addr, user, password string) (string, serialconsole.ProxyConfig, error) {
-	console, path, ctx, cancel, err := openCloudConsole(g, device, g.effectiveTimeout(15*time.Second))
-	if err != nil {
-		return "", serialconsole.ProxyConfig{}, err
-	}
-	defer cancel()
-	defer console.Close()
-	label := "the pod on " + path
-	var p serialconsole.ProxyConfig
-	switch action {
-	case "set":
-		p, err = console.CloudProxySet(ctx, addr, user, password)
-	case "clear":
-		p, err = console.CloudProxyClear(ctx)
-	default:
-		p, err = console.CloudProxy(ctx)
-	}
-	return label, p, err
-}
-
 // proxyReply is the pod's JSON proxy report: {"host":"...","port":3128,"auth":true}, with no
 // host when none is set.
 type proxyReply struct {
@@ -752,21 +658,21 @@ type proxyReply struct {
 	Auth bool   `json:"auth"`
 }
 
-func (r proxyReply) config() serialconsole.ProxyConfig {
+func (r proxyReply) config() proxyConfig {
 	if r.Host == "" {
-		return serialconsole.ProxyConfig{}
+		return proxyConfig{}
 	}
-	return serialconsole.ProxyConfig{Addr: net.JoinHostPort(r.Host, strconv.Itoa(r.Port)), Auth: r.Auth}
+	return proxyConfig{Addr: net.JoinHostPort(r.Host, strconv.Itoa(r.Port)), Auth: r.Auth}
 }
 
-func cloudProxyLAN(g *globalFlags, addr, action, set, user, password string) (serialconsole.ProxyConfig, error) {
+func cloudProxyLAN(g *globalFlags, addr, action, set, user, password string) (proxyConfig, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(15*time.Second))
 	defer cancel()
 	defer installSignalHandler(ctx, cancel)()
 
 	lan, err := openLAN(ctx, addr)
 	if err != nil {
-		return serialconsole.ProxyConfig{}, err
+		return proxyConfig{}, err
 	}
 	defer lan.s.Close()
 
@@ -782,13 +688,13 @@ func cloudProxyLAN(g *globalFlags, addr, action, set, user, password string) (se
 	}
 	var rep proxyReply
 	if err := lan.cmd(ctx, req, &rep); err != nil {
-		return serialconsole.ProxyConfig{}, err
+		return proxyConfig{}, err
 	}
 	if action != "show" {
 		// Report what the pod holds now, not what the change's reply happened to carry.
 		rep = proxyReply{}
 		if err := lan.cmd(ctx, map[string]any{"cmd": "cloud_proxy"}, &rep); err != nil {
-			return serialconsole.ProxyConfig{}, err
+			return proxyConfig{}, err
 		}
 	}
 	return rep.config(), nil

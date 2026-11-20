@@ -83,18 +83,3 @@ func (c *Console) USBNetwork(ctx context.Context) (USBNet, error) {
 	}
 	return ParseUSBNet(out)
 }
-
-// USBReattach makes the pod drop off the USB bus for half a second and connect again, so the
-// computer enumerates the console and the network adapter anew. The console closes; reopen it.
-func (c *Console) USBReattach(ctx context.Context) error {
-	out, err := c.sendCommand(ctx, "usb-reattach")
-	switch {
-	case strings.Contains(out, "usb-reattach ok"), errors.Is(err, errPortVanished):
-		return nil // the port may close before the prompt arrives
-	case strings.Contains(strings.ToLower(out), "unknown command"):
-		return ErrNoUSBNet
-	case err != nil:
-		return err
-	}
-	return fmt.Errorf("unexpected reply to usb-reattach: %q", strings.TrimSpace(cleanConsoleOutput(out, "usb-reattach")))
-}

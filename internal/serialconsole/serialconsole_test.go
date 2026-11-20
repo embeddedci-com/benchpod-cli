@@ -204,120 +204,6 @@ func TestDetectPortEnumeratorError(t *testing.T) {
 	}
 }
 
-func TestWifiSetJoinOK(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString(line + "\r\n") // echo
-		out.WriteString("[cfg] credentials written to flash\r\n")
-		out.WriteString("[wifi] joining \"MyNet\"...\r\n")
-		out.WriteString("[wifi] join OK  ip=192.168.1.42\r\n")
-		out.WriteString("> ")
-	}}
-	res, err := newConsole(fc).WifiSet(testContext(t), "MyNet", "s3cr3t")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Persisted || !res.Joined {
-		t.Fatalf("persisted=%v joined=%v", res.Persisted, res.Joined)
-	}
-	if res.IP != "192.168.1.42" {
-		t.Fatalf("ip: %q", res.IP)
-	}
-	if strings.Contains(res.Raw, "s3cr3t") {
-		t.Fatalf("password leaked into Raw: %q", res.Raw)
-	}
-	if !strings.HasPrefix(fc.written.String(), `wifi-set "MyNet" "s3cr3t"`) {
-		t.Fatalf("written command: %q", fc.written.String())
-	}
-}
-
-func TestWifiSetJoinFailed(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString("[cfg] credentials written to flash\r\n")
-		out.WriteString(`[wifi] join failed AT+CWJAP="ssid","******"` + "\r\n")
-		out.WriteString("> ")
-	}}
-	res, err := newConsole(fc).WifiSet(testContext(t), "MyNet", "bad")
-	if err == nil {
-		t.Fatal("expected join-failed error")
-	}
-	if !res.Persisted {
-		t.Fatal("credentials should still report persisted")
-	}
-	if res.Joined {
-		t.Fatal("should not report joined")
-	}
-}
-
-// TestWifiSetReconnectOutput covers wifi-set delegating to esp32-reconnect:
-// success is "[wifi] connected  ip=...", and BringupLines surfaces the transcript.
-func TestWifiSetReconnectOutput(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString("[cfg] credentials written to flash\r\n")
-		out.WriteString("[esp32] link up on EXTERNAL ESP32 (GPIO40/41)\r\n")
-		out.WriteString("[wifi] connecting to \"MyNet\"...\r\n")
-		out.WriteString("[wifi] connected  ip=192.168.1.42\r\n")
-		out.WriteString("[tcp] listening on 192.168.1.42:8080\r\n")
-		out.WriteString("> ")
-	}}
-	res, err := newConsole(fc).WifiSet(testContext(t), "MyNet", "pw")
-	if err != nil {
-		t.Fatalf("WifiSet: %v", err)
-	}
-	if !res.Persisted || !res.Joined {
-		t.Fatalf("persisted=%t joined=%t", res.Persisted, res.Joined)
-	}
-	if res.IP != "192.168.1.42" {
-		t.Fatalf("ip = %q, want 192.168.1.42", res.IP)
-	}
-	joined := strings.Join(BringupLines(res.Raw), "\n")
-	for _, want := range []string{"[wifi] connected  ip=192.168.1.42", "[tcp] listening", "[esp32] link up"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("BringupLines missing %q in:\n%s", want, joined)
-		}
-	}
-}
-
-// TestWifiSetReconnectFailed covers the reconnect failure marker.
-func TestWifiSetReconnectFailed(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString("[cfg] credentials written to flash\r\n")
-		out.WriteString("[wifi] connect failed — check SSID/password and AP availability.\r\n")
-		out.WriteString("> ")
-	}}
-	res, err := newConsole(fc).WifiSet(testContext(t), "MyNet", "bad")
-	if err == nil {
-		t.Fatal("expected connect-failed error")
-	}
-	if !res.Persisted || res.Joined {
-		t.Fatalf("persisted=%t joined=%t", res.Persisted, res.Joined)
-	}
-}
-
-// TestWifiSetMasksPasswordOnTimeout pins that a timeout (or any) error from
-// WifiSet never contains the cleartext password — neither in the echoed command
-// nor in the captured "got: ..." tail — while still surfacing a masked form.
-func TestWifiSetMasksPasswordOnTimeout(t *testing.T) {
-	const pw = "abea89xp-secret"
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		// Firmware echoes typed chars but (here) never prints a prompt, so the
-		// password lands in the captured output and WifiSet times out.
-		out.WriteString(line + "\r\n")
-	}}
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-
-	_, err := newConsole(fc).WifiSet(ctx, "MyNet", pw)
-	if err == nil {
-		t.Fatal("expected a timeout error")
-	}
-	if strings.Contains(err.Error(), pw) {
-		t.Fatalf("error leaked the password: %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "***") {
-		t.Fatalf("expected a masked password (***) in the error, got: %q", err.Error())
-	}
-}
-
 func TestIsBenchpod(t *testing.T) {
 	// A real bench pod: `status` output carries the "benchpod" marker + prompt.
 	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
@@ -443,67 +329,6 @@ func assertOrder(t *testing.T, got, want []string) {
 	}
 }
 
-func TestWifiSetInterleavedAndSplitMarkers(t *testing.T) {
-	// Echo + async log lines interleaved with the command output, and the
-	// join-OK marker delivered across two reads, to prove the substring scan
-	// over the accumulator tolerates noise and reads that split a marker.
-	fc := &fakeConsole{}
-	fc.onWrite = func(line string, out *bytes.Buffer) {
-		// Note: Write already holds fc.mu when it calls onWrite.
-		out.WriteString("[boot] esp32 ready\r\n")
-		out.WriteString(line + "\r\n") // echo
-		out.WriteString("[cfg] credentials written to flash\r\n")
-		out.WriteString("[wifi] reconnect attempt 1\r\n")
-		out.WriteString("[wifi] join OK  ip=10.0.") // marker tail arrives next read
-	}
-	c := newConsole(fc)
-	// Stage the remainder + prompt to be appended after the first read drains.
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		fc.mu.Lock()
-		fc.toRead.WriteString("0.7\r\n> ")
-		fc.mu.Unlock()
-	}()
-	res, err := c.WifiSet(testContext(t), "Net", "pw")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Persisted || !res.Joined {
-		t.Fatalf("persisted=%v joined=%v", res.Persisted, res.Joined)
-	}
-	if res.IP != "10.0.0.7" {
-		t.Fatalf("ip parsed across split read: %q", res.IP)
-	}
-}
-
-func TestWifiShowParse(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString("wifi-show\r\n")
-		out.WriteString("SSID: MyNet\r\n")
-		out.WriteString("password: *\r\n")
-		out.WriteString("State: connected\r\n")
-		out.WriteString("IP: 192.168.1.42\r\n")
-		out.WriteString("RSSI: -57 dBm\r\n")
-		out.WriteString("> ")
-	}}
-	st, err := newConsole(fc).WifiShow(testContext(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.SSID != "MyNet" {
-		t.Fatalf("ssid: %q", st.SSID)
-	}
-	if st.State != "connected" {
-		t.Fatalf("state: %q", st.State)
-	}
-	if st.IP != "192.168.1.42" {
-		t.Fatalf("ip: %q", st.IP)
-	}
-	if st.RSSI != "-57 dBm" {
-		t.Fatalf("rssi: %q", st.RSSI)
-	}
-}
-
 // wifiShowV3Interleaved is a wifi-show reply as a BenchPod v3 prints it while
 // Wi-Fi retries: async log lines before the echo, between the echo and the
 // first field, and between the fields.
@@ -518,82 +343,6 @@ const wifiShowV3Interleaved = "[cloud] state -> backoff [BACKOFF]  retry in 5000
 	"[wifi] association failed — backoff\n" +
 	"  rssi: -128 dBm\r\n" +
 	"> "
-
-func TestWifiShowInterleavedLogLines(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString(wifiShowV3Interleaved)
-	}}
-	st, err := newConsole(fc).WifiShow(testContext(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := WifiStatus{SSID: "ATTQRSKVkI", State: "backoff", IP: "(none)", RSSI: "-128 dBm"}
-	if st.SSID != want.SSID || st.State != want.State || st.IP != want.IP || st.RSSI != want.RSSI {
-		t.Fatalf("got ssid=%q state=%q ip=%q rssi=%q, want %+v", st.SSID, st.State, st.IP, st.RSSI, want)
-	}
-}
-
-// The firmware writes each reply line in one call but a log printf in chunks,
-// so a reply line can land in the middle of a log line.
-func TestParseWifiShowFieldInsideLogLine(t *testing.T) {
-	raw := "wifi-show\r\n" +
-		"[wifi] association failed  ssid: ATTQRSKVkI\r\n" +
-		" — backoff\n" +
-		"[esp] ESP32-C3 reset released  state: backoff\r\n" +
-		" — awaiting boot event\n" +
-		"  ip: (none)\r\n" +
-		"[wifi] connected  ip=10.9.9.9\n" + // a log "ip=" is not the reply's ip
-		"  rssi: \r\n" +
-		"> "
-	st := parseWifiShow(raw)
-	if st.SSID != "ATTQRSKVkI" || st.State != "backoff" || st.IP != "(none)" || st.RSSI != "" {
-		t.Fatalf("got ssid=%q state=%q ip=%q rssi=%q", st.SSID, st.State, st.IP, st.RSSI)
-	}
-}
-
-// A chunked log line such as "[cloud] state -> connected" can put "> " right
-// after one of the reply's line breaks. That is not the prompt: the read must
-// keep going until the prompt follows the last line.
-func TestWifiShowFalsePromptFromLogFragment(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString("wifi-show\r\n")
-		out.WriteString("[cloud] state -")
-		out.WriteString("  ssid: ATTQRSKVkI\r\n")
-		out.WriteString("> connected [CONNECTED]\n")
-	}}
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		fc.mu.Lock()
-		fc.toRead.WriteString("  state: connected\r\n  ip: 192.168.1.221\r\n  rssi: -62 dBm\r\n> ")
-		fc.mu.Unlock()
-	}()
-	st, err := newConsole(fc).WifiShow(testContext(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.SSID != "ATTQRSKVkI" || st.State != "connected" || st.IP != "192.168.1.221" || st.RSSI != "-62 dBm" {
-		t.Fatalf("got ssid=%q state=%q ip=%q rssi=%q", st.SSID, st.State, st.IP, st.RSSI)
-	}
-}
-
-// A firmware that never prints the rssi line must not hang until the deadline:
-// the read gives up replyGrace after the prompt.
-func TestWifiShowNoRSSILineReturnsAfterGrace(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString("wifi-show\r\n  ssid: Net\r\n  state: connected\r\n  ip: 10.0.0.2\r\n> ")
-	}}
-	start := time.Now()
-	st, err := newConsole(fc).WifiShow(testContext(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if elapsed := time.Since(start); elapsed > replyGrace+500*time.Millisecond {
-		t.Fatalf("took %v, want about replyGrace", elapsed)
-	}
-	if st.SSID != "Net" || st.IP != "10.0.0.2" {
-		t.Fatalf("got ssid=%q ip=%q", st.SSID, st.IP)
-	}
-}
 
 func TestStatus(t *testing.T) {
 	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
@@ -653,18 +402,6 @@ func TestBootselMarkerThenPrompt(t *testing.T) {
 	}
 }
 
-func TestWifiClear(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		out.WriteString("[cfg] credentials erased\r\n> ")
-	}}
-	if err := newConsole(fc).WifiClear(testContext(t)); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(fc.written.String()) != "wifi-clear" {
-		t.Fatalf("written: %q", fc.written.String())
-	}
-}
-
 func TestSendCommandTimeout(t *testing.T) {
 	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
 		out.WriteString("[wifi] noise but no prompt\r\n") // never emits "> "
@@ -681,54 +418,6 @@ func TestSendCommandTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "noise") {
 		t.Fatalf("timeout error should include captured tail: %v", err)
-	}
-}
-
-func TestDAPStartReadyHandshake(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		switch {
-		case strings.HasPrefix(line, "dap-start"):
-			out.WriteString(line + "\r\n")               // command echo
-			out.WriteString("[swd] arming probe...\r\n") // async noise
-			out.WriteString("dap ready\n")               // sentinel
-		}
-	}}
-	c := newConsole(fc)
-	conn, err := c.DAPStart(testContext(t), 2, 3)
-	if err != nil {
-		t.Fatalf("DAPStart: %v", err)
-	}
-	if !strings.HasPrefix(fc.written.String(), "dap-start 2 3\n") {
-		t.Fatalf("written command: %q", fc.written.String())
-	}
-	// Close must emit the zero-length leave frame to disarm the probe.
-	if err := conn.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if !strings.Contains(fc.written.String(), "\x00\x00") {
-		t.Fatalf("Close did not send the zero-length leave frame: %q", fc.written.String())
-	}
-	// Close is idempotent.
-	if err := conn.Close(); err != nil {
-		t.Fatalf("second Close: %v", err)
-	}
-}
-
-// nRESET is the pod's own pin since rev3, so dap-start carries exactly two pin
-// arguments — a third would be read by the firmware as a channel to take over.
-func TestDAPStartSendsNoResetChannel(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		if strings.HasPrefix(line, "dap-start") {
-			out.WriteString("dap ready\n")
-		}
-	}}
-	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3)
-	if err != nil {
-		t.Fatalf("DAPStart: %v", err)
-	}
-	defer conn.Close()
-	if got := fc.written.String(); !strings.HasPrefix(got, "dap-start 2 3\n") {
-		t.Fatalf("dap-start must carry only swclk/swdio, got: %q", got)
 	}
 }
 
@@ -765,51 +454,6 @@ func TestHasNRSTPin(t *testing.T) {
 	}
 }
 
-func TestDAPStartRejected(t *testing.T) {
-	for _, reply := range []string{
-		"ERROR: gpio not in controlled set",
-		"ERROR: swd busy",
-		"usage: dap-start <swclk> <swdio>",
-	} {
-		reply := reply
-		fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-			if strings.HasPrefix(line, "dap-start") {
-				out.WriteString(line + "\r\n")
-				out.WriteString(reply + "\r\n")
-				out.WriteString("> ")
-			}
-		}}
-		_, err := newConsole(fc).DAPStart(testContext(t), 2, 3)
-		if err == nil {
-			t.Fatalf("expected failure for reply %q", reply)
-		}
-		if !strings.Contains(err.Error(), strings.TrimSpace(reply)) {
-			t.Fatalf("error should surface the reply %q: %v", reply, err)
-		}
-	}
-}
-
-func TestDAPStartRawStreamPassthrough(t *testing.T) {
-	// After `dap ready`, the wrapper passes bytes straight through: stage a
-	// sample reply and confirm Read returns it unframed.
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		if strings.HasPrefix(line, "dap-start") {
-			out.WriteString("dap ready\n")
-			out.WriteString("01") // raw bitbang sample replies
-		}
-	}}
-	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3)
-	if err != nil {
-		t.Fatalf("DAPStart: %v", err)
-	}
-	defer conn.Close()
-	buf := make([]byte, 2)
-	n, _ := conn.Read(buf)
-	if string(buf[:n]) != "01" {
-		t.Fatalf("raw passthrough = %q, want 01", buf[:n])
-	}
-}
-
 func TestSendCommandClearsStaleLine(t *testing.T) {
 	fc := &fakeConsole{onWrite: func(_ string, out *bytes.Buffer) {
 		out.WriteString("> ")
@@ -825,35 +469,6 @@ func TestSendCommandClearsStaleLine(t *testing.T) {
 	}
 	if len(clearLineSeq) != lineBufSize {
 		t.Fatalf("clearLineSeq length = %d, want %d", len(clearLineSeq), lineBufSize)
-	}
-}
-
-func TestDAPStartClearsStaleLine(t *testing.T) {
-	fc := &fakeConsole{onWrite: func(line string, out *bytes.Buffer) {
-		if strings.HasPrefix(line, "dap-start") {
-			out.WriteString("dap ready\n")
-		}
-	}}
-	conn, err := newConsole(fc).DAPStart(testContext(t), 2, 3)
-	if err != nil {
-		t.Fatalf("DAPStart: %v", err)
-	}
-	defer conn.Close()
-	if !bytes.HasPrefix(fc.rawWritten.Bytes(), clearLineSeq) {
-		t.Fatalf("dap-start not preceded by the clear-line prefix: %q", fc.rawWritten.Bytes())
-	}
-}
-
-func TestQuoteArgRejectsEmbeddedQuote(t *testing.T) {
-	if _, err := quoteArg(`my"net`); err == nil {
-		t.Fatal("expected error for embedded double-quote")
-	}
-	got, err := quoteArg("My Net")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != `"My Net"` {
-		t.Fatalf("quoted: %q", got)
 	}
 }
 

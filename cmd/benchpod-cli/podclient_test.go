@@ -36,6 +36,9 @@ func TestMain(m *testing.M) {
 	// Requests compare whole: without client_api and client (TestEveryRequestCarriesTheClientFields
 	// turns them on).
 	tcpclient.SetClientFields(false)
+	// Fake pods answer status without an api: no API probe before their commands
+	// (TestAPIProbe turns it on).
+	apiProbe = false
 	// Never probe this machine's USB ports for a pod's USB network adapter.
 	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) {
 		return serialconsole.USBNet{}, errors.New("no pod on USB (tests)")
@@ -122,7 +125,7 @@ func podReplies(replies map[string]string) func(map[string]any) (int, string) {
 func runOut(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "out.txt")
-	code := run(append(args, "--output-filename", out))
+	code := run(append(args, "--out", out))
 	b, _ := os.ReadFile(out)
 	return code, string(b)
 }
@@ -134,11 +137,11 @@ func TestCloudPingStatusAndLAVoltage(t *testing.T) {
 
 	f := &fakeCloud{reply: podReplies(map[string]string{
 		"ping":          `"pong"`,
-		"status":        `{"version":"3.8.0","ip":"192.168.1.220","net":"eth","la_vccio_mv":3300,"gateware":48}`,
+		"status":        `{"version":"4.0.0","ip":"192.168.1.220","net":"eth","la_vccio_mv":3300,"gateware":48,"api":2,"min_client_api":2}`,
 		"cloud_status":  `{"state":"connected","configured":true,"device_id":"id-1"}`,
-		"target_status": `{"efuse1":{"enabled":1,"fault":0},"efuse2":{"enabled":0,"fault":0}}`,
+		"target_status": `{"efuse1":{"enabled":true,"fault":false},"efuse2":{"enabled":false,"fault":false}}`,
 		"la_voltage":    `{"mv":3300,"readback_mv":3300}`,
-		"la":            `{"pullups":0}`,
+		"la_pull":       `{"pullups":0}`,
 	})}
 	f.start(t)
 	conn := "embeddedci:bench-1"
@@ -150,7 +153,7 @@ func TestCloudPingStatusAndLAVoltage(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("status: exit %d", code)
 	}
-	for _, want := range []string{"BenchPod bench-1 on embeddedci.com", "3.8.0", "3.3 V", "internal 5 V on", "on your account as bench-1"} {
+	for _, want := range []string{"BenchPod bench-1 on embeddedci.com", "4.0.0", "3.3 V", "internal 5 V on", "on your account as bench-1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output lacks %q:\n%s", want, out)
 		}
@@ -302,70 +305,6 @@ func TestCloudProxyAndCA(t *testing.T) {
 
 // ── wiring profile ──────────────────────────────────────────────────────────
 
-func TestWiringProfileOverCloud(t *testing.T) {
-	f := &fakeCloud{profile: `{"swd_swclk":11,"swd_swdio":12,"swd_nreset":true,"swd_target":"target/stm32f4x.cfg","spi_sclk":3,"spi_mosi":4,"spi_miso":5,"spi_cs":null}`}
-	f.start(t)
-	var warn bytes.Buffer
-	w := loadPodWiring(&globalFlags{connection: "embeddedci:bench-1"}, &warn)
-	if w == nil || *w.SwdSwclk != 11 || *w.SwdSwdio != 12 || !*w.SwdNreset || w.SwdTarget != "target/stm32f4x.cfg" || w.SpiCs != nil {
-		t.Fatalf("wiring %+v (warn %q)", w, warn.String())
-	}
-
-	// A server without the profile route: the stored map.
-	f2 := &fakeCloud{stored: `{"swd_swclk":7}`}
-	f2.start(t)
-	w = loadPodWiring(&globalFlags{connection: "embeddedci:bench-1"}, &warn)
-	if w == nil || *w.SwdSwclk != 7 || w.SwdSwdio != nil {
-		t.Fatalf("stored fallback %+v", w)
-	}
-	if warn.Len() != 0 {
-		t.Errorf("warned: %q", warn.String())
-	}
-}
-
-// Over the network the pod's cloud_status names its id, which must be on the account.
-func TestWiringProfileOverNetwork(t *testing.T) {
-	f := &fakeCloud{profile: `{"swd_swclk":11,"swd_swdio":12,"swd_nreset":false}`}
-	f.start(t)
-	for id, want := range map[string]bool{"id-1": true, "id-other": false} {
-		addr := fakeCloudStatusPod(t, id)
-		var warn bytes.Buffer
-		w := loadPodWiring(&globalFlags{connection: addr}, &warn)
-		if (w != nil) != want {
-			t.Errorf("device %s: wiring %+v, want found=%v", id, w, want)
-		}
-		if warn.Len() != 0 {
-			t.Errorf("device %s: warned %q", id, warn.String())
-		}
-	}
-	// Not signed in: no lookup, no warning.
-	t.Setenv("BENCHPOD_API_KEY", "")
-	var warn bytes.Buffer
-	if w := loadPodWiring(&globalFlags{connection: fakeCloudStatusPod(t, "id-1")}, &warn); w != nil || warn.Len() != 0 {
-		t.Errorf("signed out: %+v, %q", w, warn.String())
-	}
-	// USB: never.
-	if w := loadPodWiring(&globalFlags{connection: "usb"}, &warn); w != nil {
-		t.Errorf("usb: %+v", w)
-	}
-}
-
-func TestWiringProfileFailureWarnsOnce(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-	t.Setenv("BENCHPOD_API_BASE", ts.URL)
-	t.Setenv("BENCHPOD_API_KEY", "eci_test")
-	var warn bytes.Buffer
-	if w := loadPodWiring(&globalFlags{connection: "embeddedci:bench-1"}, &warn); w != nil {
-		t.Fatalf("wiring %+v", w)
-	}
-	if n := strings.Count(warn.String(), "\n"); n != 1 || !strings.Contains(warn.String(), "using the flags only") {
-		t.Errorf("warn = %q", warn.String())
-	}
-}
-
 func TestFlashTakesSWDFromWiringFlagsWin(t *testing.T) {
 	old := loadPodWiring
 	t.Cleanup(func() { loadPodWiring = old })
@@ -416,4 +355,13 @@ func fakeCloudStatusPod(t *testing.T, id string) string {
 		}
 	}()
 	return ln.Addr().String()
+}
+
+// allowAnyPodAPI is what the root command does for the firmware commands (flash-self,
+// install-blobs, status, ...): they run against a pod of any API level, a 3.x one included. For
+// tests that call such a command's code directly.
+func allowAnyPodAPI(t *testing.T) {
+	t.Helper()
+	tcpclient.SetAllowAnyPodAPI(true)
+	t.Cleanup(func() { tcpclient.SetAllowAnyPodAPI(false) })
 }

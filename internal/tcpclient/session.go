@@ -35,6 +35,9 @@ func (c *Client) Open(ctx context.Context) (*Session, error) {
 	if addr == "" {
 		return nil, fmt.Errorf("pod address is empty; run `benchpod set-connection <addr>` first")
 	}
+	if err := c.probePodAPI(ctx, map[string]any{"cmd": "session"}); err != nil {
+		return nil, err
+	}
 	budget := c.DialTimeout
 	if budget <= 0 {
 		budget = DefaultDialTimeout

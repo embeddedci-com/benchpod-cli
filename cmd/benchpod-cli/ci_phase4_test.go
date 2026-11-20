@@ -28,8 +28,8 @@ func TestCIBaselineGating(t *testing.T) {
 		name, extra, expect string
 		code                int
 	}{
-		{"fail_on_drift", "", "", 3},
-		{"gate drift", "gate: drift\n", "", 3},
+		{"fail_on_drift", "", "", ci.ExitRegression},
+		{"gate drift", "gate: drift\n", "", ci.ExitRegression},
 		{"not gated", "", "", 0},
 		{"fail_on_drift false beats gate", "gate: drift\n", "", 0},
 	}
@@ -59,7 +59,7 @@ func TestCIBaselineGating(t *testing.T) {
 			if !strings.Contains(out, "Baseline main (run r-base): 0 newly failing, 0 fixed, 1 drifted") {
 				t.Errorf("headline:\n%s", out)
 			}
-			if c.code == 3 && !strings.Contains(out, "boot mean_ma drifted +30.0%") {
+			if c.code == ci.ExitRegression && !strings.Contains(out, "boot mean_ma drifted +30.0%") {
 				t.Errorf("gated line:\n%s", out)
 			}
 			md, _ := os.ReadFile(summary)
@@ -69,7 +69,7 @@ func TestCIBaselineGating(t *testing.T) {
 					t.Errorf("summary lacks %q:\n%s", want, text)
 				}
 			}
-			if strings.Contains(text, "(fails the run)") != (c.code == 3) {
+			if strings.Contains(text, "(fails the run)") != (c.code == ci.ExitRegression) {
 				t.Errorf("summary gating mark:\n%s", text)
 			}
 		})
@@ -130,7 +130,7 @@ func TestGitHubActionsSignIn(t *testing.T) {
 			_, _ = w.Write([]byte(`{"access_token":"gha-token","token_type":"Bearer","expires_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","devices":["benchpod-a1b2c3"]}`))
 		case "/api/cloud/devices/command":
 			g.cmdPath, g.cmdAuth = r.URL.RequestURI(), r.Header.Get("Authorization")
-			_, _ = w.Write([]byte(`{"status":"ok","data":{"version":"3.10.13"}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","data":{"version":"4.0.0","api":2,"min_client_api":2}}`))
 		case "/api/cloud/devices/lease":
 			g.leaseAuth = r.Header.Get("Authorization")
 			_, _ = w.Write([]byte(`{"lease_id":"L-1"}`))
@@ -157,7 +157,7 @@ func TestGitHubActionsSignIn(t *testing.T) {
 		t.Fatalf("cloud pod %+v", cp)
 	}
 	data, err := cp.Command(ctx, map[string]any{"cmd": "status"})
-	if err != nil || !strings.Contains(string(data), "3.10.13") {
+	if err != nil || !strings.Contains(string(data), "4.0.0") {
 		t.Fatalf("command %s %v", data, err)
 	}
 	lease, err := acquireCloudLease(ctx, cp.API, cp.Credential, cp.Name, "L-1", 0, time.Hour, io.Discard)

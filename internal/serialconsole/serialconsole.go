@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
@@ -89,11 +88,6 @@ const perReadTimeout = 250 * time.Millisecond
 // into raw length-framed CMSIS-DAP mode. DAPStart reads lines until it sees
 // exactly this; any "ERROR:"/"usage:" line before it is a handshake failure.
 const dapReadySentinel = "dap ready"
-
-// dapFlushDelay gives the final leave frame time to reach the firmware over USB
-// before the port is closed, so the probe is disarmed promptly rather than only
-// by the firmware's 60s inactivity watchdog.
-const dapFlushDelay = 50 * time.Millisecond
 
 // errPortVanished is returned by sendCommand when the port reaches EOF before a
 // prompt. For most commands that is a failure; for Bootsel it is the expected
@@ -553,54 +547,7 @@ func (c *Console) sendCommandWait(ctx context.Context, line, display, secret str
 	}
 }
 
-// TargetPower enables (on) or disables a target power eFuse over the console
-// (firmware console.c: `power <1|2> <on|off>`, which answers "eFuse1 ON",
-// "eFuse1 OFF" or "bad eFuse index"). efuse is 1 (internal 5V) or 2 (external).
-// Anything but the matching eFuse line is reported as an error, so a console
-// that does not know the command can no longer pass for a powered target.
-func (c *Console) TargetPower(ctx context.Context, efuse int, on bool) error {
-	state, want := "off", "OFF"
-	if on {
-		state, want = "on", "ON"
-	}
-	line := fmt.Sprintf("power %d %s", efuse, state)
-	complete := func(acc string) bool {
-		return !errors.Is(parsePowerReply(acc, efuse, want), errNoPowerReply)
-	}
-	out, err := c.sendCommandUntil(ctx, line, line, "", complete)
-	perr := parsePowerReply(out, efuse, want)
-	if !errors.Is(perr, errNoPowerReply) {
-		return perr
-	}
-	if err != nil {
-		return err
-	}
-	return fmt.Errorf("power: no reply from the pod (got: %q)", tail([]byte(out), 200))
-}
-
 var errNoPowerReply = errors.New("no power reply yet")
-
-// parsePowerReply finds the `power` reply in raw console output; log lines
-// interleave freely.
-func parsePowerReply(raw string, efuse int, want string) error {
-	ok := fmt.Sprintf("eFuse%d %s", efuse, want)
-	s := strings.ReplaceAll(raw, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-	for _, ln := range strings.Split(s, "\n") {
-		ln = strings.TrimSpace(strings.TrimLeft(ln, "> \t\x08"))
-		switch {
-		case strings.Contains(ln, movedLine):
-			return ErrMovedToNetwork
-		case strings.Contains(ln, "unknown command"):
-			return ErrUnknownCommand
-		case ln == ok:
-			return nil
-		case strings.HasPrefix(ln, "bad eFuse"), strings.HasPrefix(ln, "ERROR:"):
-			return &CommandError{Cmd: "power", Reason: ln}
-		}
-	}
-	return errNoPowerReply
-}
 
 // Status runs the firmware's `status` console command and returns its output as
 // presentable text (the console prints human-readable lines, not JSON). The
@@ -679,70 +626,6 @@ func (c *Console) Dfu(ctx context.Context) error {
 	return errors.New("device did not acknowledge dfu (RP2350 pods use `bootsel` instead)")
 }
 
-// DAPStart enters the firmware's length-framed CMSIS-DAP probe mode over the
-// console. It sends `dap-start <swclk> <swdio>`, then reads console
-// lines until the firmware prints the `dap ready` sentinel; any `ERROR:`/`usage:`
-// line before it is a handshake failure. On success the port is switched to
-// blocking reads and an io.ReadWriteCloser carrying the raw framed DAP stream is
-// returned — ready to hand to openocd.BridgeDAP. Its Close sends a zero-length
-// frame to disarm the probe and return the console to its prompt, mirroring how
-// closing the TCP connection returns the pod to a safe state. The firmware's 60s
-// inactivity watchdog is the backstop if Close never runs.
-//
-// swclk/swdio are LA pin numbers (1-14); the caller is responsible for
-// parsing/validating them (see parseLAPin in the CLI). Target reset is not a
-// parameter: since pod rev3 nRESET is the pod's own pin on J1 pin 22, driven by
-// the firmware behind CMSIS-DAP SWJ_PINS.
-//
-// If the firmware never reports "dap ready" before ctx expires (or emits an
-// error line), no connection is returned and the error carries the full console
-// transcript captured during the handshake, so the caller can show what the pod
-// actually said instead of launching OpenOCD against a link that isn't armed.
-func (c *Console) DAPStart(ctx context.Context, swclk, swdio int) (io.ReadWriteCloser, error) {
-	cmd := fmt.Sprintf("dap-start %d %d", swclk, swdio)
-	if err := c.writeLine(cmd); err != nil {
-		return nil, fmt.Errorf("write dap-start: %w", err)
-	}
-	if rt, ok := c.rw.(readTimeoutSetter); ok {
-		_ = rt.SetReadTimeout(perReadTimeout)
-	}
-
-	// Accumulate every line so a handshake failure can report the firmware's
-	// actual output rather than just the last partial read.
-	var transcript strings.Builder
-	record := func(line string) {
-		transcript.WriteString(line)
-		transcript.WriteByte('\n')
-	}
-
-	for {
-		line, err := c.readLine(ctx)
-		if err != nil {
-			if line != "" {
-				record(line)
-			}
-			return nil, fmt.Errorf("dap-start: pod never reported %q (%w)%s",
-				dapReadySentinel, err, transcriptSuffix(transcript.String()))
-		}
-		record(line)
-		trimmed := strings.TrimSpace(line)
-		switch {
-		case trimmed == dapReadySentinel:
-			// Raw DAP mode is open for the whole flash session, which can outlast
-			// any per-read timeout — switch to blocking reads so the bridge's
-			// pumps block until data/close rather than spinning.
-			if rt, ok := c.rw.(readTimeoutSetter); ok {
-				_ = rt.SetReadTimeout(serial.NoTimeout)
-			}
-			return &dapConn{rw: c.rw}, nil
-		case strings.HasPrefix(trimmed, "ERROR:"), strings.HasPrefix(trimmed, "usage:"):
-			return nil, fmt.Errorf("dap-start rejected by firmware: %s%s",
-				trimmed, transcriptSuffix(transcript.String()))
-		}
-		// Otherwise: the command echo or an async log line — keep reading.
-	}
-}
-
 // transcriptSuffix formats captured console output for a handshake error,
 // returning "" when there is nothing to show.
 func transcriptSuffix(t string) string {
@@ -780,86 +663,6 @@ func (c *Console) readLine(ctx context.Context) (string, error) {
 		}
 		// n==0, err==nil is a per-read timeout; loop under the ctx guard above.
 	}
-}
-
-// dapConn is the raw framed CMSIS-DAP stream returned by DAPStart. Read/Write
-// pass straight through to the serial port; Close (idempotent) sends a
-// zero-length frame to disarm the probe, then closes the port. It deliberately
-// does NOT read after the leave frame: openocd.BridgeDAP closes this connection
-// while its own pump goroutine is still reading the same port, so a concurrent
-// read here would race it. Closing the port unblocks that goroutine, and the
-// leave frame (with the 60s watchdog as a backstop) is enough to leave the
-// firmware in a safe state.
-type dapConn struct {
-	rw        io.ReadWriteCloser
-	closeOnce sync.Once
-	closeErr  error
-}
-
-func (s *dapConn) Read(p []byte) (int, error)  { return s.rw.Read(p) }
-func (s *dapConn) Write(p []byte) (int, error) { return s.rw.Write(p) }
-
-func (s *dapConn) Close() error {
-	s.closeOnce.Do(func() {
-		if _, err := s.rw.Write([]byte{0x00, 0x00}); err == nil {
-			// Let the zero-length leave frame flush over USB before dropping the port.
-			time.Sleep(dapFlushDelay)
-		}
-		s.closeErr = s.rw.Close()
-	})
-	return s.closeErr
-}
-
-// quoteArg double-quotes an argument for the firmware shell. Embedded double
-// quotes are not currently supported by the firmware parser, so we reject them
-// with a clear error rather than guess at an escaping scheme.
-func quoteArg(s string) (string, error) {
-	if strings.Contains(s, `"`) {
-		return "", errors.New(`value may not contain a double-quote (") character`)
-	}
-	return `"` + s + `"`, nil
-}
-
-// maskPassword replaces occurrences of the cleartext password in captured
-// output with "***" so it is never logged. No-op for empty passwords.
-func maskPassword(out, password string) string {
-	if password == "" {
-		return out
-	}
-	return strings.ReplaceAll(out, password, "***")
-}
-
-// parseIPAfter returns the value of an "ip=<value>" token appearing after the
-// given marker in s, or "" if none is found.
-func parseIPAfter(s, marker string) string {
-	i := strings.Index(s, marker)
-	if i < 0 {
-		return ""
-	}
-	rest := s[i+len(marker):]
-	j := strings.Index(rest, "ip=")
-	if j < 0 {
-		return ""
-	}
-	return firstToken(rest[j+len("ip="):])
-}
-
-// fieldValue scans s line-by-line for a "<label>:" or "<label>=" prefix
-// (case-insensitive) and returns the trimmed remainder of that line. Returns ""
-// if the label is not found.
-func fieldValue(s, label string) string {
-	label = strings.ToLower(label)
-	for _, line := range strings.Split(s, "\n") {
-		trimmed := strings.TrimSpace(line)
-		lower := strings.ToLower(trimmed)
-		for _, sep := range []string{":", "="} {
-			prefix := label + sep
-			if strings.HasPrefix(lower, prefix) {
-				return strings.TrimSpace(trimmed[len(prefix):])
-			}
-		}
-	}
-	return ""
 }
 
 // firstToken returns the leading whitespace-delimited token of s.
@@ -903,4 +706,12 @@ func (c *Console) HasNRSTPin(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return strings.Contains(strings.ToLower(out), nrstPinMarker), nil
+}
+
+// maskPassword replaces password in out (console output can echo a secret back) with ***.
+func maskPassword(out, password string) string {
+	if password == "" {
+		return out
+	}
+	return strings.ReplaceAll(out, password, "***")
 }

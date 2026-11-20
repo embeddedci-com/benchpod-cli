@@ -198,7 +198,7 @@ type Expect struct {
 	Min   *float64
 	Max   *float64
 	Drift *float64
-	// FailOnDrift: a change beyond Drift against the baseline fails the run (exit 3); nil = the
+	// FailOnDrift: a change beyond Drift against the baseline fails the run (exit 11); nil = the
 	// file's gate decides.
 	FailOnDrift *bool
 	Line        int
@@ -326,7 +326,7 @@ func Parse(data []byte, path string, env func(string) (string, bool)) (*Config, 
 		case "gate":
 			cfg.Gate = p.str(v, "gate")
 			if cfg.Gate != "drift" && cfg.Gate != "none" {
-				p.errf(v.Line, "gate must be drift (a drift beyond its allowance against the baseline fails the run with exit 3) or none, got %q", cfg.Gate)
+				p.errf(v.Line, "gate must be drift (a drift beyond its allowance against the baseline fails the run with exit 11) or none, got %q", cfg.Gate)
 			}
 		case "timeout":
 			if d, ok := p.duration(v, "timeout"); ok {

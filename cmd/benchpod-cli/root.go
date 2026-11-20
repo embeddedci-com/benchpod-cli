@@ -62,36 +62,38 @@ func newRootCmd() *cobra.Command {
 			"New pod? Run `benchpod setup`: it finds the pod, gets it on the network, sets\n" +
 			"the board I/O voltage, registers it with embeddedci.com and saves the connection.\n\n" +
 			"--connection says where and how to reach the pod; the transport follows from\n" +
-			"its value. An address (192.168.1.5[:8080]) uses the pod's network (TCP/JSON) API;\n" +
-			"a device path (/dev/tty..., COM3) or `usb` uses the pod's USB console, and its\n" +
-			"USB network adapter for the network commands (firmware 3.9.0+, no Wi-Fi set);\n" +
-			"embeddedci:<name> goes through embeddedci.com to the pod with that name on your\n" +
-			"account (signed in with `benchpod login`, or BENCHPOD_API_KEY). Omit --connection\n" +
-			"to use the default saved by `benchpod discover --save` or `benchpod set-connection`.\n" +
+			"its value. An address (192.168.1.5) uses the pod's network API (TLS on 8443,\n" +
+			"pinned on first use); a device path (/dev/tty..., COM3) or `usb` uses the pod's\n" +
+			"USB network adapter; embeddedci:<name> goes through embeddedci.com to the pod\n" +
+			"with that name on your account (signed in with `benchpod login`, or\n" +
+			"BENCHPOD_API_KEY). Omit --connection to use the default saved by\n" +
+			"`benchpod discover --save` or `benchpod set-connection`.\n" +
 			"--org (or BENCHPOD_ORG) picks which of your embeddedci.com organizations cloud\n" +
 			"calls act in, by id, slug or name; the default is the one active in the web app.\n\n" +
-			"Over the network: every pod command but the USB-only ones below. Over the USB\n" +
-			"console: status, la voltage, flash (SWD), lan-policy, sig-policy, cloud ca and\n" +
-			"cloud proxy; the rest over the pod's USB network adapter when it is up.\n" +
-			"Through embeddedci.com: status, ping, la voltage, la pull, la pullup, la status, la step,\n" +
+			"This CLI drives firmware 4.0. Against firmware 3.x only status, flash-self,\n" +
+			"install-blobs, dfu, bootsel, discover and identity run (exit code 7 otherwise:\n" +
+			"update the pod with `benchpod flash-self`).\n\n" +
+			"Over USB every pod command sends JSON over the pod's USB network adapter; the\n" +
+			"USB console is only for status, dfu, bootsel, identity, lan-policy, usb-network\n" +
+			"and net-reset. USB networking off: `benchpod usb-network on --connection usb`.\n" +
+			"Through embeddedci.com: status, ping, la voltage, la pull, la status, la step,\n" +
 			"la pins, la dir, i2c, generate, sensor, lan-policy, sig-policy, cloud ca\n" +
-			"show/clear, cloud proxy, deregister and flash-self (embeddedci.com runs the update).\n" +
-			"Always over the USB console: set-wifi, show-network, clear-wifi, identity,\n" +
-			"install-blobs, bootsel, dfu, usb-bridge and usb-reattach; flash-self reflashes\n" +
-			"the pod over USB DFU unless --network or an embeddedci: connection. A command\n" +
-			"that cannot use the connection says so and names what to use instead.\n\n" +
-			"flash and spi-flash over the network take the pins you leave out from the pod's\n" +
-			"wiring profile on embeddedci.com when you are signed in and the pod is on your\n" +
-			"account.\n\n" +
+			"show/clear, cloud proxy, the Wi-Fi commands, deregister and flash-self\n" +
+			"(embeddedci.com runs the update). flash-self reflashes the pod over USB DFU\n" +
+			"unless --network or an embeddedci: connection. A command that cannot use the\n" +
+			"connection says so and names what to use instead.\n\n" +
+			"Commands that take pins default the ones you leave out from the pod's wiring\n" +
+			"profile (--wiring-profile, else the pod's default).\n\n" +
 			exitCodesHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Apply Viper precedence (flag > env > default) into g before any RunE.
 		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
-			tcpclient.SetAllowNewerPod(allowsNewerPod(c))
+			tcpclient.SetAllowAnyPodAPI(allowsAnyPodAPI(c))
+			tcpclient.SetAPIProbe(apiProbe)
 			g.connection = viper.GetString("connection")
 			g.configFile = viper.GetString("config-file")
-			g.outputFilename = viper.GetString("output-filename")
+			g.outputFilename = viper.GetString("out")
 			g.timeout = viper.GetDuration("timeout")
 			g.tls = viper.GetString("tls")
 			g.tlsCA = viper.GetString("tls-ca")
@@ -112,10 +114,10 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.connection, "connection", "",
 		`how to reach the pod: its network address (192.168.1.5[:8080]), its name (benchpod-a1b2c3 or a1b2c3, found on the LAN over mDNS, else on USB), a device path (/dev/tty..., COM3), "usb" to auto-detect the pod over USB (its console, and its USB network adapter for the network commands), usb:<name> for one of several pods on USB, or embeddedci:<name> to go through embeddedci.com (default: the saved set-connection target)`)
 	pf.StringVar(&g.configFile, "config-file", "", "path to config file")
-	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
+	pf.StringVar(&g.outputFilename, "out", "", "write command output to this file instead of stdout (benchpod ci: the run folder)")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")
 	pf.StringVar(&g.tls, "tls", "auto",
-		"TLS to the pod's LAN API: auto (TLS on 8443 when the pod has it, pinned on first use), on (TLS only) or off (plaintext 8080)")
+		"TLS to the pod's LAN API: auto (TLS on 8443 when the pod has it, pinned on first use), on (TLS only) or off (plaintext 8080: firmware 4.0 answers it on the LAN only after `benchpod lan-tls https-only off`)")
 	pf.StringVar(&g.tlsCA, "tls-ca", "", "PEM file of CA certificates: verify the pod's TLS certificate and name against them instead of pinning")
 	pf.StringVar(&g.org, "org", "",
 		"embeddedci.com organization for cloud calls (embeddedci:<name>, login-backed commands): its id, slug or name (default: the active organization in the web app; also BENCHPOD_ORG)")
@@ -127,7 +129,7 @@ func newRootCmd() *cobra.Command {
 	viper.SetEnvPrefix("BENCHPOD")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
-	for _, name := range []string{"connection", "config-file", "output-filename", "timeout", "tls", "tls-ca", "org", "wiring-profile"} {
+	for _, name := range []string{"connection", "config-file", "out", "timeout", "tls", "tls-ca", "org", "wiring-profile"} {
 		_ = viper.BindPFlag(name, pf.Lookup(name))
 	}
 
@@ -138,7 +140,7 @@ func newRootCmd() *cobra.Command {
 	}{
 		{"setup", "Setup:", []*cobra.Command{
 			newSetupCmd(g), newDiscoverCmd(g), newSetConnectionCmd(g),
-			newSetWifiCmd(g), newShowNetworkCmd(g), newScanWifiCmd(g), newClearWifiCmd(g),
+			newSetWifiCmd(g), newShowNetworkCmd(g), newScanWifiCmd(g), newClearWifiCmd(g), newNetResetCmd(g),
 			newUSBBridgeCmd(g), newUSBReattachCmd(g),
 		}},
 		{"pod", "The pod:", []*cobra.Command{
@@ -149,7 +151,7 @@ func newRootCmd() *cobra.Command {
 		}},
 		{"target", "The target (DUT) and analog I/O:", []*cobra.Command{
 			newFlashCmd(g), newSPIFlashCmd(g), newGenerateCmd(g), newCaptureCmd(g),
-			newStreamCmd(g), newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g), newI2CCmd(g), newExpansionCmd(g),
+			newMeasureCmd(g), newTestCmd(g), newADCRangeCmd(g), newSensorCmd(g), newI2CCmd(g), newExpansionCmd(g),
 		}},
 		{"ci", "Continuous integration:", []*cobra.Command{newCICmd(g)}},
 		{"cloud", "embeddedci.com:", []*cobra.Command{
@@ -194,19 +196,31 @@ func run(args []string) int {
 	}
 	log.Printf("%v", withSavedConnectionHint(withRefusalHint(err), savedConnectionUsed))
 	if cmd != nil && isCICommand(cmd) {
-		return ci.ExitSetup // benchpod ci: a usage error is a setup error (exit 1), see its exit codes
+		// benchpod ci: the CLI's codes 2 (usage), 5, 6 and 7 mean the same there; anything else
+		// before the run is a setup error.
+		switch c := exitCode(err); c {
+		case exitUsage, exitUnreachable, exitUpdateCLI, exitUpdatePod:
+			return c
+		}
+		return ci.ExitSetup
 	}
 	return exitCode(err)
 }
 
-// newerPodCommands still run against a pod whose firmware needs a newer CLI (exit code 6
-// otherwise): they show the pod's state or change its firmware, which is how such a pod is
-// rolled back or looked at. `status` prints a warning instead.
-var newerPodCommands = map[string]bool{
+// apiProbe: before a pod's first command, read its status once and stop on an API level this CLI
+// does not drive (tcpclient.SetAPIProbe). Tests whose fake pods answer status without an api
+// turn it off.
+var apiProbe = true
+
+// anyPodAPICommands still run against a pod whose firmware this CLI does not drive: one that needs
+// a newer CLI (exit code 6 otherwise) or one older than firmware 4.0 (exit code 7 otherwise). They
+// show the pod's state or change its firmware, which is how such a pod is upgraded, rolled back
+// or looked at; over firmware 3.x they keep the requests 3.x takes. `status` prints a warning.
+var anyPodAPICommands = map[string]bool{
 	"status": true, "flash-self": true, "install-blobs": true, "dfu": true, "bootsel": true,
 	"discover": true, "identity": true,
 }
 
-func allowsNewerPod(c *cobra.Command) bool {
-	return c.Parent() != nil && !c.Parent().HasParent() && newerPodCommands[c.Name()]
+func allowsAnyPodAPI(c *cobra.Command) bool {
+	return c.Parent() != nil && !c.Parent().HasParent() && anyPodAPICommands[c.Name()]
 }

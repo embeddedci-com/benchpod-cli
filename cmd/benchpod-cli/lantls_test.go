@@ -1,57 +1,58 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
+	"encoding/json"
+	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-func writeCertKey(t *testing.T, dir, name string) (certFile, keyFile string) {
-	t.Helper()
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: name},
-		NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour), DNSNames: []string{name + ".local"}}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
+// lan-tls scpi and https-only send the lan_tls switches; the LAN refusal (BP0042) says to use USB
+// or the cloud.
+func TestLanTLSSwitches(t *testing.T) {
+	t.Setenv("BENCHPOD_CONNECTION", "")
+	addr, got := fakeLANPod(t, `{"status":"ok","data":{"port":8443,"https_only":true,"scpi":true,"sessions":0,`+
+		`"origin":"generated","key":"EC P-256","subject":"CN=benchpod-a1b2c3","sha256":"ab"}}`)
+	out := t.TempDir() + "/out.txt"
+	for _, c := range []struct {
+		args []string
+		want map[string]any
+	}{
+		{[]string{"lan-tls", "scpi", "on"}, map[string]any{"cmd": "lan_tls", "scpi": true}},
+		{[]string{"lan-tls", "https-only", "off"}, map[string]any{"cmd": "lan_tls", "https_only": false}},
+		{[]string{"lan-tls"}, map[string]any{"cmd": "lan_tls"}},
+	} {
+		if code := run(append(c.args, "--connection", addr, "--out", out)); code != exitOK {
+			t.Fatalf("%v: exit %d", c.args, code)
+		}
+		var req map[string]any
+		_ = json.Unmarshal([]byte(<-got), &req)
+		if len(req) != len(c.want) {
+			t.Fatalf("%v: sent %v", c.args, req)
+		}
+		for k, v := range c.want {
+			if req[k] != v {
+				t.Fatalf("%v: sent %v", c.args, req)
+			}
+		}
 	}
-	kder, _ := x509.MarshalECPrivateKey(key)
-	certFile, keyFile = filepath.Join(dir, name+".pem"), filepath.Join(dir, name+".key")
-	os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
-	os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}), 0o600)
-	return
-}
+	b, _ := os.ReadFile(out)
+	if !strings.Contains(string(b), "  scpi        on\n") || !strings.Contains(string(b), "  https-only  on\n") {
+		t.Fatalf("show:\n%s", b)
+	}
+	if code := run([]string{"lan-tls", "scpi", "maybe", "--connection", addr}); code != exitUsage {
+		t.Fatalf("bad value: exit %d", code)
+	}
 
-func TestCheckCertKey(t *testing.T) {
-	dir := t.TempDir()
-	c1, k1 := writeCertKey(t, dir, "pod1")
-	_, k2 := writeCertKey(t, dir, "pod2")
-
-	bundle, leaf, err := checkCertKey(c1, k1)
-	if err != nil {
-		t.Fatalf("matching pair refused: %v", err)
+	refused, _ := fakeLANPod(t, `{"status":"error","code":"BP0042","args":{"setting":"lan_tls"}}`)
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	if code := run([]string{"lan-tls", "scpi", "on", "--connection", refused}); code != exitRefused {
+		t.Fatalf("LAN: exit %d", code)
 	}
-	if leaf.Subject.CommonName != "pod1" {
-		t.Errorf("leaf = %v", leaf.Subject)
-	}
-	if !strings.Contains(string(bundle), "BEGIN CERTIFICATE") || !strings.Contains(string(bundle), "BEGIN EC PRIVATE KEY") {
-		t.Errorf("bundle lacks the certificate or the key:\n%s", bundle)
-	}
-	if _, _, err := checkCertKey(c1, k2); err == nil {
-		t.Error("a key that does not match the certificate was accepted")
-	}
-	enc := filepath.Join(dir, "enc.key")
-	os.WriteFile(enc, []byte("-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n"), 0o600)
-	if _, _, err := checkCertKey(c1, enc); err == nil || !strings.Contains(err.Error(), "encrypted") {
-		t.Errorf("encrypted key: err = %v", err)
+	if !strings.Contains(logged.String(), "BP0042: lan_tls cannot be changed over the LAN") || !strings.Contains(logged.String(), "--connection usb") {
+		t.Fatalf("LAN refusal: %s", logged.String())
 	}
 }

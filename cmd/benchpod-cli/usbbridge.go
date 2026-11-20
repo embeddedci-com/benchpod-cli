@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
 
@@ -118,7 +119,7 @@ func serveBridge(ctx context.Context, s *bridgeSession) bool {
 
 func runUSBBridge(g *globalFlags, port int, keep, watch bool) error {
 	if port <= 0 || port > 65535 {
-		return fmt.Errorf("usb-bridge: --port %d is out of range", port)
+		return usageErrorf("usb-bridge: --port %d is out of range", port)
 	}
 	// Never the console (usbbridge_watch.go): the pod's USB network link only.
 	return runUSBBridgeWatch(g, port, keep, watch)
@@ -226,25 +227,25 @@ func newUSBReattachCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "usb-reattach",
 		Short: "Make the pod reconnect on USB, so this computer sets up its USB network adapter again",
-		Long: "Make the pod drop off the USB bus for half a second and connect again (USB console).\n" +
+		Long: "Make the pod drop off the USB bus for half a second and connect again (usb_reattach).\n" +
 			"This computer then enumerates the console and the USB network adapter anew, as after\n" +
 			"replugging the cable. macOS ignores a new network adapter while the screen is locked,\n" +
 			"so run this after unlocking when the pod was plugged in or rebooted meanwhile.\n" +
-			"Needs firmware 3.9.0 or later.",
+			"The CLI sends it over the pod's USB network adapter when that is up, else over the\n" +
+			"pod's network address from its console status (or the --connection given); with\n" +
+			"neither, unplug the USB cable and plug it back in.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			device, err := g.usbDevice("usb-reattach")
+			ctx, cancel, t, err := g.usbNetworkClient("usb-reattach", 10*time.Second)
 			if err != nil {
-				return err
-			}
-			console, _, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(10*time.Second))
-			if err != nil {
-				return err
+				return fmt.Errorf("%w (or unplug the USB cable and plug it back in)", err)
 			}
 			defer cancel()
-			defer console.Close()
-			if err := console.USBReattach(ctx); err != nil {
-				return fmt.Errorf("usb-reattach: %w", err)
+			if _, err := t.client.Command(ctx, map[string]any{"cmd": "usb_reattach"}); err != nil {
+				// Over the USB link itself the connection drops with the re-enumeration.
+				if _, refused := tcpclient.AsPodError(err); refused || !t.spec.IsNetwork() || !tcpclient.IsUSBLinkAddr(hostOf(t.spec.Addr)) {
+					return wifiError("usb-reattach", err)
+				}
 			}
 			fmt.Fprintln(os.Stderr, "The pod reconnected on USB; its network adapter (unless turned off with `benchpod usb-network off`) is back in a few seconds.")
 			return nil

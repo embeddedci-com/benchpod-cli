@@ -23,8 +23,8 @@ import (
 //
 //   - lan-policy: open | locked | off. Settable from the cloud and the USB console, never from
 //     the LAN itself.
-//   - sig-policy: audit < permissive < required. The cloud may only make it stricter; the USB
-//     console may set anything. The LAN can never change it.
+//   - sig-policy: always required from firmware 4.0 (signatures cannot be loosened; BP0074), so
+//     the CLI only shows it (with the number of trusted keys).
 //
 // The target follows the CLI's conventions: --device-name / --device-id or --connection
 // embeddedci:<name> go through embeddedci.com (like deregister), otherwise --connection picks the
@@ -36,10 +36,13 @@ type podPolicy struct {
 	jsonCmd string            // the pod's JSON verb, e.g. "lan_policy"
 	title   string            // "LAN policy", starts a sentence
 	noun    string            // "LAN policy", inside a sentence
-	values  []string          // in order of strictness for sig-policy
+	values  []string          // the values set takes; none: show only
 	meaning map[string]string // one-line explanation of each value
 	missing string            // what to say when the pod's firmware lacks the policy
 }
+
+// settable says the policy has a set subcommand.
+func (p podPolicy) settable() bool { return len(p.values) > 1 }
 
 var lanPolicy = podPolicy{
 	cmd:     "lan-policy",
@@ -60,11 +63,9 @@ var sigPolicy = podPolicy{
 	jsonCmd: "sig_policy",
 	title:   "Signature policy",
 	noun:    "signature policy",
-	values:  []string{"audit", "permissive", "required"},
+	values:  []string{"required"},
 	meaning: map[string]string{
-		"audit":      "every image is accepted; signatures are only reported",
-		"permissive": "unsigned images are accepted, a bad signature is refused",
-		"required":   "unsigned images are refused",
+		"required": "only signed images are installed",
 	},
 	missing: "this firmware has no signature policy; update the pod's firmware",
 }
@@ -114,15 +115,14 @@ func newLanPolicyCmd(g *globalFlags) *cobra.Command {
 
 func newSigPolicyCmd(g *globalFlags) *cobra.Command {
 	return newPolicyCmd(g, sigPolicy,
-		"Show or set the pod's signature policy (audit, permissive, required)",
-		"Show or set how the pod treats firmware and blob signatures.\n\n"+
-			"  audit       every image is accepted; signatures are only reported\n"+
-			"  permissive  unsigned images are accepted, a bad signature is refused\n"+
-			"  required    unsigned images are refused\n\n"+
-			"Over the cloud (--device-name, --device-id or --connection embeddedci:<name>)\n"+
-			"the policy can only be made stricter, and only by an organization owner or\n"+
-			"admin. Only the USB console (--connection usb) can loosen it. The LAN can only\n"+
-			"show it.")
+		"Show the pod's signature policy (always required)",
+		"Show how the pod treats firmware and blob signatures, and how many release keys\n"+
+			"it trusts. Firmware 4.0 installs only signed images on every path (LAN, USB and\n"+
+			"the cloud): the policy is always required and cannot be loosened (BP0074).\n"+
+			"Install firmware you built yourself over USB DFU (`benchpod flash-self` with a\n"+
+			"local .bin).\n\n"+
+			"Over the cloud (--device-name, --device-id or --connection embeddedci:<name>), over\n"+
+			"USB (the pod's USB network adapter) or over the LAN.")
 }
 
 func newPolicyCmd(g *globalFlags, p podPolicy, short, long string) *cobra.Command {
@@ -149,13 +149,16 @@ func newPolicyCmd(g *globalFlags, p podPolicy, short, long string) *cobra.Comman
 		Short: "Show the pod's " + p.noun,
 		Args:  cobra.NoArgs,
 		RunE:  show,
-	}, &cobra.Command{
-		Use:       "set <" + strings.Join(p.values, "|") + ">",
-		Short:     "Set the pod's " + p.noun,
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: p.values,
-		RunE:      func(_ *cobra.Command, args []string) error { return run(args[0]) },
 	})
+	if p.settable() {
+		root.AddCommand(&cobra.Command{
+			Use:       "set <" + strings.Join(p.values, "|") + ">",
+			Short:     "Set the pod's " + p.noun,
+			Args:      cobra.ExactArgs(1),
+			ValidArgs: p.values,
+			RunE:      func(_ *cobra.Command, args []string) error { return run(args[0]) },
+		})
+	}
 	pf := root.PersistentFlags()
 	pf.StringVar(&t.serverURL, "server-url", "https://www.embeddedci.com", "embeddedci-server base URL")
 	pf.StringVar(&t.tokenFile, "token-file", "", "path to token cache (default: ~/.config/benchpod-cli/token.json)")
@@ -170,11 +173,11 @@ func runPolicy(g *globalFlags, p podPolicy, t policyTarget, set string, out, war
 	t.deviceName = strings.TrimSpace(t.deviceName)
 	t.deviceID = strings.TrimSpace(t.deviceID)
 	set = strings.ToLower(strings.TrimSpace(set))
-	if set != "" && !p.valid(set) {
-		return fmt.Errorf("%s set: %q is not a policy; use one of %s", p.cmd, set, strings.Join(p.values, ", "))
+	if set != "" && (!p.settable() || !p.valid(set)) {
+		return usageErrorf("%s set: %q is not a policy; use one of %s", p.cmd, set, strings.Join(p.values, ", "))
 	}
 	if t.deviceName != "" && t.deviceID != "" {
-		return errors.New("pass only one of --device-name or --device-id")
+		return usageErrorf("pass only one of --device-name or --device-id")
 	}
 	if t.cloud() {
 		return runPolicyCloud(g, p, t, set, out, warn)
@@ -196,13 +199,21 @@ func runPolicy(g *globalFlags, p podPolicy, t policyTarget, set string, out, war
 		return runPolicyCloud(g, p, t, set, out, warn)
 	}
 	if spec.IsSerial() {
-		// Showing is a read the pod's USB network link answers (firmware 3.9.0+), with no
-		// console: a Linux user outside the dialout group cannot open it. Changes stay on the
+		// Showing is a read the pod's USB network link answers, with no console: a Linux user
+		// outside the dialout group cannot open it. The signature policy is on the network API
+		// only (firmware 4.0 has no console sig-policy). Changing the LAN policy stays on the
 		// console (physical presence).
 		if set == "" && spec.Device == "" {
 			if addr := localUSBPod(spec.Pod); addr != "" {
 				return runPolicyLAN(g, p, addr, out)
 			}
+		}
+		if p.cmd == sigPolicy.cmd {
+			nt, err := g.networkTarget(p.cmd)
+			if err != nil {
+				return err
+			}
+			return runPolicyLAN(g, p, nt.Addr, out)
 		}
 		return runPolicyUSB(g, p, spec.Device, set, out, warn)
 	}
@@ -237,7 +248,7 @@ func warnLanOff(warn io.Writer) {
 
 func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out, warn io.Writer) error {
 	if strings.TrimSpace(t.serverURL) == "" {
-		return errors.New("--server-url cannot be empty")
+		return usageErrorf("--server-url cannot be empty")
 	}
 	tokenPath, err := resolveTokenPath(t.tokenFile)
 	if err != nil {
@@ -293,7 +304,7 @@ func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out
 const adminNeeded = "this needs an organization owner or admin (API keys: the benchpod:admin scope)"
 
 // cloudPolicyError turns a failed policy call into one clear line: the server's or pod's own
-// message, plus the USB way out when the cloud refused to loosen the signature policy.
+// message, or a coded refusal of the pod's worded from the catalog.
 func cloudPolicyError(p podPolicy, set string, err error) error {
 	what := p.cmd
 	if set != "" {
@@ -313,10 +324,11 @@ func cloudPolicyError(p podPolicy, set string, err error) error {
 	if msg == "" {
 		return fmt.Errorf("%s: %w", what, err)
 	}
-	// "loosen": no code yet (sig_policy's "only the USB console can loosen the policy")
-	if set != "" && p.cmd == sigPolicy.cmd && strings.Contains(strings.ToLower(msg), "loosen") {
-		return relayedRefusal(p, fmt.Sprintf("%s: the pod refused: %s. Loosen it over the pod's USB console: benchpod sig-policy set %s --connection usb",
-			what, msg, set), msg)
+	// A refusal the pod sent with a code, relayed by the server: worded from the catalog.
+	if strings.HasPrefix(strings.ToUpper(apiErr.Code), "BP") {
+		if pe, ok := tcpclient.AsPodError(tcpclient.RefusalError(msg, apiErr.Code, nil)); ok {
+			return refusedError(what, pe)
+		}
 	}
 	if set != "" {
 		return relayedRefusal(p, what+": the pod refused: "+msg, msg)
@@ -376,7 +388,7 @@ func runPolicyUSB(g *globalFlags, p podPolicy, device, set string, out, warn io.
 			return errors.New(p.missing)
 		}
 		if pe, ok := tcpclient.AsPodError(err); ok {
-			return refusedError(what, pe, false)
+			return refusedError(what, pe)
 		}
 		return fmt.Errorf("%s: %w", what, err)
 	}

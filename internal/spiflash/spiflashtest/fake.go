@@ -14,7 +14,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"github.com/embeddedci-com/benchpod-cli/internal/spiflash"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // FakePod models the firmware's SPI commands over an in-memory 16 MB NOR part:
@@ -70,16 +72,22 @@ func (f *FakePod) Command(ctx context.Context, req map[string]any) (json.RawMess
 
 	switch r["cmd"] {
 	case "status":
-		return ok(map[string]any{"caps": f.Caps})
+		st := map[string]any{"api": 2, "min_client_api": 2}
+		for _, c := range f.Caps {
+			if c == spiflash.Cap { // the pod has SPI: the features table decides from features_rev
+				st["features_rev"], st["gateware"] = features.Revision(), 60
+			}
+		}
+		return ok(st)
 	case "nrst":
 		f.NRST = r["assert"].(bool)
 		return ok(map[string]any{"asserted": f.NRST})
 	case "spi_start":
 		if f.Busy || f.Armed {
-			return nil, errors.New("spi busy: send spi_stop first")
+			return nil, tcpclient.RefusalError("", "BP0004", nil)
 		}
 		f.Armed = true
-		return ok(map[string]any{"sck": num("sck"), "mosi": num("mosi"), "miso": num("miso"), "cs": num("cs"), "hz": 1000000, "mode": num("mode")})
+		return ok(map[string]any{"sck": num("sck"), "mosi": num("mosi"), "miso": num("miso"), "cs": num("cs"), "clock_hz": 1000000, "mode": num("mode")})
 	case "spi_stop":
 		f.Armed = false
 		return ok("spi stopped")
@@ -133,7 +141,7 @@ func (f *FakePod) Command(ctx context.Context, req map[string]any) (json.RawMess
 			return ok(map[string]any{"addr": addr, "len": len(d), "verified": verify, "ms": 1})
 		}
 	}
-	return nil, errors.New("unknown cmd")
+	return nil, tcpclient.RefusalError("", "BP0002", nil)
 }
 
 // Ops returns the command log.
@@ -173,6 +181,9 @@ func Serve(t *testing.T, f *FakePod) string {
 					data, err := f.Command(context.Background(), req)
 					if err != nil {
 						reply = map[string]any{"status": "error", "message": err.Error()}
+						if pe, ok := tcpclient.AsPodError(err); ok && pe.Code != "" {
+							reply = map[string]any{"status": "error", "code": pe.Code}
+						}
 					} else {
 						reply = map[string]any{"status": "ok", "data": data}
 					}

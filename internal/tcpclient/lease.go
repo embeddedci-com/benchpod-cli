@@ -1,7 +1,6 @@
 package tcpclient
 
 import (
-	"strings"
 	"sync/atomic"
 )
 
@@ -30,19 +29,8 @@ func LeaseAcquireRequest(j *LeaseJoin) map[string]any {
 	return map[string]any{"cmd": "lease_acquire", "id": j.ID, "holder": j.Holder, "purpose": j.Purpose, "ttl_s": j.TTL}
 }
 
-// IsUnknownCommand says the pod does not know the command it was sent (older firmware).
-func IsUnknownCommand(err error) bool {
-	pe, ok := AsPodError(err)
-	if !ok {
-		return false
-	}
-	if pe.Code == "BP0002" {
-		return true
-	}
-	// fallback: BP0002 replaces it (firmware without codes)
-	r := strings.ToLower(strings.TrimSpace(pe.Reason))
-	return strings.HasPrefix(r, "unknown cmd") || strings.HasPrefix(r, "unknown command")
-}
+// IsUnknownCommand says the pod does not know the command it was sent (BP0002: older firmware).
+func IsUnknownCommand(err error) bool { return HasCode(err, "BP0002") }
 
 // tagRequest is req as this client sends it: with the client fields and, unless NoLeaseJoin, the
 // lease (clientapi.go).

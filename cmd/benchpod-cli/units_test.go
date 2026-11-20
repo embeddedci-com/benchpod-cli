@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"testing"
 )
 
@@ -43,57 +42,90 @@ func near(a, b float64) bool {
 }
 
 func TestParseLAVoltage(t *testing.T) {
-	for in, want := range map[string]int{"3.3V": 3300, "3.3v": 3300, "1.8V": 1800, "1800mV": 1800, "3.3": 3300, "1.8": 1800, "3300": 3300, "1800": 1800,
-		"5V": 5000, "5.0": 5000, "5000": 5000, "5000mV": 5000} { // 5 V: digital v3r4 (other pods refuse it)
+	for in, want := range map[string]int{"3.3V": 3300, "3.3v": 3300, "1.8V": 1800, "1800mV": 1800, "3.3": 3300, "1.8": 1800,
+		"5V": 5000, "5.0": 5000, "5000mV": 5000} { // 5 V: digital v3r4 (other pods refuse it)
 		if got, err := parseLAVoltage(in); err != nil || got != want {
 			t.Errorf("parseLAVoltage(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"2.5", "1234", "4.9", "x", ""} {
+	// A bare number is volts: CLI 0.10 dropped "a number above 5 means mV".
+	for _, in := range []string{"2.5", "1234", "4.9", "x", "", "3300", "1800"} {
 		if _, err := parseLAVoltage(in); err == nil {
 			t.Errorf("parseLAVoltage(%q) accepted", in)
 		}
 	}
 }
 
-// The SI-unit flags send exactly what the older unit-in-the-name flags send.
-func TestSIFlagsMatchTheOldFlags(t *testing.T) {
+// generate and la step send firmware 4.0's names and units (Hz, volts), from the SI flags.
+func TestSIFlagsAndFirmware4Names(t *testing.T) {
 	t.Setenv("BENCHPOD_CONNECTION", "")
 	t.Setenv("BENCHPOD_TIMEOUT", "")
 	addr, got := fakeLANPod(t, `{"status":"ok","data":null}`)
-	request := func(args ...string) map[string]any {
+	request := func(args ...string) string {
 		t.Helper()
 		if code := run(append(args, "--connection", addr)); code != exitOK {
 			t.Fatalf("%v: exit %d", args, code)
 		}
-		var req map[string]any
-		if err := json.Unmarshal([]byte(<-got), &req); err != nil {
-			t.Fatal(err)
-		}
-		return req
+		return <-got
 	}
-	same := func(a, b map[string]any) {
-		t.Helper()
-		ja, _ := json.Marshal(a)
-		jb, _ := json.Marshal(b)
-		if string(ja) != string(jb) {
-			t.Fatalf("\n new %s\n old %s", ja, jb)
-		}
+	if req := request("generate", "--waveform", "sine", "--freq", "2kHz", "--duration", "2s", "--sample-rate", "10MHz",
+		"--path", "3v3", "--amplitude-v", "1", "--offset-v", "1.65"); req != `{"amplitude_v":1,"cmd":"generate","duration_ms":2000,`+
+		`"freq_hz":2000,"offset_v":1.65,"path":"3v3","sample_rate_hz":10000000,"waveform":"sine"}` {
+		t.Fatalf("generate %s", req)
 	}
-	same(request("generate", "--waveform", "sine", "--freq", "2kHz", "--duration", "2s", "--sample-rate", "10MHz"),
-		request("generate", "--waveform", "sine", "--freq", "2000", "--duration-ms", "2000", "--sample-rate-mhz", "10"))
-	same(request("la", "step", "--la", "6", "--steps", "3", "--delay", "50us"),
-		request("la", "step", "--la", "6", "--steps", "3", "--delay-us", "50"))
+	if req := request("generate", "--waveform", "square", "--amplitude-ma", "4", "--offset-ma", "12"); req !=
+		`{"amplitude_ua":4000,"cmd":"generate","duration_ms":0,"freq_hz":1000,"offset_ua":12000,"waveform":"square"}` {
+		t.Fatalf("generate mA %s", req)
+	}
+	if req := request("la", "step", "--la", "6", "--steps", "3", "--delay", "50us"); req != `{"cmd":"la_step","delay_us":50,"la":6,"steps":3}` {
+		t.Fatalf("la step %s", req)
+	}
+	if req := request("measure", "--waveform", "sine", "--freq", "1kHz", "--sample-rate", "1MHz", "--samples", "4"); req !=
+		`{"amplitude":127,"cmd":"measure","freq_hz":1000,"offset":128,"sample_rate_hz":1000000,"samples":4,"waveform":"sine"}` {
+		t.Fatalf("measure %s", req)
+	}
 
+	volts := []string{"--path", "3v3", "--amplitude-v", "1", "--offset-v", "1"}
 	for _, args := range [][]string{
-		{"generate", "--waveform", "sine", "--duration", "2s", "--duration-ms", "5"},
-		{"generate", "--waveform", "sine", "--duration", "1500us"},
-		{"generate", "--waveform", "sine", "--sample-rate", "fast"},
-		{"generate", "--waveform", "sine", "--sample-rate", "1MHz", "--sample-rate-mhz", "1"},
+		{"generate", "--waveform", "sine"}, // no volts or mA: the 8-bit levels are gone
+		{"generate", "--waveform", "sine", "--amplitude", "100"},
+		append([]string{"generate", "--waveform", "sine", "--duration-ms", "5"}, volts...),
+		append([]string{"generate", "--waveform", "sine", "--duration", "1500us"}, volts...),
+		append([]string{"generate", "--waveform", "sine", "--sample-rate", "fast"}, volts...),
+		append([]string{"generate", "--waveform", "sine", "--sample-rate-mhz", "1"}, volts...),
 		{"la", "step", "--la", "6", "--steps", "3", "--delay", "1500ns"},
+		{"la", "step", "--la", "6", "--steps", "3", "--delay-us", "50"},
+		{"capture", "--sample-rate-mhz", "1"},
 	} {
 		if code := run(append(args, "--connection", addr)); code != exitUsage {
 			t.Errorf("%v: exit %d, want %d", args, code, exitUsage)
 		}
+	}
+}
+
+// One name each: --out for output files, --format for formats, --addr for addresses.
+func TestOneFlagName(t *testing.T) {
+	root := newRootCmd()
+	for _, c := range []struct {
+		path      []string
+		has, gone string
+	}{
+		{[]string{"capture"}, "format", "output"},
+		{[]string{"measure"}, "format", "output"},
+		{[]string{"test"}, "format", "output"},
+		{[]string{"sensor", "export"}, "out", "output"},
+		{[]string{"sensor", "start"}, "addr", "address"},
+		{[]string{"flash-self"}, "addr", "address"},
+	} {
+		cmd, _, err := root.Find(c.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Flags().Lookup(c.has) == nil || cmd.Flags().Lookup(c.gone) != nil {
+			t.Errorf("%v: want --%s and no --%s", c.path, c.has, c.gone)
+		}
+	}
+	if root.PersistentFlags().Lookup("out") == nil || root.PersistentFlags().Lookup("output-filename") != nil {
+		t.Error("global --out")
 	}
 }
