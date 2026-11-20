@@ -1180,6 +1180,11 @@ LAN address when the pod has one, and `usb` when it was only heard on its USB li
 `10.237.x.y` address only works while the pod is plugged into this computer, so it is
 never saved; `usb` finds the pod again on any port.
 
+The API level a pod advertises over mDNS (`api` in its TXT record, firmware 4.0 and later; none
+is level 1) marks a pod this CLI does not drive: `needs firmware update` for firmware before 4.0
+(update it with `benchpod flash-self`), `needs a newer CLI` for a pod above level 2. See
+[Firmware and CLI levels](#firmware-and-cli-levels).
+
 Each pod on USB also gets a `MAC` line: its Ethernet MAC and, on firmware after 3.10.7 with
 Wi-Fi, the MAC it uses on Wi-Fi (`not known yet` until a `benchpod scan-wifi` or a join). Give
 them to your network admin when the network hands out addresses only to registered devices.

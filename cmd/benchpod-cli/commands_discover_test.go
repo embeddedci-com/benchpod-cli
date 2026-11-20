@@ -400,3 +400,26 @@ func TestDescribeSerialMACs(t *testing.T) {
 		}
 	}
 }
+
+// discover reads the API level from the mDNS TXT record and says what a pod needs.
+func TestDiscoverAPILevel(t *testing.T) {
+	for _, c := range []struct {
+		txt  []string
+		api  int
+		want string
+	}{
+		{[]string{"id=abc"}, 1, "needs firmware update (`benchpod flash-self`)"},
+		{[]string{"id=abc", "api=2", "https_only=1", "tls=8443"}, 2, ""},
+		{[]string{"api=3"}, 3, "needs a newer CLI"},
+		{[]string{"api=x"}, 1, "needs firmware update"},
+	} {
+		api := txtAPI(c.txt)
+		if api != c.api {
+			t.Errorf("%v: api %d, want %d", c.txt, api, c.api)
+		}
+		got := describeHealth(discoveredPod{reachable: true, api: api})
+		if c.want == "" && got != "API ok" || c.want != "" && !strings.Contains(got, c.want) {
+			t.Errorf("%v: %q", c.txt, got)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -43,6 +44,7 @@ type discoveredPod struct {
 	// lanAddr is what gets saved, since it works from other machines and after the pod is unplugged.
 	lanAddr string
 	id      string // full base64url Ed25519 pubkey (TXT id=)
+	api     int    // the pod's client API level (TXT api=); firmware 3.x sends none: 1
 
 	// Filled in by the health check.
 	reachable bool
@@ -80,7 +82,10 @@ func newDiscoverCmd(g *globalFlags) *cobra.Command {
 			"with the cloud, not merely that something replied to a broadcast. When a pod\n" +
 			"is reachable both ways the two entries are matched up as one physical pod.\n" +
 			"When this machine is signed in (`benchpod login`), a registered pod is also\n" +
-			"checked against that account, so a pod on another account is called out.\n\n" +
+			"checked against that account, so a pod on another account is called out.\n" +
+			"A pod whose firmware this CLI does not drive is marked from the API level it\n" +
+			"advertises: \"needs firmware update\" (firmware before 4.0: `benchpod flash-self`)\n" +
+			"or \"needs a newer CLI\".\n\n" +
 			"With --save and exactly one pod present, it is stored as the default connection\n" +
 			"(like set-connection): its Ethernet or Wi-Fi address when it has one, else `usb`\n" +
 			"for a pod only reached over its USB network link (that 10.237.x.y address only\n" +
@@ -240,6 +245,7 @@ func discoverPods(wait time.Duration) ([]discoveredPod, error) {
 				instance: unescapeDNSSD(e.Instance),
 				hostname: strings.TrimSuffix(e.HostName, "."),
 				id:       txtValue(e.Text, "id"),
+				api:      txtAPI(e.Text),
 			}
 			ips[e.Instance] = append(ips[e.Instance], e.AddrIPv4...)
 			// Prefer a numeric IPv4 over the .local name so we don't depend on
@@ -388,6 +394,28 @@ func unescapeDNSSD(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// txtAPI is the client API level a pod advertises (TXT api=, firmware 4.0 and later); 1 when it
+// advertises none (firmware 3.x).
+func txtAPI(txt []string) int {
+	n, err := strconv.Atoi(txtValue(txt, "api"))
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
+}
+
+// apiVerdict says what a pod's advertised API level needs: "" when this CLI drives it (or the
+// level is not known: 0).
+func apiVerdict(api int) string {
+	switch {
+	case api > 0 && api < tcpclient.MinPodAPI:
+		return "needs firmware update (`benchpod flash-self`)"
+	case api > tcpclient.ClientAPI:
+		return "needs a newer CLI"
+	}
+	return ""
 }
 
 // txtValue returns the value of key=... from a DNS-SD TXT record, or "".
@@ -754,6 +782,9 @@ func describeHealth(p discoveredPod) string {
 		default:
 			parts = append(parts, fmt.Sprintf("registered, cloud %s", strings.ToLower(strings.TrimSpace(p.cloud.State))))
 		}
+	}
+	if v := apiVerdict(p.api); v != "" {
+		parts = append(parts, v)
 	}
 	if p.lanAddr != "" && p.lanAddr != p.addr {
 		parts = append(parts, "LAN address "+p.lanAddr)
