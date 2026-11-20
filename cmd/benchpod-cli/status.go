@@ -138,11 +138,11 @@ type podStatus struct {
 type podUSB struct {
 	Net       flexBool `json:"net"`
 	OffReason string   `json:"off_reason"` // "setting" or "wifi" when Net is off
-	Link      bool   `json:"link"`
-	IP        string `json:"ip"`
-	HostIP    string `json:"host_ip"`
-	Source    string `json:"source"`    // "none", "default", "1.5A", "3.0A"; "" on v2
-	SourceMA  *int   `json:"source_ma"` // nil on v2
+	Link      bool     `json:"link"`
+	IP        string   `json:"ip"`
+	HostIP    string   `json:"host_ip"`
+	Source    string   `json:"source"`    // "none", "default", "1.5A", "3.0A"; "" on v2
+	SourceMA  *int     `json:"source_ma"` // nil on v2
 }
 
 // describeUSB is the status row for the USB side, with a warning when the port powering the pod

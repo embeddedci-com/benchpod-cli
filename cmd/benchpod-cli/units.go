@@ -119,7 +119,6 @@ func parseLAVoltage(s string) (int, error) {
 	return mv, nil
 }
 
-
 // wholeUnits resolves a duration flag into whole units (0 when not set); it must be a whole
 // number of them.
 func wholeUnits(cmd *cobra.Command, durFlag string, d time.Duration, unit time.Duration) (int, error) {
