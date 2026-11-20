@@ -337,15 +337,17 @@ benchpod status --json     # the pod's raw status reply
 
 # Hardware (network):
 benchpod la voltage 3.3V                          # the DUT's I/O voltage for now (it normally comes from the wiring profile)
+benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (see the 5 V page linked under la voltage)
 benchpod generate --waveform sine --freq 1kHz --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --output csv      # ADC snapshot
 benchpod stream ...
 benchpod test ...
-benchpod la pull 3 up                             # LA pin pull resistor: up, down or off
+benchpod la pull 3 up                             # LA pin pull resistor: up, down or off (digital v3r4: every pin, strength picked by the pod)
 benchpod la status
 benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 benchpod la pins                                  # every LA pin: function, level, pull-up, direction, warnings
+benchpod la pins 1-4                              # only LA1-LA4
 benchpod la dir 9,10 dut_output                   # the pod refuses push-pull drivers on these pins
 benchpod i2c start --sda 1 --scl 2 --hz 400000    # the pod as an I2C master (gateware v55+)
 benchpod i2c xfer 0x48 --write 0d --read 2        # hex in, hex out
@@ -865,13 +867,14 @@ timeout: 20m                     # the whole run (default 60m)
 keep: {traces: failed}           # all | failed | none
 cleanup: default                 # or none, or a list: [dac_stop, power_off, sensors_off, pulls_off]
 upload: auto                     # auto (when signed in) | true | false
-baseline: main                   # read now, used once runs are compared on embeddedci.com
+baseline: main                   # after the upload, compare with the last valid run on this branch
+gate: drift                      # optional: every drift allowance gates (exit 3); default: per metric
 steps:
   - id: boot                     # stable id: the case id across runs (default: from name)
     power_cycle: {until: "APP_OK", timeout: 10s, off_ms: 500}
     required: true
     expect:
-      boot_ms: {max: 600, drift: 20%}
+      boot_ms: {max: 600, drift: 20%, fail_on_drift: true}
   - id: idle-current
     measure_power: {duration: 2s}
     expect:
@@ -916,7 +919,9 @@ only `flash` (an uploaded build), the power steps without `until` and `wait` run
 
 `expect` sets limits on a step's metrics: `min` and `max` fail the case when the value is
 outside them; `drift` (`20%` or `0.2`) is the change allowed against an earlier run, shown by
-`benchpod ci diff`; `{}` records the value without limits. Every metric of a native step is
+`benchpod ci diff` and the baseline compare; `fail_on_drift: true` makes a change beyond it
+against the baseline fail the run (see [Baseline gating](#baseline-gating)); `{}` records the
+value without limits. Every metric of a native step is
 recorded, limited or not. On a pytest or run step the keys are `"<case id>/<measurement>"`
 and add limits to what the tests record; a case that does not record an expected
 measurement fails.
@@ -925,16 +930,57 @@ Durations are `500ms`, `10s`, `2m`, `1h30m`, or a number of seconds. Any string 
 `${VAR}` (from `env`, then the environment; an unset variable is an error) and
 `${VAR:-default}`; `$${` is a literal `${`, and a bare `$VAR` is left for the shell.
 
+### Baseline gating
+
+With `baseline: <branch>` the run, once uploaded, is compared on embeddedci.com with the last
+valid run of the same suite and DUT on that branch, and the summary prints the headline:
+
+```
+Baseline main (run 3f9c...): 0 newly failing, 1 fixed, 2 drifted, 1 beyond a gated drift
+```
+
+A measurement whose change against the baseline is beyond its `drift` allowance fails the run
+with exit code 3 when the metric says `fail_on_drift: true`, or the file says `gate: drift`
+(every measurement with a drift allowance gates, including the ones a test records with
+`measure()`; `fail_on_drift: false` on a metric opts it out). Exit code 3 only replaces a
+passing run's 0: a failed or invalid run keeps its 2 or 4. Without a baseline run on the
+branch yet, or when the run was not uploaded, the compare is skipped with a note and gates
+nothing.
+
+### In GitHub Actions
+
+`benchpod ci` runs the same in a workflow; the action
+[`embeddedci-com/submit-job-action/ci`](https://github.com/embeddedci-com/submit-job-action)
+installs the CLI and runs it. In Actions it also:
+
+- **Signs in without a secret.** With no `BENCHPOD_API_KEY` and no `benchpod login` session,
+  a job with `permissions: id-token: write` signs in with its GitHub OIDC token (audience
+  `https://embeddedci.com`, or `EMBEDDEDCI_OIDC_AUDIENCE`). embeddedci.com exchanges it for a
+  token of the organization that trusts the repository (its GitHub repositories in the
+  organization settings, with the pods the repository may drive). That token reaches cloud
+  pods (`--pod embeddedci:<name>`) and uploads the run. A self-hosted runner next to a LAN pod
+  needs no sign-in for the run itself, only for the upload.
+- **Records the workflow run.** run.json gets `trigger: github` and `inputs.github`: the run id,
+  attempt, URL, workflow and actor.
+- **Writes the step summary.** With `$GITHUB_STEP_SUMMARY` set, it appends a Markdown summary:
+  suite, DUT, outcome and counts, the run's URL, the failed cases with the first line of their
+  message, the measurements outside their limits or beyond their drift, and the baseline
+  headline.
+
+With the GitHub Actions token, a flash step on a cloud pod (and `benchpod flash --build ...
+--connection embeddedci:<pod>`) has embeddedci.com flash the uploaded build through the cloud
+route, within the run's lease. The pod must be one the repository may drive, and the build
+from a repository the organization trusts.
+
 ### Exit codes of `benchpod ci`
 
 | Code | Meaning |
 |---|---|
 | `0` | Every case passed (skipped and expected failures included). |
-| `1` | A file, usage or setup error: the YAML, the firmware build, no pod, a missing wiring profile. |
+| `1` | A file, usage or setup error: the YAML, the firmware build, no pod, a missing wiring profile, `upload: true` without a sign-in. |
 | `2` | A test failed or errored, or a required step failed. |
+| `3` | The run passed, but a gated measurement drifted beyond its allowance against the baseline (see [Baseline gating](#baseline-gating)). |
 | `4` | The run is not valid: the pod was in use, `require` was not met, the pod rebooted or stopped answering, the lease was lost, a capture lost samples, or the run was interrupted. |
-
-`3` is kept for regressions against a baseline in a later version.
 
 ## Command reference
 
@@ -992,11 +1038,40 @@ stderr with a `[benchpod]` prefix.
 | `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
 | `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
 | `5`  | Unreachable: nothing answered on the pod's address, no pod was found on USB, or the pod is offline on embeddedci.com. |
+| `6`  | Update the CLI: the pod's firmware needs a newer benchpod CLI (see [Firmware newer than the CLI](#firmware-newer-than-the-cli)). |
 
 `benchpod ci` has its own exit codes (a CI result, not a command's): see
 [Exit codes of `benchpod ci`](#exit-codes-of-benchpod-ci).
 
-A refusal is printed word for word as the pod sent it. For a `locked:` (LAN policy),
+#### Firmware newer than the CLI
+
+Every JSON command the CLI sends to the pod (on the LAN, over USB networking and through
+embeddedci.com) carries `"client_api"`, the pod API level this CLI was built for, and
+`"client"`, its name and version (`"cli 0.9.5"`). Firmware 3.10.13 and older ignores both.
+Newer firmware announces its own level in `status`; it goes up only when the firmware changes
+a reply in a way an older CLI would misread. When the pod's level is above this CLI's (a pod
+without one counts as level 1), a command that reads the pod's status stops with exit code
+`6` and says so. `status`, `flash-self`, `install-blobs`, `dfu`, `bootsel`, `discover` and
+`identity` still run: `status` prints the same line as a warning, and the firmware commands are
+how such a pod is updated or rolled back.
+
+```text
+[benchpod] la voltage: this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
+```
+
+A pod that no longer takes commands from a CLI this old refuses them with `BP0030`, which
+the CLI reports the same way. Update the CLI as you installed it (see
+[Installation](#installation)). Commands that only talk to embeddedci.com or work locally are
+not affected, and neither is the USB console.
+
+Firmware 3.10.8 and later sends more and more refusals with a stable error code (`BP0001` and up).
+The CLI then shows the code, what went wrong and what to run, from the error catalog it ships
+with, plus a link to the code's page; `benchpod explain <code>` prints the whole entry. The
+exit code follows the code: a session, the bus engine, the storage or a lease in use
+(`BP0003`, `BP0004`, `BP0005`, `BP0016`, `BP0025`) is `4`, every other code `3`.
+
+A refusal without a code (older firmware, or one that has no code yet) is printed word for
+word as the pod sent it. For a `locked:` (LAN policy),
 `busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
 So it does for `la voltage not set` (run `benchpod la voltage 3.3V` or 1.8V, or set it on
 the web app's Wiring tab) and for a `pin conflict: LA4 is in use by ...`, where the raw
@@ -1432,7 +1507,9 @@ embeddedci.com; `la voltage` also works over USB.
 ### `benchpod la voltage [VOLTAGE]`
 
 Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
-(also `1800mV`, `3.3` or `3300`). Leave it out to show the setting. The pod refuses
+(also `1800mV`, `3.3` or `3300`), or `5V` on a pod with the digital board v3r4
+([5 V I/O](https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io): pin 21 goes to 5 V,
+and the output then shows pin 21). Leave it out to show the setting. The pod refuses
 LA capture, UART, SWD flash, pull-ups and sensor emulation until it is set;
 1.8 V needs a v3 pod, and the pod refuses a change while an LA pin is in use. Works
 over the network, over USB and through embeddedci.com. No flags.
@@ -1485,15 +1562,18 @@ Pulse an LA pin N times, for step/dir stepper drivers. The FPGA times the train.
 | `--dir-la`    | (none)  | Direction pin, driven before stepping.                       |
 | `--direction` | `0`     | Level for `--dir-la`: `0` or `1`.                            |
 
-### `benchpod la pins`
+### `benchpod la pins [PINS]`
 
-List all 14 LA pins: what each one is used for (and by whom), its GPIO mode and
+List all 14 LA pins, or only PINS (a pin, a list or a range: `9`, `9,10`, `9-12`,
+`la9`, or a name from the pod's wiring profile): what each one is used for (and by whom), its GPIO mode and
 level, its live level, its pull resistor, its direction (see `la dir`) and its
 warnings. A warning line follows the table for each pin that has one: a pull-up on
 under a push-pull output (it only costs current), or a pin driven high or pulled up
 while the pod's target power is off (that powers an unpowered DUT through its pins;
 ignore it when the DUT has its own supply). Directions and warnings need gateware v55
-or later; older pods show every pin as `unknown`.
+or later; older pods show every pin as `unknown`. A list too large for one cloud reply
+(a long sensor instance name on every pin) is read in two parts by itself (firmware after
+3.10.12; older firmware answers "reply too large" then).
 
 | Flag     | Default | Purpose                          |
 |----------|---------|----------------------------------|

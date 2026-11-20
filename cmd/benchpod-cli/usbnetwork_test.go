@@ -45,10 +45,12 @@ func TestUSBNetworkOffOverTheUSBLink(t *testing.T) {
 
 // Older firmware: a clear "update the firmware".
 func TestUSBNetworkOnOlderFirmware(t *testing.T) {
-	addr, _ := fakeLANPod(t, `{"status":"error","message":"unknown cmd"}`)
-	err := runUSBNetwork(&globalFlags{connection: addr}, "", &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "3.9.0 or later") {
-		t.Fatalf("err = %v", err)
+	for _, reply := range unknownCmdReplies {
+		addr, _ := fakeLANPod(t, reply)
+		err := runUSBNetwork(&globalFlags{connection: addr}, "", &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "3.9.0 or later") {
+			t.Fatalf("err = %v", err)
+		}
 	}
 }
 

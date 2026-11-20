@@ -87,6 +87,9 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 	}
 	switch r.Status {
 	case "ok":
+		if err := checkReply(req, r.Data); err != nil {
+			return nil, err
+		}
 		return r.Data, nil
 	case "error":
 		return nil, replyError(r)
@@ -223,7 +226,7 @@ func (c *Client) dialAndSend(ctx context.Context, req map[string]any) (net.Conn,
 		_ = conn.SetDeadline(deadline)
 	}
 
-	line, err := json.Marshal(c.tagLease(req))
+	line, err := json.Marshal(c.tagRequest(req))
 	if err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("marshal request: %w", err)

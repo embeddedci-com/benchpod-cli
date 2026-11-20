@@ -122,7 +122,7 @@ func usbNetworkJSON(ctx context.Context, c podCommander, set string) (string, er
 	}
 	data, err := c.Command(ctx, req)
 	if err != nil {
-		if strings.Contains(err.Error(), "unknown cmd") {
+		if isUnknownCommand(err) {
 			return "", errors.New(usbNetworkMissing)
 		}
 		return "", err

@@ -266,7 +266,7 @@ const (
 )
 
 func isLeaseBusy(pe *tcpclient.PodError) bool {
-	return pe.Code == codeLeaseBusy || pe.Kind() == tcpclient.Busy
+	return pe.Code == codeLeaseBusy || pe.Kind() == tcpclient.Busy // Kind: the text fallback without a code
 }
 
 // busyText is "<holder> holds this pod (<purpose>, N s left)" from a lease_busy refusal.
@@ -285,6 +285,7 @@ func busyText(pe *tcpclient.PodError) string {
 		}
 		return s
 	}
+	// fallback: BP0025's holder/purpose/left_s args replace it (firmware without codes)
 	return strings.TrimPrefix(strings.TrimSpace(pe.Reason), "busy: ")
 }
 
@@ -301,8 +302,11 @@ func leaseLostText(pe *tcpclient.PodError) string {
 
 // isLeaseLost is a command refused because the run's lease was stopped (BP0026) or expired (BP0027).
 func isLeaseLost(pe *tcpclient.PodError) bool {
-	r := strings.TrimSpace(pe.Reason)
-	return pe.Code == codeLeaseLost || pe.Code == codeLeaseNotHeld || strings.HasPrefix(r, "lease lost")
+	if pe.Code == codeLeaseLost || pe.Code == codeLeaseNotHeld {
+		return true
+	}
+	// fallback: BP0026 / BP0027 replace it (firmware without codes)
+	return strings.HasPrefix(strings.TrimSpace(pe.Reason), "lease lost")
 }
 
 // ── the server's lease (embeddedci.com) ─────────────────────────────────────
@@ -313,6 +317,7 @@ type cloudLease struct {
 	credential string // the user's
 	device     string // the pod's name on embeddedci.com
 	req        serverapi.LeaseRequest
+	github     bool // credential is a GitHub Actions token
 
 	sessMu  sync.Mutex
 	session string
@@ -325,6 +330,10 @@ func (l *cloudLease) sessionToken(ctx context.Context) (string, error) {
 	defer l.sessMu.Unlock()
 	if l.session != "" && time.Until(l.expires) > 5*time.Minute {
 		return l.session, nil
+	}
+	if l.github {
+		// The lease routes take the github_action token itself (minted again near its end).
+		return githubActionCredential(ctx, l.api)
 	}
 	s, err := l.api.MintCloudSession(ctx, l.credential, 3600)
 	if err != nil {
@@ -341,7 +350,7 @@ func (l *cloudLease) sessionToken(ctx context.Context) (string, error) {
 // acquireCloudLease takes the server's lease on device, waiting up to wait.
 func acquireCloudLease(ctx context.Context, api *serverapi.Client, credential, device, id string, wait, interval time.Duration, warn io.Writer) (*cloudLease, error) {
 	l := &cloudLease{leaseState: leaseState{id: id}, api: api, credential: credential, device: device,
-		req: serverapi.LeaseRequest{LeaseID: id, RunLabel: leaseHolder(), TTLSeconds: ciLeaseTTL}}
+		req: serverapi.LeaseRequest{LeaseID: id, RunLabel: leaseHolder(), TTLSeconds: ciLeaseTTL}, github: isGitHubActionCredential(credential)}
 	deadline := time.Now().Add(wait)
 	warned := false
 	for {
@@ -416,6 +425,7 @@ func (l *cloudLease) Verify(ctx context.Context) {
 
 func (l *cloudLease) Release(ctx context.Context) {
 	l.stopLoop()
+	cloudLeaseID = ""
 	if !l.supported {
 		return
 	}
@@ -428,4 +438,4 @@ func (l *cloudLease) Release(ctx context.Context) {
 
 func (l *localLease) Drop() { tcpclient.SetLeaseJoin(nil) }
 
-func (l *cloudLease) Drop() { l.api.LeaseID = "" }
+func (l *cloudLease) Drop() { l.api.LeaseID, cloudLeaseID = "", "" }

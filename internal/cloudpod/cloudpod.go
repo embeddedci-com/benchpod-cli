@@ -29,6 +29,9 @@ type Client struct {
 	Credential string // a `benchpod login` access token, or "ApiKey eci_..." (see serverapi.Authorization)
 	DeviceID   string // the pod's id on embeddedci.com
 	Name       string // the pod's name on embeddedci.com, for messages
+	// ByName: the credential is a cloud token (GitHub Actions), which reaches the pod by name on
+	// the /api/cloud/devices routes instead of by id on the user's device routes.
+	ByName bool
 }
 
 // Resolve finds the pod named name (or with that id) among the devices the credential can see.
@@ -135,7 +138,15 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 			timeout = maxTimeout
 		}
 	}
-	resp, err := c.API.DeviceCommand(ctx, c.Credential, c.DeviceID, req, timeout)
+	var resp *serverapi.CommandResponse
+	var err error
+	// The server passes the command on as it is, so it carries client_api and client like a LAN one.
+	req = tcpclient.TagRequest(req)
+	if c.ByName {
+		resp, err = c.API.CloudDeviceCommand(ctx, c.Credential, c.Name, req, timeout)
+	} else {
+		resp, err = c.API.DeviceCommand(ctx, c.Credential, c.DeviceID, req, timeout)
+	}
 	if err != nil {
 		return nil, c.Explain(ctx, err)
 	}
@@ -144,7 +155,12 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 		if msg == "" {
 			msg = "pod returned an error"
 		}
-		return nil, &tcpclient.PodError{Reason: msg, Code: resp.Code, Args: resp.Args}
+		return nil, tcpclient.RefusalError(msg, resp.Code, resp.Args)
+	}
+	if tcpclient.IsStatus(req) && !tcpclient.NewerPodAllowed() {
+		if err := tcpclient.CheckPodAPI(resp.Data); err != nil {
+			return nil, err
+		}
 	}
 	return resp.Data, nil
 }

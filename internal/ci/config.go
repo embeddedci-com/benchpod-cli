@@ -90,6 +90,7 @@ type Config struct {
 	Firmware *Firmware
 	Env      map[string]string
 	Baseline string
+	Gate     string // "" (each metric's fail_on_drift decides) | drift (every drift allowance gates) | none
 	Timeout  time.Duration
 	Keep     string // all | failed | none
 	Cleanup  []string
@@ -197,7 +198,10 @@ type Expect struct {
 	Min   *float64
 	Max   *float64
 	Drift *float64
-	Line  int
+	// FailOnDrift: a change beyond Drift against the baseline fails the run (exit 3); nil = the
+	// file's gate decides.
+	FailOnDrift *bool
+	Line        int
 }
 
 // Error is a problem in the file, with the line it is on when known.
@@ -319,6 +323,11 @@ func Parse(data []byte, path string, env func(string) (string, bool)) (*Config, 
 			// done above
 		case "baseline":
 			cfg.Baseline = p.str(v, "baseline")
+		case "gate":
+			cfg.Gate = p.str(v, "gate")
+			if cfg.Gate != "drift" && cfg.Gate != "none" {
+				p.errf(v.Line, "gate must be drift (a drift beyond its allowance against the baseline fails the run with exit 3) or none, got %q", cfg.Gate)
+			}
 		case "timeout":
 			if d, ok := p.duration(v, "timeout"); ok {
 				cfg.Timeout = d
@@ -332,7 +341,7 @@ func Parse(data []byte, path string, env func(string) (string, bool)) (*Config, 
 		case "steps":
 			cfg.Steps = p.parseSteps(v)
 		default:
-			p.errf(k.Line, "unknown key %q (known: version, suite, dut, wiring, require, firmware, env, baseline, timeout, keep, cleanup, upload, steps)", k.Value)
+			p.errf(k.Line, "unknown key %q (known: version, suite, dut, wiring, require, firmware, env, baseline, gate, timeout, keep, cleanup, upload, steps)", k.Value)
 		}
 	}
 	if !seen["version"] {
@@ -1018,7 +1027,7 @@ func (p *parser) parseExpect(n *yaml.Node, s *Step, label string) []Expect {
 			p.errf(v.Line, "%s expect.%s must be a mapping {min: , max: , drift: } ({} records it)", label, e.Name)
 			continue
 		}
-		p.checkKeys(v, label+" expect."+e.Name, "min", "max", "drift")
+		p.checkKeys(v, label+" expect."+e.Name, "min", "max", "drift", "fail_on_drift")
 		for j := 0; j+1 < len(v.Content); j += 2 {
 			kk, vv := v.Content[j], v.Content[j+1]
 			if vv.Tag == "!!null" {
@@ -1040,7 +1049,14 @@ func (p *parser) parseExpect(n *yaml.Node, s *Step, label string) []Expect {
 					continue
 				}
 				e.Drift = &d
+			case "fail_on_drift":
+				if b, ok := p.boolValue(vv, label+" expect."+e.Name+".fail_on_drift"); ok {
+					e.FailOnDrift = &b
+				}
 			}
+		}
+		if e.FailOnDrift != nil && *e.FailOnDrift && e.Drift == nil {
+			p.errf(k.Line, "%s expect.%s: fail_on_drift needs a drift allowance (drift: 20%%)", label, e.Name)
 		}
 		if e.Min != nil && e.Max != nil && *e.Min > *e.Max {
 			p.errf(k.Line, "%s expect.%s: min %g is above max %g", label, e.Name, *e.Min, *e.Max)
@@ -1157,4 +1173,20 @@ func (c *Config) String() string {
 	}
 	fmt.Fprintf(&b, ": %d steps", len(c.Steps))
 	return b.String()
+}
+
+// GatesDrift says whether a drift of measurement name of case caseID beyond its allowance fails
+// the run: its expect's fail_on_drift (on the step whose id is the case id, or as
+// "<case id>/<name>" on a pytest or run step), else the file's gate.
+func (c *Config) GatesDrift(caseID, name string) bool {
+	for _, s := range c.Steps {
+		for _, e := range s.Expect {
+			if (s.ID == caseID && e.Name == name) || e.Name == caseID+"/"+name {
+				if e.FailOnDrift != nil {
+					return *e.FailOnDrift
+				}
+			}
+		}
+	}
+	return c.Gate == "drift"
 }

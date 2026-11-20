@@ -19,6 +19,7 @@ import (
 
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // TestMain keeps every test off the real embeddedci.com session and config: the CLI's files go
@@ -32,6 +33,9 @@ func TestMain(m *testing.M) {
 	for _, k := range []string{"BENCHPOD_API_KEY", "BENCHPOD_API_BASE", "BENCHPOD_CONNECTION", "BENCHPOD_CONFIG_FILE"} {
 		os.Unsetenv(k)
 	}
+	// Requests compare whole: without client_api and client (TestEveryRequestCarriesTheClientFields
+	// turns them on).
+	tcpclient.SetClientFields(false)
 	// Never probe this machine's USB ports for a pod's USB network adapter.
 	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) {
 		return serialconsole.USBNet{}, errors.New("no pod on USB (tests)")

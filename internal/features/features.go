@@ -40,10 +40,14 @@ type Fact struct {
 
 // Table is the parsed features.json.
 type Table struct {
-	Schema   int              `json:"schema"`
-	Revision int              `json:"revision"`
-	Facts    map[string]Fact  `json:"facts"`
-	Features map[string]Entry `json:"features"`
+	Schema   int `json:"schema"`
+	Revision int `json:"revision"`
+	// API is the client API level of the firmware the table is from; MinClientAPI the lowest it
+	// takes (benchpod-firmware docs/API.md, Client compatibility).
+	API          int              `json:"api"`
+	MinClientAPI int              `json:"min_client_api"`
+	Facts        map[string]Fact  `json:"facts"`
+	Features     map[string]Entry `json:"features"`
 }
 
 var table = func() Table {
@@ -56,6 +60,9 @@ var table = func() Table {
 
 // Revision is the highest table revision this CLI knows.
 func Revision() int { return table.Revision }
+
+// API is the client API level of the table this CLI embeds: the highest pod API it handles.
+func API() int { return table.API }
 
 // Lookup returns the entry for a feature name.
 func Lookup(name string) (Entry, bool) {

@@ -155,7 +155,7 @@ func lanTLSError(what string, err error) error {
 	if pe, ok := tcpclient.AsPodError(err); ok {
 		r := pe.Reason
 		switch {
-		case strings.Contains(r, "unknown command") || strings.Contains(r, "unknown cmd"):
+		case isUnknownCommand(err):
 			return errors.New(lanTLSMissing)
 		case strings.Contains(r, "change it over TLS"):
 			return fmt.Errorf("%s: %s", what, lanTLSPlainHint)

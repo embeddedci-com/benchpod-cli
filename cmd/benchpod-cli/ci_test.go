@@ -232,6 +232,13 @@ func (f *ciFixture) run() (*ciExit, *ci.Run) {
 		r.upload = func(ctx context.Context, dir string) (*ci.Uploaded, error) {
 			return uploadRunFolder(ctx, dir, &f.stderr)
 		}
+		r.compare = func(ctx context.Context, id, with string) (json.RawMessage, error) {
+			api, cred, err := runsAPI(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return api.CompareRun(ctx, cred, id, with)
+		}
 	}
 	r.connect = func(context.Context) (*ciConnected, error) {
 		if f.connErr != nil {

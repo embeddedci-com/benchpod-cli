@@ -57,6 +57,8 @@ type ciRunner struct {
 	// signedIn says whether a credential for embeddedci.com exists; upload sends the run folder.
 	signedIn func(ctx context.Context) (bool, error)
 	upload   func(ctx context.Context, dir string) (*ci.Uploaded, error)
+	// compare asks embeddedci.com to diff an uploaded run with another (with: baseline:<branch>).
+	compare func(ctx context.Context, id, with string) (json.RawMessage, error)
 
 	stdout, stderr io.Writer
 
@@ -661,6 +663,14 @@ func (r *ciRunner) finish(setup *ciExit) *ciExit {
 		}
 	}
 	uploadNote := r.uploadRun(setup)
+	var baseline *ci.Baseline
+	if setup == nil {
+		baseline = r.compareBaseline()
+	}
+	code := ci.ExitCode(r.run.Results.Outcome)
+	if code == ci.ExitPassed && baseline != nil && len(baseline.Gated) > 0 {
+		code = ci.ExitRegression
+	}
 	if r.opts.json {
 		data, _ := json.MarshalIndent(r.run, "", "  ")
 		fmt.Fprintln(r.stdout, string(data))
@@ -669,11 +679,87 @@ func (r *ciRunner) finish(setup *ciExit) *ciExit {
 		if uploadNote != "" {
 			fmt.Fprintln(r.stdout, uploadNote)
 		}
+		if h := baseline.Headline(); h != "" {
+			fmt.Fprintln(r.stdout, h)
+		}
+		for _, m := range baseline.GatedList() {
+			fmt.Fprintf(r.stdout, "  %s %s drifted %s (fail_on_drift)\n", m.Case, m.Name, changeText(m))
+		}
+		if code == ci.ExitRegression {
+			fmt.Fprintln(r.stdout, "Exit 3: the run passed, but a gated measurement drifted beyond its allowance against the baseline.")
+		}
 	}
+	r.writeStepSummary(baseline)
 	if setup != nil {
 		return setup
 	}
-	return &ciExit{code: ci.ExitCode(r.run.Results.Outcome)}
+	return &ciExit{code: code}
+}
+
+func changeText(m ci.MeasureChange) string {
+	if m.Change == nil {
+		return fmt.Sprintf("%g -> %g", m.A, m.B)
+	}
+	return fmt.Sprintf("%+.1f%% (%g -> %g %s)", *m.Change*100, m.A, m.B, m.Unit)
+}
+
+// compareBaseline compares the uploaded run with the last valid run of its suite and DUT on the
+// file's baseline branch, and picks the gated drifts. nil when the file names no baseline.
+func (r *ciRunner) compareBaseline() *ci.Baseline {
+	branch := strings.TrimSpace(r.cfg.Baseline)
+	if branch == "" {
+		return nil
+	}
+	b := &ci.Baseline{Branch: branch}
+	if r.run.Uploaded == nil || r.compare == nil {
+		b.Message = "not compared: the run was not uploaded (the compare runs on embeddedci.com)"
+		return b
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	raw, err := r.compare(ctx, r.run.Uploaded.ID, "baseline:"+branch)
+	if err != nil {
+		b.Message = "not compared: " + err.Error()
+		r.warnf("baseline %s: %v", branch, err)
+		return b
+	}
+	var d ci.Diff
+	if err := json.Unmarshal(raw, &d); err != nil {
+		b.Message = "not compared: " + err.Error()
+		return b
+	}
+	if !d.Found {
+		var m struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(raw, &m)
+		b.Message = firstNonEmptyStr(m.Message, "no earlier valid run on "+branch)
+		return b
+	}
+	b.Found, b.Diff = true, &d
+	b.Gated = ci.GateBaseline(r.cfg, &d)
+	return b
+}
+
+// writeStepSummary appends the run's Markdown summary to $GITHUB_STEP_SUMMARY (GitHub Actions).
+func (r *ciRunner) writeStepSummary(b *ci.Baseline) {
+	path := strings.TrimSpace(os.Getenv("GITHUB_STEP_SUMMARY"))
+	if path == "" {
+		return
+	}
+	url := ""
+	if r.run.Uploaded != nil {
+		url = r.run.Uploaded.URL
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		r.warnf("step summary: %v", err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteString(ci.StepSummary(r.run, url, b)); err != nil {
+		r.warnf("step summary: %v", err)
+	}
 }
 
 // uploadMode is auto, true or false: --no-upload, else the file's upload.

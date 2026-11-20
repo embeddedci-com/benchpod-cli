@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -46,11 +45,18 @@ func TestTheCloudLinkGateRefusalsGetTheLANHint(t *testing.T) {
 }
 
 func TestOldFirmwareRefusalsMeanTheFeatureIsMissing(t *testing.T) {
+	// Firmware without codes: the texts.
 	for _, id := range []string{"unknown_cmd", "unknown_target"} {
-		err := cloudCfgError("cloud ca set", caMissing, true, errors.New(fwrefusals.Example(id)))
+		err := cloudCfgError("cloud ca set", caMissing, true, &tcpclient.PodError{Reason: fwrefusals.Example(id)})
 		if err.Error() != caMissing {
 			t.Errorf("%s: got %v", id, err)
 		}
+	}
+	// With codes: BP0002, whatever the text (a build without texts sends none).
+	err := cloudCfgError("cloud ca set", caMissing, true, &tcpclient.PodError{Reason: "pod returned an error", Code: "BP0002",
+		Args: map[string]any{"cmd": "cloud_ca"}})
+	if err.Error() != caMissing {
+		t.Errorf("BP0002: got %v", err)
 	}
 }
 

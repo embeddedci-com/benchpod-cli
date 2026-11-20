@@ -414,8 +414,8 @@ func cloudCfgError(what, missing string, lan bool, err error) error {
 	if errors.Is(err, serialconsole.ErrUnknownCommand) {
 		return errors.New(missing)
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "unknown cmd") || strings.Contains(msg, "unknown target") {
+	// "unknown target": no code yet (a cloud_ca / cloud_proxy target older firmware lacks)
+	if isUnknownCommand(err) || strings.Contains(err.Error(), "unknown target") {
 		return errors.New(missing)
 	}
 	if pe, ok := tcpclient.AsPodError(err); ok {
