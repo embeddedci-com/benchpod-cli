@@ -62,24 +62,26 @@ func newRootCmd() *cobra.Command {
 			"New pod? Run `benchpod setup`: it finds the pod, gets it on the network, sets\n" +
 			"the board I/O voltage, registers it with embeddedci.com and saves the connection.\n\n" +
 			"--connection says where and how to reach the pod; the transport follows from\n" +
-			"its value. An address (192.168.1.5[:8080]) uses the pod's network (TCP/JSON) API;\n" +
-			"a device path (/dev/tty..., COM3) or `usb` uses the pod's USB console, and its\n" +
-			"USB network adapter for the network commands (firmware 3.9.0+, no Wi-Fi set);\n" +
-			"embeddedci:<name> goes through embeddedci.com to the pod with that name on your\n" +
-			"account (signed in with `benchpod login`, or BENCHPOD_API_KEY). Omit --connection\n" +
-			"to use the default saved by `benchpod discover --save` or `benchpod set-connection`.\n" +
+			"its value. An address (192.168.1.5) uses the pod's network API (TLS on 8443,\n" +
+			"pinned on first use); a device path (/dev/tty..., COM3) or `usb` uses the pod's\n" +
+			"USB network adapter; embeddedci:<name> goes through embeddedci.com to the pod\n" +
+			"with that name on your account (signed in with `benchpod login`, or\n" +
+			"BENCHPOD_API_KEY). Omit --connection to use the default saved by\n" +
+			"`benchpod discover --save` or `benchpod set-connection`.\n" +
 			"--org (or BENCHPOD_ORG) picks which of your embeddedci.com organizations cloud\n" +
 			"calls act in, by id, slug or name; the default is the one active in the web app.\n\n" +
-			"Over the network: every pod command but the USB-only ones below. Over the USB\n" +
-			"console: status, la voltage, flash (SWD), lan-policy, sig-policy, cloud ca and\n" +
-			"cloud proxy; the rest over the pod's USB network adapter when it is up.\n" +
+			"This CLI drives firmware 4.0. Against firmware 3.x only status, flash-self,\n" +
+			"install-blobs, dfu, bootsel, discover and identity run (exit code 7 otherwise:\n" +
+			"update the pod with `benchpod flash-self`).\n\n" +
+			"Over USB every pod command sends JSON over the pod's USB network adapter; the\n" +
+			"USB console is only for status, dfu, bootsel, identity, lan-policy, usb-network\n" +
+			"and net-reset. USB networking off: `benchpod usb-network on --connection usb`.\n" +
 			"Through embeddedci.com: status, ping, la voltage, la pull, la pullup, la status, la step,\n" +
 			"la pins, la dir, i2c, generate, sensor, lan-policy, sig-policy, cloud ca\n" +
-			"show/clear, cloud proxy, deregister and flash-self (embeddedci.com runs the update).\n" +
-			"Always over the USB console: set-wifi, show-network, clear-wifi, identity,\n" +
-			"install-blobs, bootsel, dfu, usb-bridge and usb-reattach; flash-self reflashes\n" +
-			"the pod over USB DFU unless --network or an embeddedci: connection. A command\n" +
-			"that cannot use the connection says so and names what to use instead.\n\n" +
+			"show/clear, cloud proxy, the Wi-Fi commands, deregister and flash-self\n" +
+			"(embeddedci.com runs the update). flash-self reflashes the pod over USB DFU\n" +
+			"unless --network or an embeddedci: connection. A command that cannot use the\n" +
+			"connection says so and names what to use instead.\n\n" +
 			"flash and spi-flash over the network take the pins you leave out from the pod's\n" +
 			"wiring profile on embeddedci.com when you are signed in and the pod is on your\n" +
 			"account.\n\n" +

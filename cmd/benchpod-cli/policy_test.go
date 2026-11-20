@@ -81,7 +81,7 @@ func runPolicyCapture(t *testing.T, g *globalFlags, p podPolicy, target policyTa
 }
 
 func TestPolicyCloudShowAndSet(t *testing.T) {
-	srv := &policyServer{t: t, supported: true, policy: map[string]string{"lan-policy": "open", "sig-policy": "audit"}}
+	srv := &policyServer{t: t, supported: true, policy: map[string]string{"lan-policy": "open", "sig-policy": "required"}}
 	target := cloudTarget(t, srv.start().URL)
 
 	out, _, err := runPolicyCapture(t, &globalFlags{}, lanPolicy, target, "")
@@ -108,11 +108,15 @@ func TestPolicyCloudShowAndSet(t *testing.T) {
 		t.Fatalf("set off: err %v, warning %q", err, warn)
 	}
 
-	out, _, err = runPolicyCapture(t, &globalFlags{}, sigPolicy, target, "required")
-	if err != nil || !strings.HasPrefix(out, "Signature policy of benchpod-baea06 is now required (") {
-		t.Fatalf("sig set = %q, %v", out, err)
+	out, _, err = runPolicyCapture(t, &globalFlags{}, sigPolicy, target, "")
+	if err != nil || out != "Signature policy of benchpod-baea06: required (only signed images are installed)\n" {
+		t.Fatalf("sig show = %q, %v", out, err)
 	}
-	if got := strings.Join(srv.puts, ","); got != "lan-policy=locked,lan-policy=off,sig-policy=required" {
+	// The signature policy has no set: it is always required.
+	if _, _, err = runPolicyCapture(t, &globalFlags{}, sigPolicy, target, "permissive"); exitCode(err) != exitUsage {
+		t.Fatalf("sig set: %v", err)
+	}
+	if got := strings.Join(srv.puts, ","); got != "lan-policy=locked,lan-policy=off" {
 		t.Fatalf("puts = %s", got)
 	}
 }
@@ -150,17 +154,21 @@ func TestPolicyCloudForbidden(t *testing.T) {
 	}
 }
 
-func TestPolicyCloudRefusedLoosening(t *testing.T) {
-	srv := &policyServer{t: t, supported: true, policy: map[string]string{"sig-policy": "required"},
-		put: func(w http.ResponseWriter, _, _ string) bool {
-			w.WriteHeader(http.StatusConflict)
-			_, _ = w.Write([]byte(`{"error":"BP0074","code":"BP0074"}`))
-			return true
-		}}
-	_, _, err := runPolicyCapture(t, &globalFlags{}, sigPolicy, cloudTarget(t, srv.start().URL), "permissive")
-	want := "sig-policy set: the pod refused: BP0074: "
-	if err == nil || !strings.HasPrefix(err.Error(), want) || exitCode(err) != exitRefused {
-		t.Fatalf("err = %v\nwant %q", err, want)
+// sig-policy has no set subcommand any more; a relayed BP0074 is worded from the catalog.
+func TestSigPolicyCannotBeLoosened(t *testing.T) {
+	g := &globalFlags{}
+	cmd := newSigPolicyCmd(g)
+	for _, c := range cmd.Commands() {
+		if c.Name() == "set" {
+			t.Fatal("sig-policy still has set")
+		}
+	}
+	if code := run([]string{"sig-policy", "set", "audit"}); code != exitUsage {
+		t.Fatalf("sig-policy set: exit %d", code)
+	}
+	err := cloudPolicyError(lanPolicy, "off", &serverapi.APIError{Status: http.StatusConflict, Code: "BP0074", Message: "BP0074"})
+	if err == nil || !strings.Contains(err.Error(), "BP0074: ") || !strings.Contains(err.Error(), "this firmware installs only signed images") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -208,25 +216,21 @@ func withFakeConsole(t *testing.T, fc *fakePolicyConsole) {
 }
 
 func TestPolicyUSBShowAndSet(t *testing.T) {
-	fc := &fakePolicyConsole{rep: serialconsole.PolicyReply{Policy: "required", Keys: 3}}
+	fc := &fakePolicyConsole{rep: serialconsole.PolicyReply{Policy: "open", Keys: -1}}
 	withFakeConsole(t, fc)
-	g := &globalFlags{connection: "usb"}
-
-	out, _, err := runPolicyCapture(t, g, sigPolicy, policyTarget{}, "")
+	// The signature policy goes over the pod's USB network adapter, not the console.
+	addr, got := fakeLANPod(t, `{"status":"ok","data":{"policy":"required","keys":3}}`)
+	out, _, err := runPolicyCapture(t, &globalFlags{connection: "usb", usbAddr: addr}, sigPolicy, policyTarget{}, "")
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
-	if want := "Signature policy of the pod on /dev/cu.usbmodem1101: required (unsigned images are refused), 3 trusted keys\n"; out != want {
+	if want := "Signature policy of " + addr + ": required (only signed images are installed), 3 trusted keys\n"; out != want {
 		t.Fatalf("show = %q, want %q", out, want)
 	}
-
-	// The USB console may loosen the policy.
-	out, _, err = runPolicyCapture(t, g, sigPolicy, policyTarget{}, "audit")
-	if err != nil || !strings.HasPrefix(out, "Signature policy of the pod on /dev/cu.usbmodem1101 is now audit (") {
-		t.Fatalf("set = %q, %v", out, err)
+	if req := <-got; req != `{"cmd":"sig_policy"}` {
+		t.Fatalf("request %s", req)
 	}
 
-	fc.rep = serialconsole.PolicyReply{Policy: "open", Keys: -1}
 	out, warn, err := runPolicyCapture(t, &globalFlags{connection: "/dev/cu.usbmodem9"}, lanPolicy, policyTarget{}, "off")
 	if err != nil {
 		t.Fatalf("lan set: %v", err)
@@ -239,7 +243,7 @@ func TestPolicyUSBShowAndSet(t *testing.T) {
 			t.Fatalf("warning %q does not mention %q", warn, w)
 		}
 	}
-	if got := strings.Join(fc.calls, ","); got != "sig-policy,sig-policy audit,lan-policy off" {
+	if got := strings.Join(fc.calls, ","); got != "lan-policy off" {
 		t.Fatalf("console calls = %s", got)
 	}
 }
@@ -249,8 +253,8 @@ func TestPolicyUSBOldFirmwareAndRefusal(t *testing.T) {
 	withFakeConsole(t, fc)
 	g := &globalFlags{connection: "usb"}
 
-	_, _, err := runPolicyCapture(t, g, sigPolicy, policyTarget{}, "")
-	if err == nil || err.Error() != "this firmware has no signature policy; update the pod's firmware" {
+	_, _, err := runPolicyCapture(t, g, lanPolicy, policyTarget{}, "")
+	if err == nil || err.Error() != "this firmware has no LAN policy; update the pod's firmware" {
 		t.Fatalf("old firmware: err = %v", err)
 	}
 
@@ -286,14 +290,14 @@ func fakeLANPod(t *testing.T, reply string) (addr string, got chan string) {
 }
 
 func TestPolicyLANShowOnly(t *testing.T) {
-	addr, got := fakeLANPod(t, `{"status":"ok","data":{"policy":"audit","enforces":true,"keys":1}}`)
+	addr, got := fakeLANPod(t, `{"status":"ok","data":{"policy":"required","enforces":true,"keys":1}}`)
 	g := &globalFlags{connection: addr}
 
 	out, _, err := runPolicyCapture(t, g, sigPolicy, policyTarget{}, "")
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
-	if want := "Signature policy of " + addr + ": audit (every image is accepted; signatures are only reported), 1 trusted key\n"; out != want {
+	if want := "Signature policy of " + addr + ": required (only signed images are installed), 1 trusted key\n"; out != want {
 		t.Fatalf("show = %q, want %q", out, want)
 	}
 	if req := <-got; req != `{"cmd":"sig_policy"}` {
