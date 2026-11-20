@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 	"github.com/spf13/cobra"
 )
@@ -567,15 +568,24 @@ type laPinsCommander interface {
 	Command(ctx context.Context, req map[string]any) (json.RawMessage, error)
 }
 
+// laPinsMaxPages caps the la_pins paging loop (a full listing takes at most 14 replies).
+const laPinsMaxPages = 16
+
 // laPinsFetch reads la_pins: every pin (pins nil) or only those pins (the pod sends only the pins
-// asked for). A full listing the pod answers with BP0053 (reply_too_large: a long sensor instance
-// name on every pin) is read in two parts, LA1-7 and LA8-14, and joined.
+// asked for). On firmware with la_pins_paged (features rev 12) a reply that cannot carry every pin
+// says "next": the rest is asked for with "from" (and the same "la") and the pins are joined,
+// levels and pull_dirs from the last reply. Older firmware answers a full listing too large for one
+// reply (a long sensor instance name on every pin) with BP0053 (BP0054 over the cloud); that one is
+// read in two parts, LA1-7 and LA8-14, and joined.
 func laPinsFetch(ctx context.Context, c laPinsCommander, pins []int) (json.RawMessage, error) {
+	if laPinsPaged(ctx, c) {
+		return laPinsFetchPaged(ctx, c, pins)
+	}
 	if pins != nil {
 		return c.Command(ctx, map[string]any{"cmd": "la_pins", "la": pins})
 	}
 	raw, err := c.Command(ctx, map[string]any{"cmd": "la_pins"})
-	if err == nil || !tcpclient.HasCode(err, "BP0053") {
+	if err == nil || !(tcpclient.HasCode(err, "BP0053") || tcpclient.HasCode(err, "BP0054")) {
 		return raw, err
 	}
 	var parts [2]map[string]any
@@ -594,6 +604,64 @@ func laPinsFetch(ctx context.Context, c laPinsCommander, pins []int) (json.RawMe
 	return json.Marshal(parts[0])
 }
 
+// laPinsPaged reports whether the pod's features list la_pins_paged (a status it cannot read
+// counts as no).
+func laPinsPaged(ctx context.Context, c laPinsCommander) bool {
+	st, err := c.Command(ctx, features.StatusRequest())
+	if err != nil {
+		return false
+	}
+	ok, err := features.Has(st, "la_pins_paged")
+	return err == nil && ok
+}
+
+// laPinsFetchPaged follows "next" with "from" until a reply has none (at most laPinsMaxPages
+// replies; it stops when next does not move forward).
+func laPinsFetchPaged(ctx context.Context, c laPinsCommander, pins []int) (json.RawMessage, error) {
+	req := map[string]any{"cmd": "la_pins"}
+	if pins != nil {
+		req["la"] = pins
+	}
+	var all []any
+	var last map[string]any
+	from := 1
+	for page := 0; page < laPinsMaxPages; page++ {
+		raw, err := c.Command(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		last = nil
+		if err := json.Unmarshal(raw, &last); err != nil {
+			return nil, fmt.Errorf("unexpected reply %s", strings.TrimSpace(string(raw)))
+		}
+		p, _ := last["pins"].([]any)
+		all = append(all, p...)
+		next, ok := last["next"].(float64)
+		if !ok {
+			break
+		}
+		if int(next) <= from || next > 14 {
+			fmt.Fprintf(os.Stderr, "warning: la_pins: next %v does not follow from %d; the list stops there\n", next, from)
+			break
+		}
+		if page == laPinsMaxPages-1 {
+			fmt.Fprintf(os.Stderr, "warning: la_pins: still not done after %d replies; the list stops there\n", laPinsMaxPages)
+			break
+		}
+		from = int(next)
+		req = map[string]any{"cmd": "la_pins", "from": from}
+		if pins != nil {
+			req["la"] = pins
+		}
+	}
+	delete(last, "next")
+	if all == nil {
+		all = []any{}
+	}
+	last["pins"] = all
+	return json.Marshal(last)
+}
+
 func newLAPinsCmd(g *globalFlags) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
@@ -601,7 +669,7 @@ func newLAPinsCmd(g *globalFlags) *cobra.Command {
 		Short: "List every LA pin: function, GPIO state, live level, pull-up, direction and warnings",
 		Long: "List every LA pin, or only PINS (a pin, a list or a range: 9, 9,10, 9-12, la9, or a\n" +
 			"name from the pod's wiring profile). A list too large for one cloud reply is read\n" +
-			"in two parts by itself.",
+			"in parts by itself.",
 		Example: "  benchpod la pins\n  benchpod la pins 1-4\n  benchpod la pins uart_rx --json",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {

@@ -1606,8 +1606,9 @@ under a push-pull output (it only costs current), or a pin driven high or pulled
 while the pod's target power is off (that powers an unpowered DUT through its pins;
 ignore it when the DUT has its own supply). Directions and warnings need gateware v55
 or later; older pods show every pin as `unknown`. A list too large for one cloud reply
-(a long sensor instance name on every pin) is read in two parts by itself (firmware after
-3.10.12; older firmware answers "reply too large" then).
+(a long sensor instance name on every pin) is read in parts by itself: in pages on firmware
+after 4.0.0 (`la_pins_paged`), else in two halves (firmware after 3.10.12; older firmware
+answers "reply too large" then).
 
 | Flag     | Default | Purpose                          |
 |----------|---------|----------------------------------|
