@@ -153,7 +153,7 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 				return runFlashSelfCloud(g, f, func(name string) bool { return cc.Flags().Changed(name) }, args, name)
 			}
 			if f.dryRun {
-				return errors.New("--dry-run is for an update through embeddedci.com (--connection embeddedci:<name>)")
+				return usageErrorf("--dry-run is for an update through embeddedci.com (--connection embeddedci:<name>)")
 			}
 			if f.network {
 				return runFlashSelfNetwork(g, f, func(name string) bool { return cc.Flags().Changed(name) }, args)

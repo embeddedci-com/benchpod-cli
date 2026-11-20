@@ -171,10 +171,10 @@ func newSampleCmd(g *globalFlags, name, short string) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !validSamples(samples) {
-				return fmt.Errorf("--samples must be between 1 and 4096")
+				return usageErrorf("--samples must be between 1 and 4096")
 			}
 			if !validOutput(output) {
-				return fmt.Errorf("--output must be json, csv, or ndjson")
+				return usageErrorf("--output must be json, csv, or ndjson")
 			}
 			ctx, cancel, client, err := g.networkClient(name, 30*time.Second)
 			if err != nil {
@@ -214,10 +214,10 @@ func newMeasureCmd(g *globalFlags) *cobra.Command {
 				return usageErrorf("--waveform is required (sine|square|sawtooth)")
 			}
 			if !validSamples(samples) {
-				return fmt.Errorf("--samples must be between 1 and 4096")
+				return usageErrorf("--samples must be between 1 and 4096")
 			}
 			if !validOutput(output) {
-				return fmt.Errorf("--output must be json, csv, or ndjson")
+				return usageErrorf("--output must be json, csv, or ndjson")
 			}
 			ctx, cancel, client, err := g.networkClient("measure", 30*time.Second)
 			if err != nil {
@@ -264,10 +264,10 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !validSamples(samples) {
-				return fmt.Errorf("--samples must be between 1 and 4096")
+				return usageErrorf("--samples must be between 1 and 4096")
 			}
 			if !validOutput(output) {
-				return fmt.Errorf("--output must be json, csv, or ndjson")
+				return usageErrorf("--output must be json, csv, or ndjson")
 			}
 
 			// Mirror the firmware default: const when --value is given without
@@ -407,14 +407,14 @@ func newLAStepCmd(g *globalFlags) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if laArg == "" {
-				return fmt.Errorf("--la is required")
+				return usageErrorf("--la is required")
 			}
 			pin, err := parseLAPin(laArg)
 			if err != nil {
 				return err
 			}
 			if steps <= 0 {
-				return fmt.Errorf("--steps must be positive")
+				return usageErrorf("--steps must be positive")
 			}
 			delayUS, err := wholeUnits(cmd, "delay", delay, time.Microsecond)
 			if err != nil {
@@ -433,15 +433,15 @@ func newLAStepCmd(g *globalFlags) *cobra.Command {
 			if dirLAArg != "" {
 				dirPin, err := parseLAPin(dirLAArg)
 				if err != nil {
-					return fmt.Errorf("--dir-la: %w", err)
+					return usageErrorf("--dir-la: %w", err)
 				}
 				if direction != 0 && direction != 1 {
-					return fmt.Errorf("--direction must be 0 or 1")
+					return usageErrorf("--direction must be 0 or 1")
 				}
 				req["dir_la"] = dirPin
 				req["direction"] = direction
 			} else if cmd.Flags().Changed("direction") {
-				return fmt.Errorf("--direction requires --dir-la")
+				return usageErrorf("--direction requires --dir-la")
 			}
 
 			// The FPGA runs the train autonomously, but size the deadline to the

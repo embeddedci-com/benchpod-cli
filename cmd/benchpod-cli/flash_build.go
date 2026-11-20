@@ -99,10 +99,10 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 			strings.Join(localOnly, ", "))
 	}
 	if strings.TrimSpace(f.target) == "" {
-		return fmt.Errorf("--target is required (an OpenOCD config such as target/stm32f4x.cfg), or set swd_target in the pod's wiring profile")
+		return usageErrorf("--target is required (an OpenOCD config such as target/stm32f4x.cfg), or set swd_target in the pod's wiring profile")
 	}
 	if spec.IsSerial() {
-		return fmt.Errorf("--server-side needs the pod's network address or --connection embeddedci:<pod>, not a USB connection")
+		return usageErrorf("--server-side needs the pod's network address or --connection embeddedci:<pod>, not a USB connection")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(flashTimeout)+time.Minute)
 	defer cancel()

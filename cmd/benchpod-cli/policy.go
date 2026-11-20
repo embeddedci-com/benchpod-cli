@@ -177,7 +177,7 @@ func runPolicy(g *globalFlags, p podPolicy, t policyTarget, set string, out, war
 		return usageErrorf("%s set: %q is not a policy; use one of %s", p.cmd, set, strings.Join(p.values, ", "))
 	}
 	if t.deviceName != "" && t.deviceID != "" {
-		return errors.New("pass only one of --device-name or --device-id")
+		return usageErrorf("pass only one of --device-name or --device-id")
 	}
 	if t.cloud() {
 		return runPolicyCloud(g, p, t, set, out, warn)
@@ -248,7 +248,7 @@ func warnLanOff(warn io.Writer) {
 
 func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out, warn io.Writer) error {
 	if strings.TrimSpace(t.serverURL) == "" {
-		return errors.New("--server-url cannot be empty")
+		return usageErrorf("--server-url cannot be empty")
 	}
 	tokenPath, err := resolveTokenPath(t.tokenFile)
 	if err != nil {

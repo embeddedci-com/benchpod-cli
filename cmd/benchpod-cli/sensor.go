@@ -504,10 +504,10 @@ func sensorPins(g *globalFlags, kind string, flags []string) (map[string]any, er
 		role, val, ok := strings.Cut(p, "=")
 		role = strings.ToLower(strings.TrimSpace(role))
 		if !ok || role == "" {
-			return nil, fmt.Errorf("--pin is role=channel (e.g. sda=2), got %q", p)
+			return nil, usageErrorf("--pin is role=channel (e.g. sda=2), got %q", p)
 		}
 		if _, dup := pins[role]; dup {
-			return nil, fmt.Errorf("--pin %s given twice", role)
+			return nil, usageErrorf("--pin %s given twice", role)
 		}
 		v, err := sensors.PinValue(role, val)
 		if err != nil {

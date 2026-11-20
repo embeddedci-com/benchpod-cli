@@ -101,24 +101,24 @@ func (f *spiFlags) config() (spiflash.Config, error) {
 	vals := [4]string{f.sck, f.mosi, f.miso, f.cs}
 	for i, v := range vals {
 		if strings.TrimSpace(v) == "" {
-			return spiflash.Config{}, fmt.Errorf("--sck, --mosi, --miso and --cs are required (or set spi_sclk, spi_mosi, spi_miso and spi_cs in the pod's wiring profile on embeddedci.com)")
+			return spiflash.Config{}, usageErrorf("--sck, --mosi, --miso and --cs are required (or set spi_sclk, spi_mosi, spi_miso and spi_cs in the pod's wiring profile on embeddedci.com)")
 		}
 		n, err := parseLAPin(v)
 		if err != nil {
-			return spiflash.Config{}, fmt.Errorf("--%s: %w", names[i], err)
+			return spiflash.Config{}, usageErrorf("--%s: %w", names[i], err)
 		}
 		for j := 0; j < i; j++ {
 			if pins[j] == n {
-				return spiflash.Config{}, fmt.Errorf("--%s and --%s are both LA%d; each needs its own pin", names[j], names[i], n)
+				return spiflash.Config{}, usageErrorf("--%s and --%s are both LA%d; each needs its own pin", names[j], names[i], n)
 			}
 		}
 		pins[i] = n
 	}
 	if f.mode < 0 || f.mode > 3 {
-		return spiflash.Config{}, fmt.Errorf("--mode must be 0, 1, 2 or 3")
+		return spiflash.Config{}, usageErrorf("--mode must be 0, 1, 2 or 3")
 	}
 	if f.hz <= 0 {
-		return spiflash.Config{}, fmt.Errorf("--hz must be positive")
+		return spiflash.Config{}, usageErrorf("--hz must be positive")
 	}
 	return spiflash.Config{SCK: pins[0], MOSI: pins[1], MISO: pins[2], CS: pins[3], Hz: f.hz, Mode: f.mode}, nil
 }
@@ -257,7 +257,7 @@ func newSPIFlashWriteCmd(g *globalFlags, f *spiFlags) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			addr, err := parseSize(addrS)
 			if err != nil {
-				return fmt.Errorf("--addr: %w", err)
+				return usageErrorf("--addr: %w", err)
 			}
 			data, err := os.ReadFile(args[0])
 			if err != nil {
@@ -324,12 +324,12 @@ func newSPIFlashReadCmd(g *globalFlags, f *spiFlags) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			addr, err := parseSize(addrS)
 			if err != nil {
-				return fmt.Errorf("--addr: %w", err)
+				return usageErrorf("--addr: %w", err)
 			}
 			n := 0
 			if strings.TrimSpace(lenS) != "" {
 				if n, err = parseSize(lenS); err != nil || n <= 0 {
-					return fmt.Errorf("--len must be a positive size, e.g. 4096, 0x1000 or 1M")
+					return usageErrorf("--len must be a positive size, e.g. 4096, 0x1000 or 1M")
 				}
 			}
 			return runSPI(g, f, "read", time.Hour, func(ctx context.Context, p *spiflash.Pod, _ spiflash.Started) error {
@@ -397,10 +397,10 @@ func newSPIFlashEraseCmd(g *globalFlags, f *spiFlags) *cobra.Command {
 			} else {
 				var err error
 				if addr, err = parseSize(addrS); err != nil {
-					return fmt.Errorf("--addr: %w", err)
+					return usageErrorf("--addr: %w", err)
 				}
 				if n, err = parseSize(lenS); err != nil || n <= 0 {
-					return fmt.Errorf("--len is required (or --chip), e.g. 4096 or 1M")
+					return usageErrorf("--len is required (or --chip), e.g. 4096 or 1M")
 				}
 			}
 			return runSPI(g, f, "erase", time.Hour, func(ctx context.Context, p *spiflash.Pod, _ spiflash.Started) error {

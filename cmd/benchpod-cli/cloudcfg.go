@@ -154,7 +154,7 @@ func newCloudProxyCmd(g *globalFlags) *cobra.Command {
 				}
 				password = pw
 			} else if pf.password != "" || pf.passwordStdin {
-				return errors.New("cloud proxy set: --password needs --user")
+				return usageErrorf("cloud proxy set: --password needs --user")
 			}
 			return run(func(out, warn io.Writer) error {
 				return runCloudProxy(g, "set", args[0], pf.user, password, out, warn)
@@ -575,7 +575,7 @@ func valueOr(s, def string) string {
 func checkProxyAddr(addr string) (string, error) {
 	addr = strings.TrimSpace(addr)
 	if strings.Contains(addr, "://") {
-		return "", fmt.Errorf("give the proxy as host:port, without a scheme (got %q)", addr)
+		return "", usageErrorf("give the proxy as host:port, without a scheme (got %q)", addr)
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {

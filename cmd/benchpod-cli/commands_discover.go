@@ -126,7 +126,7 @@ type discoverOpts struct {
 // explains rather than hiding behind an error.
 func runDiscover(g *globalFlags, o discoverOpts) error {
 	if !o.usb && !o.network {
-		return errors.New("--no-usb and --no-network together leave nothing to look for")
+		return usageErrorf("--no-usb and --no-network together leave nothing to look for")
 	}
 	if raw := strings.TrimSpace(g.connection); raw != "" {
 		if spec, err := parseTarget(raw); err == nil && spec.IsCloud() {
@@ -841,7 +841,7 @@ func saveTarget(netPods []discoveredPod, serialPods []serialconsole.SerialPod) s
 func saveDiscovered(g *globalFlags, netPods []discoveredPod, serialPods []serialconsole.SerialPod) error {
 	target := saveTarget(netPods, serialPods)
 	if target == "" {
-		return fmt.Errorf("--save needs exactly one pod, found %d on the network and %d over USB; "+
+		return usageErrorf("--save needs exactly one pod, found %d on the network and %d over USB; "+
 			"set it explicitly with `benchpod set-connection <address|device>`", len(netPods), len(serialPods))
 	}
 	cfgPath, err := resolveConfigPath(g.configFile)

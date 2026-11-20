@@ -82,6 +82,12 @@ func TestExitCodes(t *testing.T) {
 		{[]string{"ping", "--connection", ok, "--no-such-flag"}, exitUsage},
 		{[]string{"ping", "--connection", ok, "extra"}, exitUsage},
 		{[]string{"no-such-command"}, exitUsage},
+		// A command-line mistake the command finds itself is a usage error too.
+		{[]string{"capture", "--samples", "0", "--connection", ok}, exitUsage},
+		{[]string{"la", "step", "--steps", "3", "--connection", ok}, exitUsage},
+		{[]string{"generate", "--waveform", "sine", "--path", "9v", "--amplitude-v", "1", "--offset-v", "1", "--connection", ok}, exitUsage},
+		{[]string{"discover", "--no-usb", "--no-network"}, exitUsage},
+		{[]string{"flash", "--target-power", "3", "--connection", ok}, exitUsage},
 		{[]string{"la", "pullup", "1", "on"}, exitUsage}, // gone in 0.10
 		{[]string{"ping", "--connection", locked}, exitRefused},
 		{[]string{"ping", "--connection", forbidden}, exitRefused},

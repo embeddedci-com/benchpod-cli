@@ -102,7 +102,7 @@ func defaultDeviceNameFromAddr(addr string) string {
 func runRegister(g *globalFlags, opts registerOptions) error {
 	serverURL, tokenFile, deviceName := opts.serverURL, opts.tokenFile, opts.deviceName
 	if strings.TrimSpace(serverURL) == "" {
-		return errors.New("--server-url cannot be empty")
+		return usageErrorf("--server-url cannot be empty")
 	}
 	host, port, tls, err := parseServerEndpoint(serverURL)
 	if err != nil {

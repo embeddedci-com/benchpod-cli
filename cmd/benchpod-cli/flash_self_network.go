@@ -186,7 +186,7 @@ func waitForPodOnNetwork(g *globalFlags, ctx context.Context) (lanSession, strin
 func runFlashSelfNetwork(g *globalFlags, f *flashSelfFlags, changed func(string) bool, args []string) error {
 	for _, name := range dfuOnlyFlags {
 		if changed(name) {
-			return fmt.Errorf("--%s is for USB DFU and does not apply with --network", name)
+			return usageErrorf("--%s is for USB DFU and does not apply with --network", name)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(flashSelfTimeout))

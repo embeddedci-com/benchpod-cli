@@ -119,7 +119,7 @@ func serveBridge(ctx context.Context, s *bridgeSession) bool {
 
 func runUSBBridge(g *globalFlags, port int, keep, watch bool) error {
 	if port <= 0 || port > 65535 {
-		return fmt.Errorf("usb-bridge: --port %d is out of range", port)
+		return usageErrorf("usb-bridge: --port %d is out of range", port)
 	}
 	// Never the console (usbbridge_watch.go): the pod's USB network link only.
 	return runUSBBridgeWatch(g, port, keep, watch)
