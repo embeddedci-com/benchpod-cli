@@ -139,7 +139,7 @@ func newRootCmd() *cobra.Command {
 	}{
 		{"setup", "Setup:", []*cobra.Command{
 			newSetupCmd(g), newDiscoverCmd(g), newSetConnectionCmd(g),
-			newSetWifiCmd(g), newShowNetworkCmd(g), newScanWifiCmd(g), newClearWifiCmd(g),
+			newSetWifiCmd(g), newShowNetworkCmd(g), newScanWifiCmd(g), newClearWifiCmd(g), newNetResetCmd(g),
 			newUSBBridgeCmd(g), newUSBReattachCmd(g),
 		}},
 		{"pod", "The pod:", []*cobra.Command{

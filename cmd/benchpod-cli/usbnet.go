@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
@@ -180,6 +181,42 @@ func (g *globalFlags) networkTarget(cmd string) (ConnSpec, error) {
 	if err != nil || !spec.IsSerial() {
 		return spec, err
 	}
+	return g.networkTargetFor(spec, cmd)
+}
+
+// usbNetworkTarget is the pod's API for the commands that used to run on the USB console and now
+// send JSON over the pod's USB network adapter (set-wifi, show-network, identity wipe, ...): an
+// explicit network or embeddedci.com --connection is used as given; otherwise the pod on USB (a
+// saved network default falls through to USB, as these commands always did), its USB network
+// adapter, else its network address when that answers.
+func (g *globalFlags) usbNetworkTarget(cmd string) (ConnSpec, error) {
+	if raw := strings.TrimSpace(g.connection); raw != "" {
+		if spec, err := parseTarget(raw); err == nil && !spec.IsSerial() {
+			return spec, nil
+		}
+	}
+	spec := ConnSpec{Kind: connSerial, Device: g.serialDevice(), Pod: g.usbPodName()}
+	return g.networkTargetFor(spec, cmd)
+}
+
+// usbNetworkClient is podClient for usbNetworkTarget.
+func (g *globalFlags) usbNetworkClient(cmd string, def time.Duration) (context.Context, context.CancelFunc, *podTarget, error) {
+	spec, err := g.usbNetworkTarget(cmd)
+	if err != nil {
+		return nil, func() {}, nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(def))
+	cancel = withSignalCleanup(cancel, installSignalHandler(ctx, cancel))
+	t, err := openPodTarget(ctx, spec)
+	if err != nil {
+		cancel()
+		return nil, func() {}, nil, fmt.Errorf("%s: %w", cmd, err)
+	}
+	return ctx, cancel, t, nil
+}
+
+// networkTargetFor is networkTarget for a USB spec.
+func (g *globalFlags) networkTargetFor(spec ConnSpec, cmd string) (ConnSpec, error) {
 	if g.usbAddr != "" {
 		return ConnSpec{Kind: connNetwork, Addr: g.usbAddr}, nil
 	}

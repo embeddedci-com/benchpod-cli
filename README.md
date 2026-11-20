@@ -174,13 +174,15 @@ The firmware itself is unauthenticated; `benchpod login` is independent of the
 device path and authenticates with `embeddedci-server` (device-login flow) for
 cloud features. Direct firmware commands on the network or USB do not send tokens.
 
-**USB networking (firmware 3.9.0+).** The pod's USB device is also a network
-adapter that carries the full network API on a fixed address (`10.237.x.y`, its own
-point-to-point link: the computer keeps its default route and DNS). With a USB
-connection (`usb` or a device path), a command that needs the network uses that
-adapter, so the whole CLI works over one USB cable; the console is still used for
-the commands it runs (below) and as the fallback. USB networking is off while Wi-Fi
-is configured on the pod (`set-wifi` turns it off, `clear-wifi` back on). If a
+**USB networking.** The pod's USB device is also a network adapter that carries the
+full network API on a fixed address (`10.237.x.y`, its own point-to-point link: the
+computer keeps its default route and DNS, and the link is plaintext 8080). With a USB
+connection (`usb` or a device path) every pod command sends its JSON over that adapter,
+so the whole CLI works over one USB cable. The USB console is only used for what firmware
+4.0 keeps there: `status`, `dfu`, `identity`, `lan-policy`, `usb-network` and
+`net-reset`. USB networking is off while Wi-Fi is configured on the pod (`set-wifi` turns
+it off; `clear-wifi` over the pod's network address, or `net-reset` over USB, back on) or
+when its `usb-network` setting is off (`benchpod usb-network on --connection usb`). If a
 command says the adapter is not up, unlock the screen (macOS ignores a new adapter
 while it is locked) and run `benchpod usb-reattach`. `benchpod usb-bridge` carries
 the pod's cloud link over the same cable.
@@ -199,22 +201,20 @@ WSL2 and Docker on Windows are not tested: Windows routes the pod's `10.237.x.y`
 itself, so a WSL2 distribution or a container on the host network should reach it with
 `--connection <that address>`, but USB auto-detect and mDNS may not work from inside them.
 
-**Compatibility with older firmware and older CLIs.** The CLI decides per pod, from what
-the pod reports (the `usb` line of its console `status`), never from its own version:
-
-| | Pod firmware before 3.9.0 | Pod firmware 3.9.0 and later |
-|---|---|---|
-| **This CLI (0.6.0+)** | Works as before: the USB console for `status`, `la voltage`, `flash-self`, `set-wifi`, the policies, `cloud ca`/`proxy` and `identity` (not `install-blobs`, whose console upload CLI 0.10 dropped: update the pod with `flash-self`); the network commands need the pod's network address, as before, and say so. The serial auto-detect still finds `0483:5740` and `2E8A` consoles. | Over `usb`, every command uses the pod's USB network adapter when it is up (including `flash`, which the STM32 pod's console never ran), and the console for the commands that stay there. When USB networking is off (Wi-Fi configured) or not up, the network commands use the pod's Ethernet or Wi-Fi address from its console `status` if this computer reaches it, say so, and are subject to the pod's external LAN policy there (`benchpod clear-wifi` turns USB networking back on). |
-| **An older CLI (0.5.x)** | Unchanged. | The kept console commands keep their names and replies (`status`, `dfu`, `identity`, `identity wipe`, `lan-policy`, `sig-policy`, `set-wifi`, `show-network`, `clear-wifi`, `cloud ca show`/`clear`, `cloud proxy`), so those still work, and `flash-self` still flashes over DFU. What 3.9.0 moved to the network API (`la voltage` over USB, and every upload: `install-blobs`, the blob step of `flash-self` and `set-wifi`, `cloud ca set`) prints the pod's "moved to the network API ... update the benchpod CLI to 0.6.0 or later" line: update the CLI with the firmware. Over a network address everything works. |
+**Firmware 3.x.** This CLI drives firmware 4.0. Against a pod with firmware 3.x it runs only
+what upgrades or inspects the pod: `status`, `flash-self`, `install-blobs` (firmware 3.9.0
+and later), `dfu`, `bootsel`, `discover` and `identity`; every other command stops with exit
+code `7` and `this pod needs firmware 4.0: benchpod flash-self`. See
+[Firmware and CLI levels](#firmware-and-cli-levels). CLI 0.9 keeps working with firmware 3.x.
 
 Which command works over which connection:
 
 | Connection          | Commands |
 |---------------------|----------|
-| Network address     | Every pod command except the USB-only ones below. |
-| USB                 | With firmware 3.9.0+ and no Wi-Fi configured, every network command over the pod's USB network adapter, including `status`, `la voltage`, `flash` (SWD), `install-blobs`, `cloud ca` and `cloud proxy`; without it the pod's Ethernet or Wi-Fi address, and the console where it still has the command. Firmware before 3.9.0: the console, as before. `lan-policy`, `sig-policy` and `identity` always use the console (physical presence). |
-| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pull`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `deregister`. |
-| USB only            | `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity`, `install-blobs`, `bootsel`, `dfu`, `usb-bridge`, `usb-reattach`; `flash-self` uses USB DFU (or, with `--connection embeddedci:<name>`, embeddedci.com). These always use the USB console: a saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
+| Network address     | Every pod command except the USB console ones below. Settings the pod changes only over USB or the cloud (`lan-tls` switches, `cloud ca`/`proxy` changes, `identity wipe`, `usb-network`) are refused there with their code. |
+| USB                 | Every pod command, as JSON over the pod's USB network adapter. With USB networking off (Wi-Fi configured), the pod's Ethernet or Wi-Fi address from its console `status` when this computer reaches it (its external LAN policy applies there), and the command says so. |
+| `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pull`, `la pullup`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `deregister`. |
+| USB console only    | `dfu`, `bootsel`, `net-reset`, `usb-network`, `usb-bridge`, `lan-policy set` over USB; `flash-self` uses USB DFU (or, with `--connection embeddedci:<name>`, embeddedci.com). A saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
 
 A command that cannot use the connection it is given says so and names what to use
 instead.
@@ -353,13 +353,14 @@ benchpod la dir 9,10 dut_output                   # the pod refuses push-pull dr
 benchpod i2c start --sda 1 --scl 2 --hz 400000    # the pod as an I2C master (gateware v55+)
 benchpod i2c xfer 0x48 --write 0d --read 2        # hex in, hex out
 
-# Network (always over the USB console):
+# Network (over the pod's USB network adapter):
 benchpod set-wifi
 benchpod show-network     # the pod's IP (wired lease included), SSID, state, RSSI
-benchpod scan-wifi        # networks the pod's Wi-Fi sees (firmware 3.9.4+)
+benchpod scan-wifi        # networks the pod's Wi-Fi sees
 benchpod clear-wifi
+benchpod net-reset        # no network reaches the pod: forget Wi-Fi, reset Ethernet (USB console)
 
-# One USB cable (firmware 3.9.0+, no Wi-Fi configured):
+# One USB cable (no Wi-Fi configured):
 benchpod capture --connection usb ...   # network commands use the pod's USB network adapter
 benchpod usb-bridge                     # the pod's cloud link through this computer (Ctrl-C stops it)
 benchpod usb-reattach                   # re-enumerate on USB (macOS: after unlocking the screen)
@@ -1908,14 +1909,19 @@ Reboot a (retired) RP2350 pod into its UF2 bootloader (USB).
 
 ### `benchpod set-wifi`
 
-Save Wi-Fi credentials and join (USB). With firmware 3.9.0+ this turns the pod's USB networking off (Wi-Fi and USB networking are one or the other; `clear-wifi` turns it back on). Installs the ESP32-C3 image first when the
-pod lacks it; if the pod's image slots cannot be read, it stops and says so
-(`--skip-blobs` sets Wi-Fi without the check).
+Save Wi-Fi credentials and join. The CLI sends them as JSON (`wifi_set`) over the pod's USB
+network adapter (or the `--connection` given: a network address or `embeddedci:<name>`).
+Wi-Fi and USB networking are one or the other: once the credentials are stored, USB networking
+turns off, and set-wifi follows the join on the address the pod's console reports. `clear-wifi`
+over the pod's network address, or `net-reset` over USB, turns it back on. Installs the
+ESP32-C3 image first when the pod lacks it; if the pod's image slots cannot be read, it stops
+and says so (`--skip-blobs` sets Wi-Fi without the check). With USB networking off,
+`benchpod usb-network on --connection usb` turns it back on.
 
-With a Wi-Fi bridge on the pod's Ethernet port (firmware with bridge support), the
-credentials go to the bridge instead (the pod sends the password sealed), no ESP32-C3
-image is needed, and set-wifi waits up to 45 s for the bridge to join: it reports a
-wrong password or a network the bridge cannot see. The pod keeps its Ethernet address.
+With a Wi-Fi bridge on the pod's Ethernet port, the credentials go to the bridge instead (the
+pod sends the password sealed), no ESP32-C3 image is needed, USB networking stays on, and
+set-wifi waits up to 45 s for the bridge to join: it reports a wrong password or a network the
+bridge cannot see. The pod keeps its Ethernet address.
 
 | Flag               | Default    | Purpose                                                   |
 |--------------------|------------|-----------------------------------------------------------|
@@ -1926,26 +1932,38 @@ wrong password or a network the bridge cannot see. The pod keeps its Ethernet ad
 
 ### `benchpod show-network`
 
-The pod's IP (the wired lease first) plus the stored Wi-Fi SSID, state and RSSI
-(USB). With a Wi-Fi bridge, `Via:` names it (MAC, firmware, paired or not), State is
-the bridge's (`joining`, `connected`, `auth-failed`, `no-ap`, ...) and `Problem:` says
-what the pod sees wrong with it. No flags.
+The pod's IP (the wired lease first) plus the stored Wi-Fi SSID, state and RSSI (`status` and
+`wifi_status` over the pod's USB network adapter, or the `--connection` given). With a Wi-Fi
+bridge, `Via: wifi-bridge`, State is the bridge's (`joining`, `connected`, `auth-failed`,
+`no-ap`, ...) and `Problem:` says what the pod sees wrong with it. No flags.
 
 ### `benchpod scan-wifi`
 
-List the Wi-Fi networks the pod sees, strongest first: RSSI, channel, security and SSID,
-to pick one for `set-wifi` (USB). The pod scans with its built-in Wi-Fi (firmware 3.9.4 or
-later), or with a Wi-Fi bridge on its Ethernet port when one is plugged in. A scan takes a few
-seconds; a pod that is joined to a network stays joined, and a pod that is joining finishes
-that first (up to 30 seconds). No flags.
-
-On older firmware the pod cannot scan, but it can still join a network: the command says so,
-suggests `benchpod flash-self` and `benchpod set-wifi --ssid <network name>`, and exits 0.
-It fails only on a pod with no Wi-Fi at all.
+List the Wi-Fi networks the pod sees, strongest first: RSSI, channel, security and SSID, to pick
+one for `set-wifi` (`wifi_scan` over the pod's USB network adapter, or the `--connection`
+given). The pod scans with its built-in Wi-Fi, or with a Wi-Fi bridge on its Ethernet port when
+one is plugged in. A scan takes a few seconds; a pod that is joined to a network stays joined,
+and a pod that is joining finishes that first (up to 30 seconds). No flags.
 
 ### `benchpod clear-wifi`
 
-Erase the stored Wi-Fi credentials (USB). Wi-Fi goes down at once, no reboot needed, and USB networking (firmware 3.9.0+) comes back on. Firmware after 3.7.0 also erases the copy older firmware left on the ESP32-C3 Wi-Fi chip, which takes a few seconds more. No flags.
+Erase the stored Wi-Fi credentials (`wifi_clear`). Wi-Fi goes down at once, no reboot needed,
+and USB networking comes back on. The pod also erases the copy older firmware left on the
+ESP32-C3 Wi-Fi chip, which takes a few seconds more. Over USB the CLI uses the pod's USB network
+adapter, else (it is off while Wi-Fi is set) the pod's network address from its console. When no
+network reaches the pod, use `benchpod net-reset`. No flags.
+
+### `benchpod net-reset`
+
+The way back to a pod that no network reaches (firmware 4.0, over the USB console): the pod
+forgets its Wi-Fi credentials (its own flash and the ESP32-C3's, or the Wi-Fi bridge's), which
+turns USB networking back on, and puts Ethernet back to autonegotiation with a PHY reset and a
+new DHCP lease. The LAN and signature policies, the cloud settings and the device key stay. It
+prints the pod's `net-reset` lines.
+
+| Flag    | Default | Purpose                        |
+|---------|---------|--------------------------------|
+| `--yes` | off     | Skip the confirmation prompt.  |
 
 ### `benchpod usb-bridge`
 
