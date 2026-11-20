@@ -975,7 +975,7 @@ from a repository the organization trusts.
 
 ### Exit codes of `benchpod ci`
 
-Codes 0 to 7 mean what they mean for every benchpod command ([Exit codes](#exit-codes)); a run's
+Codes 0 to 7 mean what they mean for every other command ([Exit codes](#exit-codes)); a run's
 results are 10 and up, so a script never mistakes one for the other (CLI 0.10 moved them from 2,
 3 and 4).
 
