@@ -1,8 +1,8 @@
 # benchpod-cli
 
 `benchpod` is the EmbeddedCI **BenchPod** command-line tool. It talks to a
-pod over its network TCP/JSON API (port 8080), over its USB console (CDC-ACM), or
-through embeddedci.com (`--connection embeddedci:<name>`), and drives the pod's hardware: signal generation, ADC capture,
+pod over its network JSON API (TLS on port 8443), over USB (the pod's USB network adapter,
+and its console for recovery), or through embeddedci.com (`--connection embeddedci:<name>`), and drives the pod's hardware: signal generation, ADC capture,
 logic-analyzer pins, Wi-Fi configuration, firmware flashing over SWD, SPI NOR
 flash programming, and the pod's own firmware, policies and cloud link. Every
 command and flag is listed in the [command reference](#command-reference).
@@ -12,6 +12,44 @@ New pod? `benchpod setup` walks the
 for you: it finds the pod, gets it on the network, sets the board I/O voltage,
 registers it with embeddedci.com and saves the connection, skipping whatever is
 already done.
+
+## Breaking changes in 0.10
+
+CLI 0.10 drives BenchPod firmware 4.0 (client API 2). Keep CLI 0.9 for pods you do not update.
+
+- **Firmware 4.0 only.** Against firmware 3.x only `status`, `flash-self`, `install-blobs`,
+  `dfu`, `bootsel`, `discover` and `identity` run; every other command exits with the new code
+  `7` and `this pod needs firmware 4.0: benchpod flash-self`. A newer pod still exits `6`.
+  `discover` marks such pods from their mDNS `api`.
+- **Error codes only.** The CLI classifies and words every refusal by its code (`BP0001` and
+  up) from the catalog it ships with, never by its text. `BP0002`, `BP0017` and `BP0060` exit
+  `7`; the busy codes `4`; the others `3`. A refusal without a code is shown as the pod wrote it.
+- **TLS on the LAN.** Firmware 4.0 answers its JSON API on Ethernet and Wi-Fi on 8443 (TLS)
+  only; the CLI uses it and pins the certificate on first use. `--tls off` only works after
+  `benchpod lan-tls https-only off`. New: `benchpod lan-tls scpi on|off`. The `lan-tls`
+  switches only work over USB or embeddedci.com.
+- **JSON over USB.** `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `identity wipe`,
+  `sig-policy`, `cloud ca`, `cloud proxy`, `install-blobs`, `usb-reattach`, `la voltage` and
+  `flash` over USB send JSON over the pod's USB network adapter; the console is only for
+  `status`, `dfu`, `identity`, `lan-policy`, `usb-network`, `log` and the new `net-reset`.
+  With USB networking off: `benchpod usb-network on --connection usb`. The console blob
+  upload for firmware before 3.9.0 is gone.
+- **Signatures.** `sig-policy set` is gone: firmware 4.0 always requires signatures (`BP0074`).
+- **Removed commands and flags.** `stream`, `la pullup`, `set-bench-pod` (use
+  `set-connection`), `--connection serial` (use `usb`), `generate --amplitude/--offset` (8-bit
+  levels; use `--path` with `--amplitude-v`/`--offset-v`, or `--amplitude-ma`/`--offset-ma`),
+  `--sample-rate-mhz`, `--duration-ms`, `--delay-us`. `la voltage 3300` (bare millivolts) is
+  refused: a bare number is volts.
+- **Renamed flags.** `--output-filename` is `--out` (`BENCHPOD_OUT`); `capture`, `measure` and
+  `test` take `--format` (was `--output`); `sensor export` writes to `--out`/`-o`;
+  `flash-self` and `sensor start` take `--addr` (was `--address`).
+- **Exit codes.** Usage mistakes the commands find exit `2` (some exited `1`). `benchpod ci`
+  results moved to `10` (failed), `11` (drift regression) and `12` (invalid), so they never
+  clash with the codes 0 to 7 of [Exit codes](#exit-codes); a ci usage error is `2`, an
+  unreachable pod `5`, update the CLI `6`, update the pod `7`.
+- **Wiring profiles** come from the pod only (firmware 3.10.8 moved them there); the
+  embeddedci.com profile fallback and `la voltage` saving to it are gone.
+- The `--json` output is unchanged.
 
 ## Installation
 
