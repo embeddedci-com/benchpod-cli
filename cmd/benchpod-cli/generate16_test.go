@@ -11,7 +11,7 @@ import (
 func TestGenerateCalibrated(t *testing.T) {
 	t.Setenv("BENCHPOD_CONNECTION", "")
 	t.Setenv("BENCHPOD_TIMEOUT", "")
-	addr, got := fakeLANPod(t, `{"status":"ok","data":{"caps":["dac","generate16"],"bits":16}}`)
+	addr, got := fakeLANPod(t, `{"status":"ok","data":{"caps":["dac","generate16"],"bits":16,"api":2,"min_client_api":2}}`)
 	sent := func() map[string]any {
 		t.Helper()
 		var req map[string]any

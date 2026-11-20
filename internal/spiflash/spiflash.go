@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/features"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // Firmware limits per command.
@@ -287,9 +288,10 @@ func Session(ctx context.Context, main, cleanup Commander, cfg Config, nreset bo
 	return fn(ctx, p, s)
 }
 
+// isSPIBusy is spi_start refused because another session has the SPI master (BP0004) or the bus
+// engine (BP0005).
 func isSPIBusy(err error) bool {
-	m := err.Error()
-	return strings.Contains(m, "spi busy") || strings.Contains(m, "swd or spi busy")
+	return tcpclient.HasCode(err, "BP0004") || tcpclient.HasCode(err, "BP0005")
 }
 
 // HasCap reports whether the pod whose status reply this is has capability name: from the

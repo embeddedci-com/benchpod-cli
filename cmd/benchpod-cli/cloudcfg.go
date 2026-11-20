@@ -42,24 +42,7 @@ const (
 	caLANChunk   = 768         // raw bytes per ota_data line (as the hwe2e LAN OTA sends)
 	caMissing    = "this firmware has no company CA support; update the pod's firmware"
 	proxyMissing = "this firmware has no HTTP proxy support; update the pod's firmware"
-	lanGateHint  = "the pod only takes this change over USB or from the cloud, never from Ethernet or Wi-Fi; run it with --connection usb"
 )
-
-// lanGateRefusals are the tails of the firmware's refusal of a cloud link change from the LAN
-// (pod_policy_cloud_link_gate): "cloud_ca: ..." or "cloud_proxy: ...". Firmware 3.9.0 also takes
-// the change over its USB network adapter and says so; older firmware names the console.
-var lanGateRefusals = []string{": change it from the cloud or over USB", ": change it from the cloud or the USB console"}
-
-// isLANGateRefusal reports whether msg is the firmware's refusal to change the company CA or
-// the HTTP proxy from the LAN.
-func isLANGateRefusal(msg string) bool {
-	for _, tail := range lanGateRefusals {
-		if verb, ok := strings.CutSuffix(strings.TrimSpace(msg), tail); ok {
-			return verb == "cloud_ca" || verb == "cloud_proxy"
-		}
-	}
-	return false
-}
 
 func newCloudCmd(g *globalFlags) *cobra.Command {
 	root := &cobra.Command{
@@ -414,17 +397,11 @@ func cloudCfgError(what, missing string, lan bool, err error) error {
 	if errors.Is(err, serialconsole.ErrUnknownCommand) {
 		return errors.New(missing)
 	}
-	// "unknown target": no code yet (a cloud_ca / cloud_proxy target older firmware lacks)
-	if isUnknownCommand(err) || strings.Contains(err.Error(), "unknown target") {
+	if isUnknownCommand(err) || tcpclient.HasCode(err, "BP0060") { // ota_unknown_target
 		return errors.New(missing)
 	}
 	if pe, ok := tcpclient.AsPodError(err); ok {
-		// A console refusal (Cmd set) came over USB, a JSON reply over the LAN.
-		lan = lan && pe.Cmd == ""
-		if lan && isLANGateRefusal(pe.Reason) {
-			return refusedWithHint(what, pe, lanGateHint)
-		}
-		return refusedError(what, pe, lan)
+		return refusedError(what, pe)
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }

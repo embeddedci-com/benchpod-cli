@@ -76,6 +76,7 @@ func (o *otaServer) start() *serverapi.Client {
 var cloudFlashGlobals = &globalFlags{connection: "embeddedci:benchpod-7a32b5", noFirmwareReport: true}
 
 func TestFlashSelfCloudUploadsImageAndSig(t *testing.T) {
+	allowAnyPodAPI(t)
 	images, sigs := sigVectors(t)
 	fw := filepath.Join(t.TempDir(), "bench_pod_stm32.bin")
 	writeFile(t, fw, images["firmware"])
@@ -113,6 +114,7 @@ func TestFlashSelfCloudUploadsImageAndSig(t *testing.T) {
 }
 
 func TestFlashSelfCloudLatestRelease(t *testing.T) {
+	allowAnyPodAPI(t)
 	o := &otaServer{t: t, phases: []map[string]any{{"phase": "done", "version_after": "3.10.2"}}}
 	o.start()
 	if err := runFlashSelfCloud(cloudFlashGlobals, &flashSelfFlags{network: true}, noFlagChanged, nil, "benchpod-7a32b5"); err != nil {
@@ -138,6 +140,7 @@ func TestFlashSelfCloudLatestRelease(t *testing.T) {
 // --skip-blobs (or --blobs-dir) with a release is noted and ignored: the server installs the
 // release's blobs with it, and there is nothing to skip on its side.
 func TestFlashSelfCloudReleaseIgnoresSkipBlobs(t *testing.T) {
+	allowAnyPodAPI(t)
 	o := &otaServer{t: t, phases: []map[string]any{{"phase": "done", "version_after": "3.10.6"}}}
 	o.start()
 	var err error
@@ -157,6 +160,7 @@ func TestFlashSelfCloudReleaseIgnoresSkipBlobs(t *testing.T) {
 }
 
 func TestFlashSelfCloudRefusals(t *testing.T) {
+	allowAnyPodAPI(t)
 	fw, _ := fwImage(t, 4096, 1024)
 	for _, tc := range []struct {
 		status     int
@@ -186,6 +190,7 @@ func TestFlashSelfCloudRefusals(t *testing.T) {
 }
 
 func TestFlashSelfCloudFailedJob(t *testing.T) {
+	allowAnyPodAPI(t)
 	fw, _ := fwImage(t, 4096, 1024)
 	o := &otaServer{t: t, phases: []map[string]any{{"phase": "error", "error": "signature refused by the pod's policy"}}}
 	o.start()
@@ -199,6 +204,7 @@ func TestFlashSelfCloudFailedJob(t *testing.T) {
 }
 
 func TestFlashSelfCloudTooBigAndDFUFlags(t *testing.T) {
+	allowAnyPodAPI(t)
 	(&otaServer{t: t}).start()
 	fw, _ := fwImage(t, 4096, 2048)
 	err := runFlashSelfCloud(cloudFlashGlobals, &flashSelfFlags{}, noFlagChanged, []string{fw}, "benchpod-7a32b5")
@@ -212,6 +218,7 @@ func TestFlashSelfCloudTooBigAndDFUFlags(t *testing.T) {
 }
 
 func TestAbortCloudOTA(t *testing.T) {
+	allowAnyPodAPI(t)
 	o := &otaServer{t: t}
 	api := o.start()
 	pod := &cloudpod.Client{API: api, Credential: "tok", DeviceID: "id-1", Name: "benchpod-7a32b5"}
@@ -226,6 +233,7 @@ func TestAbortCloudOTA(t *testing.T) {
 }
 
 func TestExplicitCloud(t *testing.T) {
+	allowAnyPodAPI(t)
 	if name, ok := (&globalFlags{connection: "embeddedci:benchpod-7a32b5"}).explicitCloud(); !ok || name != "benchpod-7a32b5" {
 		t.Errorf("%q %v", name, ok)
 	}

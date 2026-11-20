@@ -137,7 +137,7 @@ func identityErr(what string, err error) error {
 		return errors.New(identityMissing)
 	}
 	if pe, ok := tcpclient.AsPodError(err); ok {
-		return refusedError(what, pe, false)
+		return refusedError(what, pe)
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }

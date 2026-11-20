@@ -1038,25 +1038,33 @@ stderr with a `[benchpod]` prefix.
 | `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
 | `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
 | `5`  | Unreachable: nothing answered on the pod's address, no pod was found on USB, or the pod is offline on embeddedci.com. |
-| `6`  | Update the CLI: the pod's firmware needs a newer benchpod CLI (see [Firmware newer than the CLI](#firmware-newer-than-the-cli)). |
+| `6`  | Update the CLI: the pod's firmware needs a newer benchpod CLI (see [Firmware and CLI levels](#firmware-and-cli-levels)). |
+| `7`  | Update the pod: its firmware is older than this CLI drives (firmware before 4.0: run `benchpod flash-self`), or it lacks what the command needs (`BP0002`, `BP0017`, `BP0060`). |
 
 `benchpod ci` has its own exit codes (a CI result, not a command's): see
 [Exit codes of `benchpod ci`](#exit-codes-of-benchpod-ci).
 
-#### Firmware newer than the CLI
+#### Firmware and CLI levels
 
 Every JSON command the CLI sends to the pod (on the LAN, over USB networking and through
-embeddedci.com) carries `"client_api"`, the pod API level this CLI was built for, and
-`"client"`, its name and version (`"cli 0.9.5"`). Firmware 3.10.13 and older ignores both.
-Newer firmware announces its own level in `status`; it goes up only when the firmware changes
-a reply in a way an older CLI would misread. When the pod's level is above this CLI's (a pod
-without one counts as level 1), a command that reads the pod's status stops with exit code
-`6` and says so. `status`, `flash-self`, `install-blobs`, `dfu`, `bootsel`, `discover` and
-`identity` still run: `status` prints the same line as a warning, and the firmware commands are
-how such a pod is updated or rolled back.
+embeddedci.com) carries `"client_api"`, the pod API level this CLI was built for (2), and
+`"client"`, its name and version (`"cli 0.10.0"`). The pod announces its own level in `status`;
+it goes up only when the firmware changes a reply in a way an older CLI would misread.
+
+This CLI drives firmware 4.0 (level 2) only. Before a pod's first command it reads the pod's
+status once and stops when the level does not match:
+
+- A pod above level 2 needs a newer CLI: exit code `6`.
+- A pod below level 2 (firmware 3.x announces no level, which counts as 1) needs firmware 4.0:
+  exit code `7`, with `this pod needs firmware 4.0: benchpod flash-self`.
+
+`status`, `flash-self`, `install-blobs`, `dfu`, `bootsel`, `discover` and `identity` still run
+against a pod of any level: `status` prints the same line as a warning, and the firmware commands
+are how such a pod is updated or rolled back. Against firmware 3.x they send what 3.x takes.
 
 ```text
-[benchpod] la voltage: this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
+[benchpod] la voltage: this pod's firmware 3.10.13 is too old for this benchpod CLI (pod API 1, this CLI needs 2): this pod needs firmware 4.0: benchpod flash-self
+[benchpod] la voltage: this pod's firmware 5.0.0 needs a newer benchpod CLI (pod API 3, this CLI handles 2): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
 ```
 
 A pod that no longer takes commands from a CLI this old refuses them with `BP0030`, which
@@ -1064,19 +1072,21 @@ the CLI reports the same way. Update the CLI as you installed it (see
 [Installation](#installation)). Commands that only talk to embeddedci.com or work locally are
 not affected, and neither is the USB console.
 
-Firmware 3.10.8 and later sends more and more refusals with a stable error code (`BP0001` and up).
-The CLI then shows the code, what went wrong and what to run, from the error catalog it ships
-with, plus a link to the code's page; `benchpod explain <code>` prints the whole entry. The
-exit code follows the code: a session, the bus engine, the storage or a lease in use
-(`BP0003`, `BP0004`, `BP0005`, `BP0016`, `BP0025`) is `4`, every other code `3`.
+#### Error codes
 
-A refusal without a code (older firmware, or one that has no code yet) is printed word for
-word as the pod sent it. For a `locked:` (LAN policy),
-`busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
-So it does for `la voltage not set` (run `benchpod la voltage 3.3V` or 1.8V, or set it on
-the web app's Wiring tab) and for a `pin conflict: LA4 is in use by ...`, where the raw
-JSON command the firmware suggests is replaced by where to free the pin (the web app,
-the SDK or the MCP session that holds it).
+Every refusal a script or user acts on has a stable error code (`BP0001` and up), and firmware
+4.0 sends only the code and its values. The CLI shows the code, what went wrong and what to run,
+from the error catalog it ships with, plus a link to the code's page; `benchpod explain <code>`
+prints the whole entry. The exit code follows the code:
+
+- `4` (busy): a session, the bus engine, the storage, a lease or the pod in use (`BP0003`,
+  `BP0004`, `BP0005`, `BP0016`, `BP0025`, `BP0047` to `BP0052`, `BP0066`).
+- `7` (update the pod): `BP0002`, `BP0017`, `BP0060`.
+- `6` (update the CLI): `BP0030`.
+- `3` (refused): every other code.
+
+A refusal without a code (a bad argument, a failure only a person reads) is printed word for
+word as the pod sent it, with exit code `3`. The CLI never reads a refusal's text.
 
 ### `benchpod setup`
 

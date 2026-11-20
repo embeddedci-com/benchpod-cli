@@ -20,7 +20,7 @@ type pullPod struct {
 func (p *pullPod) Command(_ context.Context, req map[string]any) (json.RawMessage, error) {
 	if req["cmd"] == "status" {
 		return json.Marshal(map[string]any{"version": "3.10.11", "features_rev": p.rev, "gateware": 58,
-			"fpga_image": "deep", "hw": []string{"nrst_pin"}})
+			"fpga_image": "deep", "hw": []string{"nrst_pin"}, "api": 2, "min_client_api": 2})
 	}
 	p.sent = append(p.sent, req)
 	return json.Marshal(map[string]any{"la": req["la"], "ok": true})

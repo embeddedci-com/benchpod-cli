@@ -130,7 +130,7 @@ func TestGitHubActionsSignIn(t *testing.T) {
 			_, _ = w.Write([]byte(`{"access_token":"gha-token","token_type":"Bearer","expires_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `","devices":["benchpod-a1b2c3"]}`))
 		case "/api/cloud/devices/command":
 			g.cmdPath, g.cmdAuth = r.URL.RequestURI(), r.Header.Get("Authorization")
-			_, _ = w.Write([]byte(`{"status":"ok","data":{"version":"3.10.13"}}`))
+			_, _ = w.Write([]byte(`{"status":"ok","data":{"version":"4.0.0","api":2,"min_client_api":2}}`))
 		case "/api/cloud/devices/lease":
 			g.leaseAuth = r.Header.Get("Authorization")
 			_, _ = w.Write([]byte(`{"lease_id":"L-1"}`))
@@ -157,7 +157,7 @@ func TestGitHubActionsSignIn(t *testing.T) {
 		t.Fatalf("cloud pod %+v", cp)
 	}
 	data, err := cp.Command(ctx, map[string]any{"cmd": "status"})
-	if err != nil || !strings.Contains(string(data), "3.10.13") {
+	if err != nil || !strings.Contains(string(data), "4.0.0") {
 		t.Fatalf("command %s %v", data, err)
 	}
 	lease, err := acquireCloudLease(ctx, cp.API, cp.Credential, cp.Name, "L-1", 0, time.Hour, io.Discard)

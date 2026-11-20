@@ -85,13 +85,13 @@ func (p *fwNetPod) handle(req map[string]any) (string, bool) {
 		if p.blobErr != "" {
 			return errReply(p.blobErr), false
 		}
-		return errReply("unknown cmd"), false
+		return codeReply("BP0002", map[string]any{"cmd": "blob_status"}), false
 	case "ota_begin":
 		if p.refuse != "" {
 			return errReply(p.refuse), false
 		}
 		if _, ok := req["target"]; ok {
-			return errReply("unknown target"), false
+			return codeReply("BP0060", map[string]any{"target": req["target"]}), false
 		}
 		p.staged = make([]byte, int(req["size"].(float64)))
 		p.sha, p.state = req["sha256"].(string), "receiving"
@@ -114,7 +114,7 @@ func (p *fwNetPod) handle(req map[string]any) (string, bool) {
 	case "ota_abort":
 		p.state = "idle"
 	default:
-		return errReply("unknown cmd"), false
+		return codeReply("BP0002", map[string]any{"cmd": cmd}), false
 	}
 	return okReply(map[string]any{"state": p.state}), false
 }
@@ -149,6 +149,7 @@ func fastNetworkFlash(t *testing.T) {
 func noFlagChanged(string) bool { return false }
 
 func TestFlashSelfNetworkUpdates(t *testing.T) {
+	allowAnyPodAPI(t)
 	fastNetworkFlash(t)
 	pod := &fwNetPod{t: t, version: "3.9.0", flashKB: 2048}
 	addr := pod.start()
@@ -170,6 +171,7 @@ func TestFlashSelfNetworkUpdates(t *testing.T) {
 }
 
 func TestFlashSelfNetworkVerifyFailureWritesNothing(t *testing.T) {
+	allowAnyPodAPI(t)
 	fastNetworkFlash(t)
 	pod := &fwNetPod{t: t, version: "3.9.0", flashKB: 2048, corrupt: true}
 	addr := pod.start()
@@ -187,6 +189,7 @@ func TestFlashSelfNetworkVerifyFailureWritesNothing(t *testing.T) {
 }
 
 func TestFlashSelfNetworkPodRefusal(t *testing.T) {
+	allowAnyPodAPI(t)
 	fastNetworkFlash(t)
 	pod := &fwNetPod{t: t, version: "3.9.0", flashKB: 2048, refuse: "locked: ota_begin needs the cloud or USB"}
 	addr := pod.start()
@@ -198,6 +201,7 @@ func TestFlashSelfNetworkPodRefusal(t *testing.T) {
 }
 
 func TestFlashSelfNetworkImageTooBig(t *testing.T) {
+	allowAnyPodAPI(t)
 	pod := &fwNetPod{t: t, version: "3.9.0", flashKB: 1024}
 	addr := pod.start()
 	file, _ := fwImage(t, 2000, 2048)
@@ -211,6 +215,7 @@ func TestFlashSelfNetworkImageTooBig(t *testing.T) {
 }
 
 func TestFlashSelfNetworkRefusesDFUFlags(t *testing.T) {
+	allowAnyPodAPI(t)
 	err := runFlashSelfNetwork(&globalFlags{connection: "127.0.0.1:1"}, &flashSelfFlags{network: true},
 		func(name string) bool { return name == "enter-dfu" }, nil)
 	if err == nil || !strings.Contains(err.Error(), "--enter-dfu is for USB DFU") {
@@ -237,6 +242,7 @@ func blobsDirWith(t *testing.T, names ...string) string {
 // look like one with nothing to install: flash-self warns, naming the skipped blobs and the
 // retry, and keeps its exit status (the firmware itself is in).
 func TestFlashSelfNetworkWarnsWhenBlobStatusFails(t *testing.T) {
+	allowAnyPodAPI(t)
 	fastNetworkFlash(t)
 	pod := &fwNetPod{t: t, version: "3.9.0", flashKB: 2048, blobErr: "reply too large"}
 	addr := pod.start()
@@ -265,6 +271,7 @@ func TestFlashSelfNetworkWarnsWhenBlobStatusFails(t *testing.T) {
 
 // install-blobs (installBlobsList) fails when the pod does not list its slots.
 func TestInstallBlobsFailsWhenBlobStatusFails(t *testing.T) {
+	allowAnyPodAPI(t)
 	pod := &fwNetPod{t: t, version: "3.10.3", flashKB: 2048, blobErr: "reply too large"}
 	addr := pod.start()
 	ctx := context.Background()
@@ -289,6 +296,7 @@ func TestInstallBlobsFailsWhenBlobStatusFails(t *testing.T) {
 
 // "unknown cmd" still means firmware with its blobs built in, not a failure.
 func TestInstallBlobsBuiltInIsNotABlobStatusFailure(t *testing.T) {
+	allowAnyPodAPI(t)
 	pod := &fwNetPod{t: t, version: "3.4.0", flashKB: 2048}
 	addr := pod.start()
 	ctx := context.Background()

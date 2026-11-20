@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/embeddedci-com/benchpod-cli/internal/fwrefusals"
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 )
 
@@ -104,10 +103,9 @@ func TestLAVoltageLANRefusals(t *testing.T) {
 			t.Fatalf("old firmware: %v", err)
 		}
 	}
-	msg := fwrefusals.Example("lan_locked")
-	addr, _ := fakeLANPod(t, `{"status":"error","message":"`+msg+`"}`)
+	addr, _ := fakeLANPod(t, `{"status":"error","code":"BP0040","args":{"cmd":"la_voltage"}}`)
 	err := runLAVoltage(&globalFlags{connection: addr}, 3300, &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil || err.Error() != "la voltage: the pod refused: "+msg+" ("+lockedUSBHint+")" {
+	if err == nil || !strings.HasPrefix(err.Error(), "la voltage: the pod refused: BP0040: The pod's LAN is locked: la_voltage needs the cloud or USB; run this over USB") {
 		t.Fatalf("locked: %v", err)
 	}
 	if code := exitCode(err); code != exitRefused {

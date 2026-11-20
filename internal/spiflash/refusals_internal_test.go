@@ -2,25 +2,28 @@ package spiflash
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
-	"github.com/embeddedci-com/benchpod-cli/internal/fwrefusals"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
-// isSPIBusy decides whether a failed spi_start was another session's: it must match the
-// firmware's SPI refusals and nothing else.
-func TestIsSPIBusyMatchesTheFirmwareTexts(t *testing.T) {
-	for id, want := range map[string]bool{
-		"spi_busy":             true,
-		"swd_or_spi_busy":      true,
-		"swd_busy_spi_session": false,
-		"swd_busy":             false,
-		"heavy_busy":           false,
-		"psram_bus_busy":       false,
-		"lease_busy":           false,
+// isSPIBusy decides whether a failed spi_start was another session's: by its code only.
+func TestIsSPIBusyByCode(t *testing.T) {
+	for code, want := range map[string]bool{
+		"BP0004": true,  // spi_session_open
+		"BP0005": true,  // bus_engine_busy
+		"BP0050": false, // swd_session_open
+		"BP0047": false, // pod_busy
+		"BP0025": false, // lease_busy
+		"":       false,
 	} {
-		if got := isSPIBusy(errors.New(fwrefusals.Example(id))); got != want {
-			t.Errorf("isSPIBusy(%s: %q) = %v, want %v", id, fwrefusals.Example(id), got, want)
+		err := fmt.Errorf("spi_start: %w", tcpclient.RefusalError("spi busy", code, nil))
+		if got := isSPIBusy(err); got != want {
+			t.Errorf("isSPIBusy(%q) = %v, want %v", code, got, want)
 		}
+	}
+	if isSPIBusy(errors.New("spi busy: send spi_stop first")) {
+		t.Error("a text without a code taken for busy")
 	}
 }

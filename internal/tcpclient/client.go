@@ -214,6 +214,9 @@ func (c *Client) dialAndSend(ctx context.Context, req map[string]any) (net.Conn,
 		return nil, nil, fmt.Errorf("pod address is empty; run `benchpod set-connection <addr>` first")
 	}
 
+	if err := c.probePodAPI(ctx, req); err != nil {
+		return nil, nil, err
+	}
 	budget := c.DialTimeout
 	if budget <= 0 {
 		budget = DefaultDialTimeout

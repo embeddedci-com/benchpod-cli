@@ -106,7 +106,7 @@ func runUSBNetwork(g *globalFlags, set string, out io.Writer) error {
 			return errors.New(usbNetworkMissing)
 		}
 		if pe, ok := tcpclient.AsPodError(err); ok {
-			return refusedError(what, pe, false)
+			return refusedError(what, pe)
 		}
 		return fmt.Errorf("%s: %w", what, err)
 	}

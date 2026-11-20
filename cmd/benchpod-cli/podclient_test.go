@@ -36,6 +36,9 @@ func TestMain(m *testing.M) {
 	// Requests compare whole: without client_api and client (TestEveryRequestCarriesTheClientFields
 	// turns them on).
 	tcpclient.SetClientFields(false)
+	// Fake pods answer status without an api: no API probe before their commands
+	// (TestAPIProbe turns it on).
+	apiProbe = false
 	// Never probe this machine's USB ports for a pod's USB network adapter.
 	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) {
 		return serialconsole.USBNet{}, errors.New("no pod on USB (tests)")
@@ -134,7 +137,7 @@ func TestCloudPingStatusAndLAVoltage(t *testing.T) {
 
 	f := &fakeCloud{reply: podReplies(map[string]string{
 		"ping":          `"pong"`,
-		"status":        `{"version":"3.8.0","ip":"192.168.1.220","net":"eth","la_vccio_mv":3300,"gateware":48}`,
+		"status":        `{"version":"4.0.0","ip":"192.168.1.220","net":"eth","la_vccio_mv":3300,"gateware":48,"api":2,"min_client_api":2}`,
 		"cloud_status":  `{"state":"connected","configured":true,"device_id":"id-1"}`,
 		"target_status": `{"efuse1":{"enabled":1,"fault":0},"efuse2":{"enabled":0,"fault":0}}`,
 		"la_voltage":    `{"mv":3300,"readback_mv":3300}`,
@@ -150,7 +153,7 @@ func TestCloudPingStatusAndLAVoltage(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("status: exit %d", code)
 	}
-	for _, want := range []string{"BenchPod bench-1 on embeddedci.com", "3.8.0", "3.3 V", "internal 5 V on", "on your account as bench-1"} {
+	for _, want := range []string{"BenchPod bench-1 on embeddedci.com", "4.0.0", "3.3 V", "internal 5 V on", "on your account as bench-1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output lacks %q:\n%s", want, out)
 		}
@@ -416,4 +419,13 @@ func fakeCloudStatusPod(t *testing.T, id string) string {
 		}
 	}()
 	return ln.Addr().String()
+}
+
+// allowAnyPodAPI is what the root command does for the firmware commands (flash-self,
+// install-blobs, status, ...): they run against a pod of any API level, a 3.x one included. For
+// tests that call such a command's code directly.
+func allowAnyPodAPI(t *testing.T) {
+	t.Helper()
+	tcpclient.SetAllowAnyPodAPI(true)
+	t.Cleanup(func() { tcpclient.SetAllowAnyPodAPI(false) })
 }

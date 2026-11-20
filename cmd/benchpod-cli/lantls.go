@@ -153,13 +153,10 @@ func newLanTLSCmd(g *globalFlags) *cobra.Command {
 // lanTLSError turns a refusal into one clear line.
 func lanTLSError(what string, err error) error {
 	if pe, ok := tcpclient.AsPodError(err); ok {
-		r := pe.Reason
-		switch {
-		case isUnknownCommand(err):
+		if isUnknownCommand(err) {
 			return errors.New(lanTLSMissing)
-		case strings.Contains(r, "change it over TLS"):
-			return fmt.Errorf("%s: %s", what, lanTLSPlainHint)
 		}
+		return refusedError(what, pe)
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }

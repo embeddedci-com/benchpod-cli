@@ -266,7 +266,7 @@ const (
 )
 
 func isLeaseBusy(pe *tcpclient.PodError) bool {
-	return pe.Code == codeLeaseBusy || pe.Kind() == tcpclient.Busy // Kind: the text fallback without a code
+	return pe.Code == codeLeaseBusy || pe.Kind() == tcpclient.Busy
 }
 
 // busyText is "<holder> holds this pod (<purpose>, N s left)" from a lease_busy refusal.
@@ -285,8 +285,7 @@ func busyText(pe *tcpclient.PodError) string {
 		}
 		return s
 	}
-	// fallback: BP0025's holder/purpose/left_s args replace it (firmware without codes)
-	return strings.TrimPrefix(strings.TrimSpace(pe.Reason), "busy: ")
+	return strings.TrimSpace(pe.Reason)
 }
 
 // leaseLostText is why a lease_lost / lease_not_held refusal says the lease is gone.
@@ -297,16 +296,12 @@ func leaseLostText(pe *tcpclient.PodError) string {
 		}
 		return "the pod lease was stopped during the run"
 	}
-	return "the pod lease was lost (" + strings.TrimSpace(pe.Reason) + "): the pod rebooted, or the lease expired"
+	return "the pod lease was lost: the pod rebooted, or the lease expired"
 }
 
 // isLeaseLost is a command refused because the run's lease was stopped (BP0026) or expired (BP0027).
 func isLeaseLost(pe *tcpclient.PodError) bool {
-	if pe.Code == codeLeaseLost || pe.Code == codeLeaseNotHeld {
-		return true
-	}
-	// fallback: BP0026 / BP0027 replace it (firmware without codes)
-	return strings.HasPrefix(strings.TrimSpace(pe.Reason), "lease lost")
+	return pe.Code == codeLeaseLost || pe.Code == codeLeaseNotHeld
 }
 
 // ── the server's lease (embeddedci.com) ─────────────────────────────────────

@@ -154,13 +154,12 @@ func TestPolicyCloudRefusedLoosening(t *testing.T) {
 	srv := &policyServer{t: t, supported: true, policy: map[string]string{"sig-policy": "required"},
 		put: func(w http.ResponseWriter, _, _ string) bool {
 			w.WriteHeader(http.StatusConflict)
-			_, _ = w.Write([]byte(`{"error":"sig_policy: only the USB console can loosen the policy (now required)"}`))
+			_, _ = w.Write([]byte(`{"error":"BP0074","code":"BP0074"}`))
 			return true
 		}}
 	_, _, err := runPolicyCapture(t, &globalFlags{}, sigPolicy, cloudTarget(t, srv.start().URL), "permissive")
-	want := "sig-policy set: the pod refused: only the USB console can loosen the policy (now required). " +
-		"Loosen it over the pod's USB console: benchpod sig-policy set permissive --connection usb"
-	if err == nil || err.Error() != want {
+	want := "sig-policy set: the pod refused: BP0074: "
+	if err == nil || !strings.HasPrefix(err.Error(), want) || exitCode(err) != exitRefused {
 		t.Fatalf("err = %v\nwant %q", err, want)
 	}
 }

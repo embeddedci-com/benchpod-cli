@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // fakeLAPins answers la_pins like the firmware: "la" selects pins when subset is true (firmware
@@ -23,7 +24,7 @@ func (f *fakeLAPins) Command(_ context.Context, req map[string]any) (json.RawMes
 		has = false
 	}
 	if !has && f.tooLarge {
-		return nil, errors.New("pod error: reply too large")
+		return nil, tcpclient.RefusalError("", "BP0053", nil)
 	}
 	var pins []map[string]any
 	for la := 1; la <= 14; la++ {
@@ -89,7 +90,7 @@ func TestLAPinsTooLargeReadsInTwoParts(t *testing.T) {
 	// Firmware without the subset cannot help: the error stands.
 	f = &fakeLAPins{tooLarge: true}
 	_, err = laPinsFetch(context.Background(), f, nil)
-	if err == nil || !strings.Contains(err.Error(), "reply too large") ||
+	if err == nil || !strings.Contains(err.Error(), "did not fit") ||
 		!strings.Contains(err.Error(), "firmware after 3.10.12 reads this list in parts") {
 		t.Fatalf("want the too-large error with the update hint, got %v", err)
 	}

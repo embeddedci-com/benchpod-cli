@@ -295,7 +295,7 @@ func sensorCommand(ctx context.Context, t *podTarget, what string, req map[strin
 	raw, err := t.client.Command(ctx, req)
 	if err != nil {
 		if pe, ok := tcpclient.AsPodError(err); ok {
-			return nil, refusedError(what, pe, !t.spec.IsCloud())
+			return nil, refusedError(what, pe)
 		}
 		return nil, fmt.Errorf("%s: %w", what, err)
 	}

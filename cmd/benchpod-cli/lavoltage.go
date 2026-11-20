@@ -269,7 +269,7 @@ func laVoltageError(what string, err error) error {
 		if isUnknownCommand(err) {
 			return errors.New(laVoltageMissing)
 		}
-		return refusedError(what, pe, pe.Cmd == "")
+		return refusedError(what, pe)
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }

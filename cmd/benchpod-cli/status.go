@@ -57,7 +57,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				return fmt.Errorf("status: %w", err)
 			}
 			if upd := tcpclient.CheckPodAPI(data); upd != nil {
-				// Shown, not refused: status is how the user finds out (see allowsNewerPod).
+				// Shown, not refused: status is how the user finds out (see allowsAnyPodAPI).
 				log.Printf("Warning: %v", upd)
 			}
 			out, closeOut, err := resolveOutput(g.outputFilename)

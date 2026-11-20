@@ -88,7 +88,8 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 		// Apply Viper precedence (flag > env > default) into g before any RunE.
 		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
-			tcpclient.SetAllowNewerPod(allowsNewerPod(c))
+			tcpclient.SetAllowAnyPodAPI(allowsAnyPodAPI(c))
+			tcpclient.SetAPIProbe(apiProbe)
 			g.connection = viper.GetString("connection")
 			g.configFile = viper.GetString("config-file")
 			g.outputFilename = viper.GetString("output-filename")
@@ -199,14 +200,20 @@ func run(args []string) int {
 	return exitCode(err)
 }
 
-// newerPodCommands still run against a pod whose firmware needs a newer CLI (exit code 6
-// otherwise): they show the pod's state or change its firmware, which is how such a pod is
-// rolled back or looked at. `status` prints a warning instead.
-var newerPodCommands = map[string]bool{
+// apiProbe: before a pod's first command, read its status once and stop on an API level this CLI
+// does not drive (tcpclient.SetAPIProbe). Tests whose fake pods answer status without an api
+// turn it off.
+var apiProbe = true
+
+// anyPodAPICommands still run against a pod whose firmware this CLI does not drive: one that needs
+// a newer CLI (exit code 6 otherwise) or one older than firmware 4.0 (exit code 7 otherwise). They
+// show the pod's state or change its firmware, which is how such a pod is upgraded, rolled back
+// or looked at; over firmware 3.x they keep the requests 3.x takes. `status` prints a warning.
+var anyPodAPICommands = map[string]bool{
 	"status": true, "flash-self": true, "install-blobs": true, "dfu": true, "bootsel": true,
 	"discover": true, "identity": true,
 }
 
-func allowsNewerPod(c *cobra.Command) bool {
-	return c.Parent() != nil && !c.Parent().HasParent() && newerPodCommands[c.Name()]
+func allowsAnyPodAPI(c *cobra.Command) bool {
+	return c.Parent() != nil && !c.Parent().HasParent() && anyPodAPICommands[c.Name()]
 }

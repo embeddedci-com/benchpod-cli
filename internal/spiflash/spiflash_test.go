@@ -12,6 +12,7 @@ import (
 
 	"github.com/embeddedci-com/benchpod-cli/internal/spiflash"
 	"github.com/embeddedci-com/benchpod-cli/internal/spiflash/spiflashtest"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 func randBytes(n int) []byte {
@@ -202,7 +203,7 @@ func TestSessionStartFailureReleasesReset(t *testing.T) {
 		t.Fatal("fn ran without a session")
 		return nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "spi busy") {
+	if !tcpclient.HasCode(err, "BP0004") {
 		t.Fatalf("got %v", err)
 	}
 	// Busy means another session owns the engine: no spi_stop, but reset released.

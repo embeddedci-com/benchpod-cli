@@ -69,7 +69,7 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 		if p.statusErr != nil {
 			return nil, p.statusErr
 		}
-		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": 4, "la_vccio_mv": 3300}
+		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": 4, "la_vccio_mv": 3300, "api": 2, "min_client_api": 2}
 		p.mu.Lock()
 		if len(p.uptimes) > 0 {
 			st["uptime_ms"] = p.uptimes[0]
@@ -653,7 +653,7 @@ func TestLocalLeaseRequests(t *testing.T) {
 	renewErr = &tcpclient.PodError{Reason: "lease not held", Code: "BP0027"}
 	mu.Unlock()
 	time.Sleep(70 * time.Millisecond)
-	if !strings.Contains(l.Lost(), "lease not held") {
+	if !strings.Contains(l.Lost(), "lease was lost") {
 		t.Errorf("lost %q", l.Lost())
 	}
 	l.Release(context.Background())

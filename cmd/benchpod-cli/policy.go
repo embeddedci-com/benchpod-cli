@@ -293,7 +293,7 @@ func runPolicyCloud(g *globalFlags, p podPolicy, t policyTarget, set string, out
 const adminNeeded = "this needs an organization owner or admin (API keys: the benchpod:admin scope)"
 
 // cloudPolicyError turns a failed policy call into one clear line: the server's or pod's own
-// message, plus the USB way out when the cloud refused to loosen the signature policy.
+// message, or a coded refusal of the pod's worded from the catalog.
 func cloudPolicyError(p podPolicy, set string, err error) error {
 	what := p.cmd
 	if set != "" {
@@ -313,10 +313,11 @@ func cloudPolicyError(p podPolicy, set string, err error) error {
 	if msg == "" {
 		return fmt.Errorf("%s: %w", what, err)
 	}
-	// "loosen": no code yet (sig_policy's "only the USB console can loosen the policy")
-	if set != "" && p.cmd == sigPolicy.cmd && strings.Contains(strings.ToLower(msg), "loosen") {
-		return relayedRefusal(p, fmt.Sprintf("%s: the pod refused: %s. Loosen it over the pod's USB console: benchpod sig-policy set %s --connection usb",
-			what, msg, set), msg)
+	// A refusal the pod sent with a code, relayed by the server: worded from the catalog.
+	if strings.HasPrefix(strings.ToUpper(apiErr.Code), "BP") {
+		if pe, ok := tcpclient.AsPodError(tcpclient.RefusalError(msg, apiErr.Code, nil)); ok {
+			return refusedError(what, pe)
+		}
 	}
 	if set != "" {
 		return relayedRefusal(p, what+": the pod refused: "+msg, msg)
@@ -376,7 +377,7 @@ func runPolicyUSB(g *globalFlags, p podPolicy, device, set string, out, warn io.
 			return errors.New(p.missing)
 		}
 		if pe, ok := tcpclient.AsPodError(err); ok {
-			return refusedError(what, pe, false)
+			return refusedError(what, pe)
 		}
 		return fmt.Errorf("%s: %w", what, err)
 	}

@@ -61,7 +61,7 @@ func (p *statusFormPod) reply(req map[string]any) []byte {
 	ok := func(data any) []byte { b, _ := json.Marshal(map[string]any{"status": "ok", "data": data}); return b }
 	switch req["cmd"] {
 	case "status":
-		st := map[string]any{"version": "3.10.13", "board_rev": "v3", "gateware": 58, "analog": true,
+		st := map[string]any{"version": "4.0.0", "board_rev": "v3", "gateware": 58, "analog": true, "api": 2, "min_client_api": 2,
 			"lease": map[string]any{"held": false, "holder": "", "left_s": 0}}
 		if caps, set := req["caps"]; p.featuresRev > 0 && set && caps == false {
 			st["features_rev"] = p.featuresRev

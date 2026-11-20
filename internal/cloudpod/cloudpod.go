@@ -32,6 +32,26 @@ type Client struct {
 	// ByName: the credential is a cloud token (GitHub Actions), which reaches the pod by name on
 	// the /api/cloud/devices routes instead of by id on the user's device routes.
 	ByName bool
+
+	probed bool // the pod's API level was checked (probeAPI)
+}
+
+// probeAPI reads the pod's status once before its first other command and stops on an API
+// level this CLI does not drive (tcpclient.CheckPodAPI), like the LAN client does.
+func (c *Client) probeAPI(ctx context.Context, req map[string]any) error {
+	if c.probed || !tcpclient.APIProbe(req) {
+		return nil
+	}
+	_, err := c.Command(ctx, map[string]any{"cmd": "status", "caps": false})
+	var upd *tcpclient.UpdateRequiredError
+	var old *tcpclient.FirmwareTooOldError
+	if errors.As(err, &upd) || errors.As(err, &old) {
+		return err
+	}
+	if err == nil {
+		c.probed = true
+	}
+	return nil // a failed probe: the command reports what is wrong
 }
 
 // Resolve finds the pod named name (or with that id) among the devices the credential can see.
@@ -138,6 +158,9 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 			timeout = maxTimeout
 		}
 	}
+	if err := c.probeAPI(ctx, req); err != nil {
+		return nil, err
+	}
 	var resp *serverapi.CommandResponse
 	var err error
 	// The server passes the command on as it is, so it carries client_api and client like a LAN one.
@@ -157,7 +180,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 		}
 		return nil, tcpclient.RefusalError(msg, resp.Code, resp.Args)
 	}
-	if tcpclient.IsStatus(req) && !tcpclient.NewerPodAllowed() {
+	if tcpclient.IsStatus(req) && !tcpclient.AnyPodAPIAllowed() {
 		if err := tcpclient.CheckPodAPI(resp.Data); err != nil {
 			return nil, err
 		}
@@ -227,10 +250,12 @@ func (e *Error) Is(target error) bool {
 // one, so the CLI's exit code says busy (4) or refused (3) as it does on the LAN.
 func (e *Error) Unwrap() error {
 	switch e.Code {
-	case "lease_held", "device_busy":
-		return &tcpclient.PodError{Cmd: "embeddedci.com", Reason: "busy"}
+	case "lease_held":
+		return &tcpclient.PodError{Cmd: "embeddedci.com", Reason: "the pod is in use", Code: "BP0025"}
+	case "device_busy":
+		return &tcpclient.PodError{Cmd: "embeddedci.com", Reason: "the pod is busy", Code: "BP0047"}
 	case "forbidden_tier":
-		return &tcpclient.PodError{Cmd: "embeddedci.com", Reason: "forbidden: needs an organization owner or admin"}
+		return &tcpclient.PodError{Cmd: "embeddedci.com", Reason: "needs an organization owner or admin", Code: "BP0045"}
 	}
 	return nil
 }

@@ -46,6 +46,9 @@ func (c *Client) StartRaw(ctx context.Context, req map[string]any) (net.Conn, er
 		return nil, fmt.Errorf("pod address is empty; run `benchpod set-connection <addr>` first")
 	}
 	cmd, _ := req["cmd"].(string)
+	if err := c.probePodAPI(ctx, req); err != nil {
+		return nil, err
+	}
 
 	budget := c.DialTimeout
 	if budget <= 0 {

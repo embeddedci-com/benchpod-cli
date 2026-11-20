@@ -160,6 +160,7 @@ func installOnGWPod(t *testing.T, pod *gwPod, version int) string {
 // The bench case: back from a v55 dev build to a release that carries v54, with the emulation
 // image running (firmware 3.10.3 does not check after a gw2 install). The CLI reloads image 2.
 func TestInstallBlobsReloadsStaleGateware(t *testing.T) {
+	allowAnyPodAPI(t)
 	pod := &gwPod{t: t, running: 55, kind: 2, embedded: 54, slots: map[string]int{"gw0": 55, "gw1": 55, "gw2": 55}}
 	out := installOnGWPod(t, pod, 54)
 	if pod.running != 54 || pod.kind != 2 {
@@ -178,6 +179,7 @@ func TestInstallBlobsReloadsStaleGateware(t *testing.T) {
 
 // When the firmware's own check already reloaded the gateware, the CLI only looks.
 func TestInstallBlobsLeavesMatchingGatewareAlone(t *testing.T) {
+	allowAnyPodAPI(t)
 	pod := &gwPod{t: t, running: 55, kind: 0, embedded: 54, slots: map[string]int{"gw0": 55, "gw1": 55, "gw2": 55}, hookFixes: true}
 	out := installOnGWPod(t, pod, 54)
 	if strings.Contains(pod.cmds(), "fpga_image") || strings.Contains(out, "reloading") {
@@ -186,6 +188,7 @@ func TestInstallBlobsLeavesMatchingGatewareAlone(t *testing.T) {
 }
 
 func TestInstallBlobsReportsAFailedReload(t *testing.T) {
+	allowAnyPodAPI(t)
 	pod := &gwPod{t: t, running: 55, kind: 1, embedded: 54, slots: map[string]int{"gw0": 55, "gw1": 55, "gw2": 55}, failImage: "busy"}
 	out := installOnGWPod(t, pod, 54)
 	if !strings.Contains(out, "the reload failed (busy)") || !strings.Contains(out, "restart the pod (tap RESET) to load gateware v54") {
@@ -195,6 +198,7 @@ func TestInstallBlobsReportsAFailedReload(t *testing.T) {
 
 // reloadStaleGateware on its own: no reload without a mismatch, or with a version unknown.
 func TestReloadStaleGatewareOnlyOnAMismatch(t *testing.T) {
+	allowAnyPodAPI(t)
 	for _, st := range []map[string]any{
 		{"gateware": 54, "gateware_embedded": 54},
 		{"gateware": 54},
@@ -216,6 +220,7 @@ func TestReloadStaleGatewareOnlyOnAMismatch(t *testing.T) {
 }
 
 func TestInstalledGateware(t *testing.T) {
+	allowAnyPodAPI(t)
 	if installedGateware([]blobEntry{{Name: "esp"}}) || !installedGateware([]blobEntry{{Name: "esp"}, {Name: "gw2"}}) {
 		t.Fatal("installedGateware")
 	}

@@ -4,20 +4,23 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/errcatalog"
 )
 
 // PodError is the pod refusing a command, as opposed to a transport failure: an error reply
-// from the JSON API ({"status":"error","message":...}) or, over the USB console, a command's
-// "<cmd> error <why>" line. It is the one error type for a refusal across the CLI; the USB
-// console's errors are the same type.
+// from the JSON API ({"status":"error","code":"BP0031","args":{...}}, or a refusal without a code,
+// {"status":"error","message":"..."}) or, over the USB console, a command's "<cmd> error <why>"
+// line. It is the one error type for a refusal across the CLI.
 //
-// Cmd is the console command a USB refusal answers ("proxy-set", "lan-policy"); it is "" for a
-// JSON reply, whose message stands alone.
+// Cmd is the console command a USB refusal answers ("lan-policy"); it is "" for a JSON reply.
 type PodError struct {
-	Cmd    string
+	Cmd string
+	// Reason is the text to show: for a coded refusal the catalog's message filled with Args
+	// (firmware 4.0 sends no message with a code), else the pod's own text.
 	Reason string
-	// Code and Args: the pod's stable error code (BP0001...) and its values, from firmware that
-	// sends them (benchpod-firmware errors/catalog.toml); "" / nil otherwise.
+	// Code and Args: the pod's stable error code (BP0001...) and its values
+	// (benchpod-firmware errors/catalog.toml); "" / nil for a refusal without a code.
 	Code string
 	Args map[string]any
 }
@@ -29,56 +32,111 @@ func (e *PodError) Error() string {
 	return e.Cmd + ": " + e.Reason
 }
 
-// RefusalKind classifies a refusal by the firmware's own prefix.
+// RefusalKind is what a refusal means for the caller, from its code. The exit code follows it.
 type RefusalKind int
 
 const (
-	// Refused is any other refusal: a bad argument, a missing feature, a failed operation.
+	// Refused is any other refusal: a bad argument, a missing feature, a failed operation, and
+	// every refusal without a code (the client never reads a refusal's text).
 	Refused RefusalKind = iota
-	// Locked is the LAN policy refusing a command on the LAN ("locked: ...").
+	// Locked is the LAN policy refusing a command on the LAN (BP0040).
 	Locked
-	// Busy is the pod or one of its engines in use: a cloud lease ("busy: a cloud job holds
-	// this pod ..."), the PSRAM bus, or an SWD, SPI or UART session ("swd busy", "uart busy").
+	// Busy is the pod or one of its engines in use: a lease, the PSRAM bus, another session.
 	Busy
-	// Forbidden is a cloud tunnel without the role a command needs ("forbidden: ...").
+	// Forbidden is a cloud tunnel without the role a command needs (BP0045).
 	Forbidden
+	// FirmwareTooOld is a pod whose firmware or gateware lacks what the command needs: update
+	// the pod (BP0002, BP0017, BP0060).
+	FirmwareTooOld
+	// ClientTooOld is a pod that needs a newer client (BP0030; it arrives as an
+	// *UpdateRequiredError).
+	ClientTooOld
 )
 
 // codeKinds is the one table from a refusal's stable code (benchpod-firmware errors/catalog.toml,
 // internal/errcatalog) to its kind, for every code in the catalog; the exit code follows the kind,
 // and the CLI's hint for a coded refusal is the catalog's fix.cli. A test keeps it in step with
-// the catalog. A code the table does not have (newer firmware) falls back to the text.
+// the catalog. A code the table does not have (newer firmware) is Refused.
 var codeKinds = map[string]RefusalKind{
-	"BP0001": Refused, // la_voltage_not_set
-	"BP0002": Refused, // unknown_command: also IsUnknownCommand, for "this firmware lacks it" messages
-	"BP0003": Busy,    // i2c_session_open
-	"BP0004": Busy,    // spi_session_open
-	"BP0005": Busy,    // bus_engine_busy
-	"BP0006": Refused, // missing_argument
-	"BP0007": Refused, // wiring_profile_not_found
-	"BP0008": Refused, // wiring_bad_name
-	"BP0009": Refused, // wiring_revision_conflict
-	"BP0010": Refused, // wiring_store_full
-	"BP0011": Refused, // wiring_profile_too_large
-	"BP0012": Refused, // wiring_not_json_object
-	"BP0013": Refused, // wiring_delete_default
-	"BP0014": Refused, // wiring_upload_out_of_order
-	"BP0015": Refused, // wiring_storage_failed
-	"BP0016": Busy,    // storage_busy
-	"BP0017": Refused, // gateware_too_old
-	"BP0018": Refused, // uart_same_pin
-	"BP0019": Refused, // uart_half_duplex_two_pins
-	"BP0020": Refused, // uart_entry_no_reset_pin
-	"BP0021": Refused, // uart_entry_invalid
-	"BP0022": Refused, // uart_de_pin
-	"BP0023": Refused, // la_no_pull
-	"BP0024": Refused, // la_pull_direction
-	"BP0025": Busy,    // lease_busy: args holder, purpose, left_s
-	"BP0026": Refused, // lease_lost: args by (benchpod ci handles it: the run is invalid)
-	"BP0027": Refused, // lease_not_held
-	"BP0028": Refused, // vref_5v_missing
-	"BP0029": Refused, // pull_rail_down
-	"BP0030": Refused, // client_too_old: arrives as an *UpdateRequiredError, not a *PodError (RefusalError)
+	"BP0001": Refused,        // la_voltage_not_set
+	"BP0002": FirmwareTooOld, // unknown_command
+	"BP0003": Busy,           // i2c_session_open
+	"BP0004": Busy,           // spi_session_open
+	"BP0005": Busy,           // bus_engine_busy
+	"BP0006": Refused,        // missing_argument
+	"BP0007": Refused,        // wiring_profile_not_found
+	"BP0008": Refused,        // wiring_bad_name
+	"BP0009": Refused,        // wiring_revision_conflict
+	"BP0010": Refused,        // wiring_store_full
+	"BP0011": Refused,        // wiring_profile_too_large
+	"BP0012": Refused,        // wiring_not_json_object
+	"BP0013": Refused,        // wiring_delete_default
+	"BP0014": Refused,        // wiring_upload_out_of_order
+	"BP0015": Refused,        // wiring_storage_failed
+	"BP0016": Busy,           // storage_busy
+	"BP0017": FirmwareTooOld, // gateware_too_old
+	"BP0018": Refused,        // uart_same_pin
+	"BP0019": Refused,        // uart_half_duplex_two_pins
+	"BP0020": Refused,        // uart_entry_no_reset_pin
+	"BP0021": Refused,        // uart_entry_invalid
+	"BP0022": Refused,        // uart_de_pin
+	"BP0023": Refused,        // la_no_pull
+	"BP0024": Refused,        // la_pull_direction
+	"BP0025": Busy,           // lease_busy
+	"BP0026": Refused,        // lease_lost
+	"BP0027": Refused,        // lease_not_held
+	"BP0028": Refused,        // vref_5v_missing
+	"BP0029": Refused,        // pull_rail_down
+	"BP0030": ClientTooOld,   // client_too_old
+	"BP0031": Refused,        // la_pin_in_use
+	"BP0032": Refused,        // la_pull_down_engaged
+	"BP0033": Refused,        // la_pull_down_conflict
+	"BP0034": Refused,        // la_dut_output
+	"BP0035": Refused,        // la_driven_pin
+	"BP0036": Refused,        // la_not_gpio_output
+	"BP0037": Refused,        // la_voltage_pins_in_use
+	"BP0038": Refused,        // trigger_timeout
+	"BP0039": Refused,        // sensor_trigger_timeout
+	"BP0040": Locked,         // lan_locked
+	"BP0041": Refused,        // policy_not_from_lan
+	"BP0042": Refused,        // setting_cloud_or_usb
+	"BP0043": Refused,        // setting_device_only
+	"BP0044": Refused,        // policy_loosen_usb_only (retired)
+	"BP0045": Forbidden,      // role_required
+	"BP0046": Refused,        // no_analog_front_end
+	"BP0047": Busy,           // pod_busy
+	"BP0048": Busy,           // storage_bus_busy
+	"BP0049": Busy,           // uart_session_open
+	"BP0050": Busy,           // swd_session_open
+	"BP0051": Busy,           // update_in_progress
+	"BP0052": Busy,           // cloud_command_busy
+	"BP0053": Refused,        // reply_too_large
+	"BP0054": Refused,        // cloud_reply_too_large
+	"BP0055": Refused,        // sensor_instance_unknown
+	"BP0056": Refused,        // no_module_link
+	"BP0057": Refused,        // image_switch_sensors_running
+	"BP0058": Refused,        // fpga_image_required
+	"BP0059": Refused,        // fpga_image_sensors_first
+	"BP0060": FirmwareTooOld, // ota_unknown_target
+	"BP0061": Refused,        // i2c_needs_pullups
+	"BP0062": Refused,        // i2c_session_not_open
+	"BP0063": Refused,        // i2c_engine_reset
+	"BP0064": Refused,        // loop_sweep_with_map
+	"BP0065": Refused,        // output_used_by_sensor
+	"BP0066": Busy,           // step_busy
+	"BP0067": Refused,        // samples_out_of_range
+	"BP0068": Refused,        // la_rate_above_ceiling
+	"BP0069": Refused,        // la_rate_too_deep
+	"BP0070": Refused,        // capture_dual_too_deep
+	"BP0071": Refused,        // capture_overflowed
+	"BP0072": Refused,        // psram_too_small
+	"BP0073": Refused,        // psram_bandwidth
+	"BP0074": Refused,        // signatures_always_required
+	"BP0075": Refused,        // lan_plaintext_off
+	"BP0076": Refused,        // usb_host_over_usb
+	"BP0077": Refused,        // usb_host_port_unavailable
+	"BP0078": Refused,        // usb_host_no_crystal
+	"BP0079": Refused,        // usb_host_other_port
 }
 
 // CodeKind is the kind of a refusal code; ok is false for a code the table does not have.
@@ -87,34 +145,17 @@ func CodeKind(code string) (kind RefusalKind, ok bool) {
 	return kind, ok
 }
 
-// Kind classifies the refusal: by its code, else (a reply without one, from older firmware or a
-// refusal with no code yet) by its text.
+// Kind classifies the refusal by its code; a refusal without one (or with a code this table
+// does not know) is Refused. The text is never read.
 func (e *PodError) Kind() RefusalKind {
-	if k, ok := CodeKind(e.Code); ok {
-		return k
-	}
-	return ClassifyRefusal(e.Reason)
+	k, _ := CodeKind(e.Code)
+	return k
 }
 
-// ClassifyRefusal classifies a firmware refusal text by its prefix: "locked:", "forbidden:",
-// or a first clause ending in "busy" ("busy", "busy: ...", "swd busy", "swd or spi busy: ...").
-// It is the fallback for a refusal without a code.
-func ClassifyRefusal(msg string) RefusalKind {
-	msg = strings.TrimSpace(msg)
-	switch {
-	case strings.HasPrefix(msg, "locked:"): // no code yet (the LAN policy gate)
-		return Locked
-	case strings.HasPrefix(msg, "forbidden:"): // no code yet (the cloud tunnel role gate)
-		return Forbidden
-	}
-	// "busy: a cloud job holds ..." / "busy: <holder> holds ...": BP0025 on firmware after
-	// 3.10.13; the engine texts ("swd busy", "uart busy", "busy: ... PSRAM bus"): no code yet
-	// (BP0003-BP0005 and BP0016 cover the I2C, SPI, bus engine and storage cases).
-	head, _, _ := strings.Cut(msg, ":")
-	if head == "busy" || strings.HasSuffix(head, " busy") {
-		return Busy
-	}
-	return Refused
+// HasCode says err carries a refusal with this code.
+func HasCode(err error, code string) bool {
+	pe, ok := AsPodError(err)
+	return ok && strings.EqualFold(strings.TrimSpace(pe.Code), code)
 }
 
 // AsPodError returns the refusal in err's chain, if any.
@@ -152,18 +193,30 @@ func firmwareMessage(msg string) string {
 	return msg
 }
 
-// podError is an error reply from the JSON API.
-func podError(msg string) error { return &PodError{Reason: firmwareMessage(msg)} }
+// codedReason is the text of a coded refusal: the catalog's message filled with args. The pod
+// sends no message with a code (firmware 4.0); over the cloud channel the message is the code
+// itself. A code this CLI's catalog does not know shows as the code.
+func codedReason(code string, args map[string]any) string {
+	if e, ok := errcatalog.Lookup(code); ok {
+		return errcatalog.Fill(e.Message, args)
+	}
+	return strings.ToUpper(strings.TrimSpace(code))
+}
 
 // replyError is an error reply from the JSON API with its code and args.
 func replyError(r *reply) error { return RefusalError(r.Message, r.Code, r.Args) }
 
 // RefusalError is a refusal with its text, code and args, from any JSON transport (the LAN, the
 // USB network, embeddedci.com's command channel): a *PodError, or for BP0030 (the pod takes no
-// client this old) an *UpdateRequiredError.
+// client this old) an *UpdateRequiredError. A coded refusal's text comes from the catalog, never
+// from the pod (only BP0030 still carries a message, for clients older than the codes).
 func RefusalError(msg, code string, args map[string]any) error {
+	code = strings.TrimSpace(code)
 	pe := &PodError{Reason: firmwareMessage(msg), Code: code, Args: args}
-	if strings.EqualFold(strings.TrimSpace(code), CodeClientTooOld) {
+	if code != "" {
+		pe.Reason = codedReason(code, args)
+	}
+	if strings.EqualFold(code, CodeClientTooOld) {
 		return updateRequiredFromRefusal(pe)
 	}
 	return pe
