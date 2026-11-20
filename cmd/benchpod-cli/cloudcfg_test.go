@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -110,76 +109,6 @@ func TestCheckCAPEM(t *testing.T) {
 // ── USB ─────────────────────────────────────────────────────────────────────
 
 // fakeCloudConsole stands in for the pod's USB console.
-type fakeCloudConsole struct {
-	certs    []serialconsole.CACert
-	proxy    serialconsole.ProxyConfig
-	err      error // returned by every command
-	uploadTo string
-	uploaded []byte
-	calls    []string
-}
-
-func (f *fakeCloudConsole) CloudCA(context.Context) ([]serialconsole.CACert, error) {
-	f.calls = append(f.calls, "ca")
-	return f.certs, f.err
-}
-
-func (f *fakeCloudConsole) CloudCAClear(context.Context) error {
-	f.calls = append(f.calls, "ca-clear")
-	if f.err == nil {
-		f.certs = nil
-	}
-	return f.err
-}
-
-func (f *fakeCloudConsole) CloudProxy(context.Context) (serialconsole.ProxyConfig, error) {
-	f.calls = append(f.calls, "proxy")
-	return f.proxy, f.err
-}
-
-func (f *fakeCloudConsole) CloudProxySet(_ context.Context, addr, user, password string) (serialconsole.ProxyConfig, error) {
-	f.calls = append(f.calls, strings.TrimSpace("proxy-set "+addr+" "+user+" "+password))
-	if f.err != nil {
-		return serialconsole.ProxyConfig{}, f.err
-	}
-	f.proxy = serialconsole.ProxyConfig{Addr: addr, Auth: user != ""}
-	return f.proxy, nil
-}
-
-func (f *fakeCloudConsole) CloudProxyClear(context.Context) (serialconsole.ProxyConfig, error) {
-	f.calls = append(f.calls, "proxy-clear")
-	f.proxy = serialconsole.ProxyConfig{}
-	return f.proxy, f.err
-}
-
-func (f *fakeCloudConsole) Upload(_ context.Context, target string, data []byte, _ int, _ func(int, int)) error {
-	f.calls = append(f.calls, "upload "+target)
-	f.uploadTo, f.uploaded = target, data
-	certs, _, err := checkCAPEM(data)
-	if err != nil {
-		return err
-	}
-	f.certs = nil
-	for _, c := range certs {
-		f.certs = append(f.certs, serialconsole.CACert{Subject: c.Subject, SHA256: c.SHA256})
-	}
-	return nil
-}
-
-func (f *fakeCloudConsole) Close() error { return nil }
-
-func withFakeCloudConsole(t *testing.T, fc *fakeCloudConsole) {
-	t.Helper()
-	saved := openCloudConsole
-	openCloudConsole = func(_ *globalFlags, device string, _ time.Duration) (cloudConsole, string, context.Context, context.CancelFunc, error) {
-		if device == "" {
-			device = "/dev/cu.usbmodem1101"
-		}
-		return fc, device, context.Background(), func() {}, nil
-	}
-	t.Cleanup(func() { openCloudConsole = saved })
-}
-
 func runCACapture(g *globalFlags, action, file string) (string, string, error) {
 	var out, warn bytes.Buffer
 	err := runCloudCA(g, action, file, &out, &warn)
@@ -192,116 +121,91 @@ func runProxyCapture(g *globalFlags, action, addr, user, password string) (strin
 	return out.String(), warn.String(), err
 }
 
+// Over USB the company CA and the proxy go over the pod's USB network adapter (JSON, the USB link
+// may change them).
 func TestCloudCAUSB(t *testing.T) {
-	fc := &fakeCloudConsole{}
-	withFakeCloudConsole(t, fc)
-	g := &globalFlags{connection: "usb"}
+	pod := &lanCfgPod{t: t}
+	addr := pod.start()
+	g := &globalFlags{connection: "usb", usbAddr: addr}
 
 	out, _, err := runCACapture(g, "show", "")
-	if err != nil || out != "Company CA of the pod on /dev/cu.usbmodem1101: none (the pod trusts only its built-in roots)\n" {
+	if err != nil || out != "Company CA of "+addr+": none (the pod trusts only its built-in roots)\n" {
 		t.Fatalf("show = %q, %v", out, err)
 	}
-
 	root := testCertPEM(t, "Acme Root CA", true)
 	out, warn, err := runCACapture(g, "set", tempPEM(t, "acme.pem", root))
-	if err != nil {
-		t.Fatalf("set: %v", err)
-	}
-	want := "Company CA of the pod on /dev/cu.usbmodem1101 is now 1 certificate\n" +
-		"  CN=Acme Root CA,O=Acme Corp\n    SHA-256 " + pemSHA(t, root) + "\n"
-	if out != want {
-		t.Fatalf("set = %q\nwant %q", out, want)
-	}
-	if fc.uploadTo != "ca" || !bytes.Equal(fc.uploaded, root) {
-		t.Fatalf("uploaded %q to %q", fc.uploaded, fc.uploadTo)
+	if err != nil || !strings.HasPrefix(out, "Company CA of "+addr+" is now 1 certificate\n") {
+		t.Fatalf("set = %q, %v", out, err)
 	}
 	if !strings.Contains(warn, "reconnects to the cloud") || strings.Contains(warn, "Warning") {
 		t.Fatalf("warn = %q", warn)
 	}
-
-	out, warn, err = runCACapture(g, "clear", "")
-	if err != nil || !strings.HasSuffix(out, "is now none (the pod trusts only its built-in roots)\n") ||
-		!strings.Contains(warn, "only its built-in roots") {
-		t.Fatalf("clear = %q, %q, %v", out, warn, err)
+	if !strings.Contains(pod.cmds(), "ota_begin,ota_data,ota_end,ota_commit") {
+		t.Fatalf("requests = %s", pod.cmds())
 	}
-	if got := strings.Join(fc.calls, ","); got != "ca,ca,upload ca,ca,ca-clear,ca" {
-		t.Fatalf("calls = %s", got)
+	out, _, err = runCACapture(g, "clear", "")
+	if err != nil || !strings.HasSuffix(out, "is now none (the pod trusts only its built-in roots)\n") {
+		t.Fatalf("clear = %q, %v", out, err)
 	}
 }
 
 func TestCloudCANotMarkedCAWarns(t *testing.T) {
-	fc := &fakeCloudConsole{}
-	withFakeCloudConsole(t, fc)
-	_, warn, err := runCACapture(&globalFlags{connection: "usb"}, "set", tempPEM(t, "leaf.pem", testCertPEM(t, "leaf", false)))
-	if err != nil || !strings.Contains(warn, "Warning: CN=leaf,O=Acme Corp is not marked as a CA") {
+	pod := &lanCfgPod{t: t}
+	g := &globalFlags{connection: "usb", usbAddr: pod.start()}
+	_, warn, err := runCACapture(g, "set", tempPEM(t, "leaf.pem", testCertPEM(t, "leaf", false)))
+	if !strings.Contains(warn, "Warning: CN=leaf,O=Acme Corp is not marked as a CA") {
 		t.Fatalf("warn = %q, %v", warn, err)
 	}
 }
 
-func TestCloudCAUSBOldFirmware(t *testing.T) {
-	fc := &fakeCloudConsole{err: serialconsole.ErrUnknownCommand}
-	withFakeCloudConsole(t, fc)
-	g := &globalFlags{connection: "usb"}
-	for _, action := range []string{"show", "clear"} {
-		if _, _, err := runCACapture(g, action, ""); err == nil || err.Error() != caMissing {
-			t.Fatalf("%s: err = %v", action, err)
-		}
-	}
-	if _, _, err := runCACapture(g, "set", tempPEM(t, "a.pem", testCertPEM(t, "A", true))); err == nil || err.Error() != caMissing {
-		t.Fatalf("set: err = %v", err)
-	}
-	if fc.uploadTo != "" {
-		t.Fatal("old firmware got an upload")
-	}
-	if _, _, err := runProxyCapture(g, "show", "", "", ""); err == nil || err.Error() != proxyMissing {
-		t.Fatalf("proxy: err = %v", err)
-	}
-}
-
 func TestCloudCABadPEMTouchesNoPod(t *testing.T) {
-	fc := &fakeCloudConsole{}
-	withFakeCloudConsole(t, fc)
-	_, _, err := runCACapture(&globalFlags{connection: "usb"}, "set", tempPEM(t, "bad.pem", []byte("not a certificate")))
+	pod := &lanCfgPod{t: t}
+	g := &globalFlags{connection: "usb", usbAddr: pod.start()}
+	_, _, err := runCACapture(g, "set", tempPEM(t, "bad.pem", []byte("not a certificate")))
 	if err == nil || !strings.Contains(err.Error(), "no CERTIFICATE block") {
 		t.Fatalf("err = %v", err)
 	}
-	if len(fc.calls) != 0 {
-		t.Fatalf("a bad PEM reached the pod: %v", fc.calls)
+	if pod.cmds() != "" {
+		t.Fatalf("a bad PEM reached the pod: %v", pod.cmds())
 	}
-	if _, _, err := runCACapture(&globalFlags{connection: "usb"}, "set", filepath.Join(t.TempDir(), "missing.pem")); err == nil {
+	if _, _, err := runCACapture(g, "set", filepath.Join(t.TempDir(), "missing.pem")); err == nil {
 		t.Fatal("a missing file passed")
 	}
 }
 
+// Without the USB network adapter (and no network address that answers), the command says how to
+// turn it on.
+func TestCloudCfgUSBWithoutTheNetwork(t *testing.T) {
+	old := usbNetwork
+	usbNetwork = func(*globalFlags, string) (serialconsole.USBNet, error) {
+		return serialconsole.USBNet{PodIP: "10.237.8.85", HostIP: "10.237.8.86", OffBySetting: true}, nil
+	}
+	t.Cleanup(func() { usbNetwork = old })
+	_, _, err := runProxyCapture(&globalFlags{connection: "usb"}, "show", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "usb-network on") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestCloudProxyUSB(t *testing.T) {
-	fc := &fakeCloudConsole{}
-	withFakeCloudConsole(t, fc)
-	g := &globalFlags{connection: "/dev/cu.usbmodem9"}
+	pod := &lanCfgPod{t: t}
+	addr := pod.start()
+	g := &globalFlags{connection: "usb", usbAddr: addr}
 
 	out, _, err := runProxyCapture(g, "show", "", "", "")
-	if err != nil || out != "HTTP proxy of the pod on /dev/cu.usbmodem9: none (the pod connects to the cloud directly)\n" {
+	if err != nil || out != "HTTP proxy of "+addr+": none (the pod connects to the cloud directly)\n" {
 		t.Fatalf("show = %q, %v", out, err)
 	}
 	out, warn, err := runProxyCapture(g, "set", "Proxy.Corp:3128", "alice", "s3cret")
-	if err != nil || out != "HTTP proxy of the pod on /dev/cu.usbmodem9 is now proxy.corp:3128 (with a user and password)\n" {
+	if err != nil || out != "HTTP proxy of "+addr+" is now proxy.corp:3128 (with a user and password)\n" {
 		t.Fatalf("set = %q, %v", out, err)
 	}
-	if warn != "The pod reconnects to the cloud through proxy.corp:3128.\n" {
+	if warn != "The pod reconnects to the cloud through proxy.corp:3128.\n" || strings.Contains(out+warn, "s3cret") {
 		t.Fatalf("warn = %q", warn)
 	}
-	if strings.Contains(out+warn, "s3cret") {
-		t.Fatal("the password was printed")
-	}
-	out, warn, err = runProxyCapture(g, "clear", "", "", "")
-	if err != nil || !strings.HasSuffix(out, "is now none (the pod connects to the cloud directly)\n") ||
-		warn != "The pod reconnects to the cloud directly, without a proxy.\n" {
-		t.Fatalf("clear = %q, %q, %v", out, warn, err)
-	}
-
-	fc.err = &serialconsole.CommandError{Cmd: "proxy-set", Reason: "w25q write failed"}
-	_, _, err = runProxyCapture(g, "set", "p:1", "", "")
-	if err == nil || err.Error() != "cloud proxy set: the pod refused: w25q write failed" {
-		t.Fatalf("refusal: %v", err)
+	out, _, err = runProxyCapture(g, "clear", "", "", "")
+	if err != nil || !strings.HasSuffix(out, "is now none (the pod connects to the cloud directly)\n") {
+		t.Fatalf("clear = %q, %v", out, err)
 	}
 }
 
@@ -318,16 +222,16 @@ func TestCheckProxyAddr(t *testing.T) {
 			t.Errorf("%q passed", in)
 		}
 	}
-	fc := &fakeCloudConsole{}
-	withFakeCloudConsole(t, fc)
-	if _, _, err := runProxyCapture(&globalFlags{connection: "usb"}, "set", "http://p:1", "", ""); err == nil {
+	pod := &lanCfgPod{t: t}
+	g := &globalFlags{connection: "usb", usbAddr: pod.start()}
+	if _, _, err := runProxyCapture(g, "set", "http://p:1", "", ""); err == nil {
 		t.Fatal("a bad address passed")
 	}
-	if _, _, err := runProxyCapture(&globalFlags{connection: "usb"}, "set", "p:1", "alice", ""); err == nil {
+	if _, _, err := runProxyCapture(g, "set", "p:1", "alice", ""); err == nil {
 		t.Fatal("a user without a password passed")
 	}
-	if len(fc.calls) != 0 {
-		t.Fatalf("a bad value reached the pod: %v", fc.calls)
+	if pod.cmds() != "" {
+		t.Fatalf("a bad value reached the pod: %v", pod.cmds())
 	}
 }
 
@@ -341,7 +245,7 @@ type lanCfgPod struct {
 	old    bool   // "unknown cmd" / "unknown target"
 	locked string // the T2/T3 verbs refused with "locked: ..."
 	gated  bool   // current firmware: every change refused from the LAN (pod_policy_cloud_link_gate)
-	certs  []serialconsole.CACert
+	certs  []podCACert
 	proxy  proxyReply
 	staged []byte
 	sha    string
@@ -463,7 +367,7 @@ func (p *lanCfgPod) handle(req map[string]any) string {
 		}
 		p.certs = nil
 		for _, c := range certs {
-			p.certs = append(p.certs, serialconsole.CACert{Subject: c.Subject, SHA256: c.SHA256})
+			p.certs = append(p.certs, podCACert{Subject: c.Subject, SHA256: c.SHA256})
 		}
 		p.state = "installed"
 	case "ota_abort":

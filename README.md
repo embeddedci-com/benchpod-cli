@@ -548,26 +548,26 @@ belongs to the old record.
 On a network whose proxy inspects TLS, the pod's cloud link fails: the proxy
 re-signs embeddedci.com with a company root the pod does not trust. Some networks
 also only reach the internet through an HTTP proxy. `benchpod cloud` sets both
-over the USB console (`--connection usb`) or through embeddedci.com
+over the pod's USB network adapter (`--connection usb`) or through embeddedci.com
 (`--connection embeddedci:<name>`: `cloud proxy` show, set and clear, `cloud ca` show
 and clear; the CA upload needs USB, and a change needs an organization owner or
-admin). The LAN (`--connection <address>`) can show them; current firmware refuses
-changes from the LAN:
+admin). The LAN (`--connection <address>`) can show them; the pod refuses changes
+from the LAN. With USB networking off, `benchpod usb-network on --connection usb`
+turns it back on:
 
 ```
 $ benchpod cloud ca set acme-root.pem --connection usb
 acme-root.pem: 1 certificate
   CN=Acme Root CA,O=Acme Corp
     SHA-256 3b1f...c2d9
-Uploading 652 bytes to the pod on /dev/cu.usbmodem1101 ...
-Company CA of the pod on /dev/cu.usbmodem1101 is now 1 certificate
+Company CA of 10.237.8.85:8080 is now 1 certificate
   CN=Acme Root CA,O=Acme Corp
     SHA-256 3b1f...c2d9
 The pod reconnects to the cloud, trusting this CA in addition to its built-in roots.
 
 $ benchpod cloud proxy set proxy.corp:3128 --user alice --connection usb
 Proxy password:
-HTTP proxy of the pod on /dev/cu.usbmodem1101 is now proxy.corp:3128 (with a user and password)
+HTTP proxy of 10.237.8.85:8080 is now proxy.corp:3128 (with a user and password)
 The pod reconnects to the cloud through proxy.corp:3128.
 ```
 
@@ -584,19 +584,14 @@ The pod reconnects to the cloud through proxy.corp:3128.
   TCP and the password would cross the network unencrypted.
 - `show` (the default) reports what the pod holds. The pod reconnects to the
   cloud after every change.
-- Current firmware refuses `set` and `clear` from the LAN, whatever its LAN
-  policy: only USB or the cloud link may change the company CA or the proxy. The
-  CLI then prints the pod's reason and a hint to rerun with `--connection usb`:
+- The pod refuses `set` and `clear` from the LAN, whatever its LAN policy: only
+  USB or the cloud link may change the company CA or the proxy (`BP0042`). The
+  CLI shows the code, the reason and to rerun with `--connection usb`:
 
   ```
   $ benchpod cloud proxy clear --connection 192.168.1.50
-  [benchpod] cloud proxy clear: the pod refused: cloud_proxy: change it from the cloud or over USB (the pod only takes this change over USB or from the cloud, never from Ethernet or Wi-Fi; run it with --connection usb)
+  [benchpod] cloud proxy clear: the pod refused: BP0042: cloud_proxy cannot be changed over the LAN: change it from the cloud or over USB; run this over USB with --connection usb, or from the cloud (https://embeddedci.com/docs/errors#BP0042)
   ```
-
-  Older firmware with its LAN policy `locked` refuses the same way, with its own
-  message.
-- Firmware without them gets "this firmware has no company CA support; update the
-  pod's firmware" (or the same for the HTTP proxy).
 
 Run `benchpod <command> -h` for the flags of any subcommand.
 
