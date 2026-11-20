@@ -27,6 +27,8 @@ type fakeSetupEnv struct {
 	saveErr   error      // what saveLaMV fails with
 	latest    string     // latest firmware release, "" = unknown
 	regErr    error      // what register returns after registering
+	pairMsg   string     // what pair prints
+	pairErr   error      // what pair fails with
 
 	calls      []string
 	wifiSSID   string
@@ -93,6 +95,11 @@ func (f *fakeSetupEnv) save(target string) error {
 }
 
 func (f *fakeSetupEnv) latestFirmware() string { return f.latest }
+
+func (f *fakeSetupEnv) pair(setupPod) (string, error) {
+	f.calls = append(f.calls, "pair")
+	return f.pairMsg, f.pairErr
+}
 
 func (f *fakeSetupEnv) did(call string) bool {
 	for _, c := range f.calls {
@@ -524,5 +531,40 @@ func TestMergeSetupPodsKeepsTheLANAddress(t *testing.T) {
 	pods = mergeSetupPods(nil, []discoveredPod{{addr: "10.237.8.85:8080", lanAddr: "192.168.1.220:8080", reachable: true}})
 	if pods[0].lanAddr != "192.168.1.220:8080" {
 		t.Fatalf("got %+v", pods)
+	}
+}
+
+func TestSetupPairsBeforeTheNetworkSteps(t *testing.T) {
+	env := &fakeSetupEnv{
+		pods:    []setupPod{{device: "/dev/cu.usbmodem1", addr: "192.168.1.221:8080", firmware: "v4.0.1", cloud: registeredMine}},
+		laMV:    3300,
+		cloud:   registeredMine,
+		who:     "you@example.com",
+		account: map[string]string{"dev-1": "benchpod-baea06"},
+		pairMsg: "Paired this computer (laptop) with it over USB, so it can drive the pod over the network too.",
+	}
+	out, err := runSetupWith(t, env, "", setupOpts{laVoltageMV: 3300, yes: true})
+	if err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Paired this computer (laptop)") || !strings.Contains(out, "1/5  Find the pod") {
+		t.Fatalf("no pairing line in step 1:\n%s", out)
+	}
+	if env.calls[0] != "find" || env.calls[1] != "pair" {
+		t.Fatalf("pair did not come right after find: %v", env.calls)
+	}
+}
+
+func TestSetupStopsWhenItCannotPair(t *testing.T) {
+	env := &fakeSetupEnv{
+		pods:    []setupPod{{addr: "192.168.1.221:8443", lanAddr: "192.168.1.221:8443", firmware: "v4.0.1"}},
+		pairErr: errNotPaired,
+	}
+	out, err := runSetupWith(t, env, "", setupOpts{yes: true})
+	if !errors.Is(err, errNotPaired) || !strings.Contains(err.Error(), "USB-C") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+	if env.did("save") || env.did("register") {
+		t.Fatalf("setup went on unpaired: %v", env.calls)
 	}
 }

@@ -33,7 +33,7 @@ type PolicyError = CommandError
 // Policy runs the console command cmd ("lan-policy" or "sig-policy"), setting the policy to set
 // when it is not empty, and returns what the pod reports afterwards.
 func (c *Console) Policy(ctx context.Context, cmd, set string) (PolicyReply, error) {
-	if cmd != "lan-policy" && cmd != "sig-policy" && cmd != "usb-network" {
+	if cmd != "lan-policy" && cmd != "sig-policy" && cmd != "usb-network" && cmd != "lan-pairing" {
 		return PolicyReply{}, fmt.Errorf("unknown policy command %q", cmd)
 	}
 	line := cmd

@@ -2305,6 +2305,43 @@ pod's console `lan-tls` or the web app's pod Settings.
 Drop this computer's pin for the pod; the next TLS connection pins what it
 presents.
 
+### `benchpod lan-clients`
+
+List the computers paired with the pod (firmware 4.0.1 and later). Over Ethernet and
+Wi-Fi the pod answers only status to a computer that is not paired; `benchpod setup`
+pairs this computer over the pod's USB-C cable on its own. The list marks this computer.
+Over USB (the console or `--connection usb`), embeddedci.com (`--connection
+embeddedci:<name>`), or a paired computer on the network.
+
+### `benchpod lan-clients add`
+
+Pair this computer: its TLS client key (made on first use, `client.key` and `client.crt`
+next to `known_pods.json`) goes on the pod's list. Only over USB or embeddedci.com (as an
+organization owner or admin), never over the network.
+
+| Flag        | Default         | Purpose                                                              |
+|-------------|-----------------|----------------------------------------------------------------------|
+| `--name`    | this host name  | The name the pod lists it under (1 to 23 characters).                |
+| `--new-key` | off             | Make a new key, pair it and print its certificate and key PEM once, for a CI runner's `BENCHPOD_CLIENT_KEY_PEM` secret. Needs `--name`. |
+
+A runner with `BENCHPOD_CLIENT_KEY_PEM` (or `BENCHPOD_CLIENT_CERT` and
+`BENCHPOD_CLIENT_KEY`, files) uses that key instead of its own.
+
+### `benchpod lan-clients remove`
+
+`benchpod lan-clients remove <name|key>`: unpair every computer with that name, or the
+one key that starts with these hex digits (8 or more). Only over USB or embeddedci.com.
+
+### `benchpod lan-clients clear`
+
+Unpair every computer. Only over USB or embeddedci.com.
+
+### `benchpod lan-pairing [on|off]`
+
+Show or set LAN pairing (firmware 4.0.1 and later). `on`, the default: a computer on
+Ethernet or Wi-Fi drives the pod only once it is paired. `off`: every computer on the
+network may, as before 4.0.1. Only over USB or embeddedci.com. Stored on the pod.
+
 ### `benchpod usb-network [show|on|off]`
 
 Show the pod's USB network setting, or turn its USB network adapter on or off

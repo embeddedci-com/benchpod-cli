@@ -194,7 +194,10 @@ func tlsConfig(addr string, pin bool) (*tls.Config, error) {
 	// ECDHE + ECDSA, a resumed one ~20 ms, and every command opens a connection. A resumed
 	// session proves the same server as the full handshake whose certificate was pinned;
 	// VerifyConnection still runs on it with that certificate.
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ClientSessionCache: sessionCache}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ClientSessionCache: sessionCache,
+		// LAN pairing (clientid.go): firmware 4.0.1+ asks for a client certificate and lets in
+		// only paired keys beyond status; older firmware never asks.
+		GetClientCertificate: clientCertificate}
 	if net.ParseIP(host) == nil {
 		cfg.ServerName = host
 	}
