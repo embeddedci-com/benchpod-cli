@@ -121,3 +121,23 @@ func TestStatusMACs(t *testing.T) {
 		t.Fatalf("summary:\n%s", b.String())
 	}
 }
+
+// A two-board pod whose board and module use different flat-cable pinouts keeps its DAC off:
+// status says so (status.module.dac_pinout_ok false).
+func TestStatusShowsADACPinoutMismatch(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{"version":"4.0.0","module":{"present":true,"dac_pinout_ok":false}}`: true,
+		`{"version":"4.0.0","module":{"present":true,"dac_pinout_ok":true}}`:  false,
+		`{"version":"4.0.0"}`: false,
+	} {
+		var st podStatus
+		if err := json.Unmarshal([]byte(raw), &st); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		printStatusSummary(&out, statusSummary{addr: "pod", st: st})
+		if got := strings.Contains(out.String(), "DAC           off: board/module pinout mismatch"); got != want {
+			t.Errorf("%s:\n%s", raw, out.String())
+		}
+	}
+}

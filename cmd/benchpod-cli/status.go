@@ -123,6 +123,13 @@ type podStatus struct {
 	SafeMode         bool    `json:"safe_mode"`
 	SafeReason       string  `json:"safe_reason"`
 	USB              *podUSB `json:"usb"` // firmware 3.9.0+
+	// Module is the analog module of a two-board pod (left out on other boards). DacPinoutOK is
+	// false when the digital board and the module use different flat-cable pinouts: the pod
+	// keeps the DAC off (BP0080).
+	Module *struct {
+		Present     bool  `json:"present"`
+		DacPinoutOK *bool `json:"dac_pinout_ok"`
+	} `json:"module"`
 	// The MACs (firmware after 3.10.7, full form only). WiFiMAC is absent on a pod without Wi-Fi
 	// and null until the pod knows it (a Wi-Fi scan or a join tells it).
 	EthMAC  string          `json:"eth_mac"`
@@ -339,6 +346,10 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 	if st.Lease != nil && st.Lease.Held {
 		row("Lease", fmt.Sprintf("held by cloud job %s (%d s left); the LAN is read-only until it ends",
 			valueOrDash(st.Lease.Holder), st.Lease.LeftS))
+	}
+	if st.Module != nil && st.Module.DacPinoutOK != nil && !*st.Module.DacPinoutOK {
+		row("DAC", "off: board/module pinout mismatch (the digital board and the analog module use different "+
+			"flat-cable pinouts; `benchpod explain BP0080`)")
 	}
 	if st.SafeMode {
 		row("Safe mode", valueOrDash(st.SafeReason))
