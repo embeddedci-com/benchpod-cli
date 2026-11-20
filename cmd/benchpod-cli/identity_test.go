@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // fakeIdentityConsole stands in for the pod's USB console.
@@ -43,7 +44,9 @@ func withFakeIdentityConsole(t *testing.T, fc *fakeIdentityConsole, tty bool) {
 		return fc, device, context.Background(), func() {}, nil
 	}
 	stdinIsTerminal = func() bool { return tty }
-	t.Cleanup(func() { openIdentityConsole, stdinIsTerminal = saved, savedTTY })
+	savedWipe := wipeIdentity
+	wipeIdentity = func(ctx context.Context, _ *globalFlags, _, token string) (string, error) { return fc.IdentityWipe(ctx, token) }
+	t.Cleanup(func() { openIdentityConsole, stdinIsTerminal, wipeIdentity = saved, savedTTY, savedWipe })
 }
 
 func TestIdentityWipeOnlyOverUSB(t *testing.T) {
@@ -126,16 +129,39 @@ func TestIdentityWipeNeedsTerminalOrYes(t *testing.T) {
 
 func TestIdentityWipeRefusalAndOldFirmware(t *testing.T) {
 	fc := &fakeIdentityConsole{state: serialconsole.IdentityState{ShortID: "a1b2c3"},
-		wipeErr: &serialconsole.IdentityError{Cmd: "identity-wipe", Reason: "hardware RNG failed; nothing was erased"}}
+		wipeErr: &tcpclient.PodError{Reason: "identity_wipe: hardware RNG failed; nothing was erased"}}
 	withFakeIdentityConsole(t, fc, true)
 	err := runIdentityWipe(&globalFlags{connection: "usb"}, true, nil, &bytes.Buffer{})
-	if err == nil || err.Error() != "identity wipe: the pod refused: hardware RNG failed; nothing was erased" {
+	if err == nil || err.Error() != "identity wipe: the pod refused: identity_wipe: hardware RNG failed; nothing was erased" {
 		t.Fatalf("err = %v", err)
 	}
-	fc.wipeErr = serialconsole.ErrIdentityUnsupported
+	// Not over the USB link: BP0043.
+	fc.wipeErr = tcpclient.RefusalError("", "BP0043", map[string]any{"setting": "identity_wipe"})
 	err = runIdentityWipe(&globalFlags{connection: "usb"}, true, nil, &bytes.Buffer{})
-	if err == nil || err.Error() != identityMissing {
-		t.Fatalf("old firmware: err = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "BP0043: identity_wipe can only be changed on the device") || exitCode(err) != exitRefused {
+		t.Fatalf("BP0043: err = %v", err)
+	}
+}
+
+// The real wipe sends identity_wipe with the confirm token over the USB link.
+func TestIdentityWipeSendsJSON(t *testing.T) {
+	pod, addr := startJSONPod(t, func(req map[string]any) string {
+		return okReply(map[string]any{"short_id": "d4e5f6"})
+	})
+	old := localUSBPod
+	localUSBPod = func(string) string { return addr }
+	t.Cleanup(func() { localUSBPod = old })
+	id, err := wipeIdentity(context.Background(), &globalFlags{connection: "usb"}, "", "a1b2c3")
+	if err != nil || id != "d4e5f6" {
+		t.Fatalf("id %q, err %v", id, err)
+	}
+	if r := pod.last("identity_wipe"); r["confirm"] != "a1b2c3" {
+		t.Fatalf("sent %v", r)
+	}
+	// No USB link: says how to turn USB networking on.
+	localUSBPod = func(string) string { return "" }
+	if _, err := wipeIdentity(context.Background(), &globalFlags{connection: "usb"}, "", "a1b2c3"); err == nil || !strings.Contains(err.Error(), "usb-network on") {
+		t.Fatalf("no link: err = %v", err)
 	}
 }
 

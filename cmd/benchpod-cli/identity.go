@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,8 +21,10 @@ import (
 //
 // The pod's device identity is an Ed25519 key in its own flash sector. The firmware generates it
 // once, on a blank sector, and never writes over a record it does not recognize: such a pod stays
-// offline and says why. `identity wipe` is the deliberate way back. It runs on the USB console
-// only (physical presence); the pod refuses it over the LAN and the cloud.
+// offline and says why. `identity wipe` is the deliberate way back. The state comes from the USB
+// console's `identity`; the wipe is the JSON identity_wipe over the pod's USB network adapter
+// (physical presence; firmware 4.0 has no console identity-wipe). The pod refuses it over the LAN
+// and the cloud (BP0043).
 //
 // embeddedci.com knows a pod by its public key, so after a wipe the pod is a new pod there: the old
 // device record keeps its data and its login state, and the pod is registered again as a new
@@ -33,8 +36,28 @@ const identityMissing = "this firmware has no identity commands; update the pod'
 // identityConsole is the part of the USB console the identity commands use.
 type identityConsole interface {
 	Identity(ctx context.Context) (serialconsole.IdentityState, error)
-	IdentityWipe(ctx context.Context, token string) (string, error)
 	Close() error
+}
+
+// wipeIdentity sends identity_wipe with the confirm token over the pod's USB network adapter and
+// returns the new short id. A variable so tests can replace it.
+var wipeIdentity = func(ctx context.Context, g *globalFlags, device, token string) (string, error) {
+	addr := g.usbLinkAddr(device, g.usbPodName())
+	if addr == "" {
+		return "", errors.New("the pod's USB network adapter is not up: the pod wipes its identity only over its USB link. " +
+			usbNetworkOffHint)
+	}
+	raw, err := (&tcpclient.Client{Addr: addr}).Command(ctx, map[string]any{"cmd": "identity_wipe", "confirm": token})
+	if err != nil {
+		return "", err
+	}
+	var rep struct {
+		ShortID string `json:"short_id"`
+	}
+	if json.Unmarshal(raw, &rep) != nil || rep.ShortID == "" {
+		return "", fmt.Errorf("unexpected reply %s", strings.TrimSpace(string(raw)))
+	}
+	return rep.ShortID, nil
 }
 
 // openIdentityConsole opens the pod's USB console; tests replace it with a fake.
@@ -79,10 +102,12 @@ func newIdentityCmd(g *globalFlags) *cobra.Command {
 	var yes bool
 	wipe := &cobra.Command{
 		Use:   "wipe",
-		Short: "Erase the pod's identity key and make a new one (USB console only)",
-		Long: "Erase the pod's identity and generate a fresh key, over the pod's USB\n" +
-			"console (--connection usb or a serial device path). The pod refuses this over the\n" +
-			"LAN and the cloud: it needs someone at the pod.\n\n" +
+		Short: "Erase the pod's identity key and make a new one (over USB only)",
+		Long: "Erase the pod's identity and generate a fresh key, over USB (--connection usb or a\n" +
+			"serial device path): the CLI reads the identity on the pod's console and sends the\n" +
+			"wipe over its USB network adapter. The pod refuses this over the LAN and the cloud:\n" +
+			"it needs someone at the pod. USB networking off: `benchpod usb-network on\n" +
+			"--connection usb` (the pod's console `usb-network on`).\n\n" +
 			"Use it to recover a pod that reports an unknown identity record, or to retire a\n" +
 			"key. The pod is a NEW pod to embeddedci.com afterwards: deregister the old record\n" +
 			"and register the pod again (the command prints the steps).\n\n" +
@@ -193,7 +218,7 @@ func runIdentityWipe(g *globalFlags, yes bool, in io.Reader, out io.Writer) erro
 			return errors.New("identity wipe: cancelled, nothing changed")
 		}
 	}
-	newID, err := console.IdentityWipe(ctx, st.ConfirmToken())
+	newID, err := wipeIdentity(ctx, g, device, st.ConfirmToken())
 	if err != nil {
 		return identityErr("identity wipe", err)
 	}

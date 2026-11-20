@@ -388,7 +388,7 @@ benchpod lan-policy set locked --device-name benchpod-baea06
 benchpod sig-policy --connection usb                       # show
 benchpod sig-policy set permissive --connection usb
 
-# Device identity (USB console only):
+# Device identity (USB only):
 benchpod identity --connection usb                         # show
 benchpod identity wipe --connection usb                    # erase the key, make a new one
 
@@ -525,8 +525,10 @@ The pod stays offline without an identity. Recover it with: benchpod identity wi
 ```
 
 `benchpod identity wipe` erases the key and makes a new one. It works only over
-the pod's USB console (`--connection usb` or a serial device path): the pod
-refuses it over the LAN and the cloud, so it needs someone at the pod. The CLI
+USB (`--connection usb` or a serial device path): the CLI reads the identity on the
+pod's console and sends the wipe (`identity_wipe`) over its USB network adapter; the
+pod refuses it over the LAN and the cloud (`BP0043`), so it needs someone at the pod.
+With USB networking off, `benchpod usb-network on --connection usb` turns it on. The CLI
 shows the current identity and asks before it wipes (`--yes` skips the question
 for scripts); the pod also checks a confirmation token (the current short id, or
 `unknown`), so a stray command cannot wipe a key.
@@ -2346,7 +2348,8 @@ Same as `benchpod identity`.
 
 ### `benchpod identity wipe`
 
-Erase the pod's device key and make a new one (USB only). The pod then needs to be
+Erase the pod's device key and make a new one (USB only: the console shows the
+identity, the wipe goes over the pod's USB network adapter). The pod then needs to be
 registered again.
 
 | Flag    | Default | Purpose                      |
