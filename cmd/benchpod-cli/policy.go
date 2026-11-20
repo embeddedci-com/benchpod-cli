@@ -313,6 +313,7 @@ func cloudPolicyError(p podPolicy, set string, err error) error {
 	if msg == "" {
 		return fmt.Errorf("%s: %w", what, err)
 	}
+	// "loosen": no code yet (sig_policy's "only the USB console can loosen the policy")
 	if set != "" && p.cmd == sigPolicy.cmd && strings.Contains(strings.ToLower(msg), "loosen") {
 		return relayedRefusal(p, fmt.Sprintf("%s: the pod refused: %s. Loosen it over the pod's USB console: benchpod sig-policy set %s --connection usb",
 			what, msg, set), msg)
@@ -400,7 +401,7 @@ func runPolicyLAN(g *globalFlags, p podPolicy, addr string, out io.Writer) error
 	client := &tcpclient.Client{Addr: addr}
 	data, err := client.Command(ctx, map[string]any{"cmd": p.jsonCmd})
 	if err != nil {
-		if strings.Contains(err.Error(), "unknown cmd") {
+		if isUnknownCommand(err) {
 			return errors.New(p.missing)
 		}
 		if p.cmd == lanPolicy.cmd {

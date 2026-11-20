@@ -113,6 +113,19 @@ func TestPodRefusalIsAPodError(t *testing.T) {
 	}
 }
 
+// A coded refusal keeps its code and args through embeddedci.com, and its kind follows the code.
+func TestCodedPodRefusalThroughTheCloud(t *testing.T) {
+	f := &fakeServer{reply: func(w http.ResponseWriter) {
+		_, _ = w.Write([]byte(`{"status":"error","code":"BP0025","args":{"holder":"a cloud job","purpose":"ci","left_s":7}}`))
+	}}
+	c := &Client{API: f.start(t), Credential: "tok", DeviceID: "id-b", Name: "bench-b"}
+	_, err := c.Command(context.Background(), map[string]any{"cmd": "la"})
+	pe, ok := tcpclient.AsPodError(err)
+	if !ok || pe.Code != "BP0025" || pe.Args["holder"] != "a cloud job" || pe.Kind() != tcpclient.Busy {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
 func TestTransportFailures(t *testing.T) {
 	for _, c := range []struct {
 		status      int
@@ -214,5 +227,44 @@ func TestMissingScope(t *testing.T) {
 	e := &Error{Name: "p", Status: http.StatusForbidden, Message: "API key is missing the required scope: benchpod:control"}
 	if !strings.Contains(e.Error(), "the API key cannot do this: API key is missing the required scope: benchpod:control") {
 		t.Fatal(e.Error())
+	}
+}
+
+// A command through embeddedci.com carries client_api and client like a LAN one (the server passes
+// it on as it is), and not the LAN lease.
+func TestCloudCommandCarriesTheClientFields(t *testing.T) {
+	tcpclient.SetLeaseJoin(&tcpclient.LeaseJoin{ID: "L-1"})
+	defer tcpclient.SetLeaseJoin(nil)
+	f := &fakeServer{reply: func(w http.ResponseWriter) { _, _ = w.Write([]byte(`{"status":"ok","data":{}}`)) }}
+	c := &Client{API: f.start(t), Credential: "tok", DeviceID: "id-b", Name: "bench-b"}
+	req := map[string]any{"cmd": "ping"}
+	if _, err := c.Command(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if f.command["client_api"] != float64(tcpclient.ClientAPI) || f.command["client"] != tcpclient.ClientName() ||
+		f.command["lease"] != nil || len(req) != 1 {
+		t.Fatalf("sent %v", f.command)
+	}
+}
+
+// The status check and BP0030 work through embeddedci.com too.
+func TestCloudNewerPodNeedsANewerCLI(t *testing.T) {
+	for _, c := range []struct {
+		cmd, reply string
+		bad        bool
+	}{
+		{"status", `{"status":"ok","data":{"version":"3.11.0","api":2}}`, true},
+		{"status", `{"status":"ok","data":{"version":"3.10.13"}}`, false},
+		{"status", `{"status":"ok","data":{"api":1}}`, false},
+		{"ping", `{"status":"ok","data":{"api":2}}`, false},
+		{"la", `{"status":"error","code":"BP0030","args":{"client_api":1,"min_client_api":2,"api":2}}`, true},
+	} {
+		f := &fakeServer{reply: func(w http.ResponseWriter) { _, _ = w.Write([]byte(c.reply)) }}
+		cl := &Client{API: f.start(t), Credential: "tok", DeviceID: "id-b", Name: "bench-b"}
+		_, err := cl.Command(context.Background(), map[string]any{"cmd": c.cmd})
+		var upd *tcpclient.UpdateRequiredError
+		if got := errors.As(err, &upd); got != c.bad || (!c.bad && err != nil) {
+			t.Errorf("%s %s: err = %v", c.cmd, c.reply, err)
+		}
 	}
 }

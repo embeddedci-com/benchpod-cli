@@ -140,6 +140,8 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 	}
 	var resp *serverapi.CommandResponse
 	var err error
+	// The server passes the command on as it is, so it carries client_api and client like a LAN one.
+	req = tcpclient.TagRequest(req)
 	if c.ByName {
 		resp, err = c.API.CloudDeviceCommand(ctx, c.Credential, c.Name, req, timeout)
 	} else {
@@ -153,7 +155,12 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 		if msg == "" {
 			msg = "pod returned an error"
 		}
-		return nil, &tcpclient.PodError{Reason: msg, Code: resp.Code, Args: resp.Args}
+		return nil, tcpclient.RefusalError(msg, resp.Code, resp.Args)
+	}
+	if tcpclient.IsStatus(req) && !tcpclient.NewerPodAllowed() {
+		if err := tcpclient.CheckPodAPI(resp.Data); err != nil {
+			return nil, err
+		}
 	}
 	return resp.Data, nil
 }

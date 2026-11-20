@@ -15,8 +15,12 @@ import (
 // ── refusals ────────────────────────────────────────────────────────────────
 //
 // Every refusal from the pod, over the LAN JSON API or the USB console, is a *tcpclient.PodError.
-// The policy refusals carry a firmware prefix (locked:, busy:, forbidden:; internal/fwrefusals
-// pins the texts) and explainRefusal is the one place that says what to do about each.
+// A refusal with a stable code (BP0001...) is classified by tcpclient's code table (the exit code)
+// and worded from the catalog (internal/errcatalog: its message and fix.cli, codedRefusal). A
+// refusal without one (older firmware, or a refusal with no code yet) falls back to its text: the
+// policy refusals carry a firmware prefix (locked:, busy:, forbidden:; internal/fwrefusals pins
+// the texts) and explainRefusal is the one place that says what to do about each. Each text match
+// below names what replaces it: a code, or "no code yet".
 
 const (
 	lockedUSBHint = "the pod's external LAN policy is locked; run this over USB with --connection usb"
@@ -69,28 +73,29 @@ var i2cPullupRE = regexp.MustCompile(`^(I2C needs pull-ups): switch on LA(\d+)'s
 // text to show and the hint to add ("" for none). Other refusals come back unchanged with no hint.
 func translateRefusal(msg string) (shown, hint string) {
 	msg = strings.TrimSpace(msg)
-	if strings.HasPrefix(msg, "la voltage not set") {
+	if strings.HasPrefix(msg, "la voltage not set") { // fallback: BP0001 replaces it
 		return msg, laVoltageUnsetHint
 	}
-	if m := i2cPullupRE.FindStringSubmatch(msg); m != nil {
+	if m := i2cPullupRE.FindStringSubmatch(msg); m != nil { // no code yet
 		return m[1], fmt.Sprintf("pull LA%s up with `benchpod la pull %s up`, or pass --pullups external "+
 			"when the board has its own", m[2], m[2])
 	}
+	// fallback: BP0017 (gateware_too_old) replaces it
 	if strings.HasSuffix(msg, "need gateware v55+: update the pod's firmware") ||
 		strings.HasSuffix(msg, "needs gateware v55+: update the pod's firmware") {
 		return msg, "update it with `benchpod flash-self`"
 	}
-	if m := emulationImageRE.FindStringSubmatchIndex(msg); m != nil {
+	if m := emulationImageRE.FindStringSubmatchIndex(msg); m != nil { // no code yet
 		image := msg[m[2]:m[3]]
 		return strings.TrimSuffix(strings.TrimSpace(msg[:m[0]]), ":"), fmt.Sprintf(
 			"stop the sensors with `benchpod sensor stop`, then switch with `benchpod sensor image %s`", image)
 	}
-	if strings.HasPrefix(msg, "image switch refused:") {
+	if strings.HasPrefix(msg, "image switch refused:") { // no code yet
 		if i := strings.Index(msg, "; stop them first ("); i > 0 {
 			return msg[:i], "stop them with `benchpod sensor stop` first"
 		}
 	}
-	if m := pinConflictRE.FindStringSubmatch(msg); m != nil {
+	if m := pinConflictRE.FindStringSubmatch(msg); m != nil { // no code yet
 		owner := m[2]
 		if m[3] != "" {
 			owner += " (" + m[3] + ")"
@@ -109,35 +114,51 @@ func translateRefusal(msg string) (shown, hint string) {
 	return msg, ""
 }
 
-// explainRefusal returns the hint for a policy refusal, or "" when the message says it all.
-// overLAN is whether the refusal came over the LAN JSON API: only the LAN refuses with locked:
-// or a cloud lease, so elsewhere those texts stand alone.
+// explainRefusal returns the hint for a refusal without a code, by its text, or "" when the
+// message says it all. overLAN is whether the refusal came over the LAN JSON API: only the LAN
+// refuses with locked: or a cloud lease, so elsewhere those texts stand alone. A coded refusal
+// gets the catalog's fix.cli instead (refusalHint).
 func explainRefusal(msg string, overLAN bool) string {
 	msg = strings.TrimSpace(msg)
 	switch tcpclient.ClassifyRefusal(msg) {
-	case tcpclient.Locked:
+	case tcpclient.Locked: // no code yet
 		if overLAN {
 			return lockedUSBHint
 		}
 	case tcpclient.Busy:
 		switch {
-		case overLAN && strings.HasPrefix(msg, "busy: a cloud job holds"):
+		case overLAN && strings.HasPrefix(msg, "busy: a cloud job holds"): // fallback: BP0025 replaces it
 			return leaseBusyHint
-		case msg == "busy":
+		case msg == "busy": // no code yet
 			return heavyBusyHint
 		}
-	case tcpclient.Forbidden:
+	case tcpclient.Forbidden: // no code yet
 		return forbiddenHint
 	}
 	_, hint := translateRefusal(msg)
 	return hint
 }
 
-// refusedError is the one line for a refusal from a command: "<what>: the pod refused: <why>",
-// plus explainRefusal's hint.
-func refusedError(what string, pe *tcpclient.PodError, overLAN bool) error {
-	return refusedWithHint(what, pe, explainRefusal(pe.Reason, overLAN))
+// refusalHint is what to do about a refusal: the catalog's fix.cli for a coded one, else
+// explainRefusal's hint from the text ("" for none).
+func refusalHint(pe *tcpclient.PodError, overLAN bool) string {
+	if pe.Code != "" {
+		if e, ok := errcatalog.Lookup(pe.Code); ok {
+			return errcatalog.Fill(e.Fix["cli"], pe.Args)
+		}
+	}
+	return explainRefusal(pe.Reason, overLAN)
 }
+
+// refusedError is the one line for a refusal from a command: "<what>: the pod refused: <why>",
+// plus refusalHint's hint (a coded refusal: the catalog's message and fix.cli).
+func refusedError(what string, pe *tcpclient.PodError, overLAN bool) error {
+	return refusedWithHint(what, pe, refusalHint(pe, overLAN))
+}
+
+// isUnknownCommand says the pod does not know the command it was sent: its firmware is older
+// than the command. BP0002, else (firmware without codes) the text "unknown cmd".
+func isUnknownCommand(err error) bool { return tcpclient.IsUnknownCommand(err) }
 
 // refusedWithHint is refusedError with the hint given ("" for none).
 func refusedWithHint(what string, pe *tcpclient.PodError, hint string) error {
@@ -223,6 +244,7 @@ const (
 	exitRefused     = 3 // the pod refused the command (locked LAN, missing role, bad request)
 	exitBusy        = 4 // the pod or one of its engines is in use (a cloud lease, another session)
 	exitUnreachable = 5 // the pod did not answer on its address, no pod on USB, or offline on embeddedci.com
+	exitUpdateCLI   = 6 // the pod's firmware needs a newer CLI (its API level is above this CLI's, or BP0030)
 )
 
 // exitCodesHelp is the exit-code table for the root command's help.
@@ -233,7 +255,8 @@ const exitCodesHelp = "Exit codes:\n" +
 	"  3  refused: the pod refused the command (a locked LAN, a missing role, a bad request)\n" +
 	"  4  busy: the pod or one of its engines is in use (a cloud job's lease, another session)\n" +
 	"  5  unreachable: nothing answered on the pod's address, no pod found on USB, or the\n" +
-	"     pod is offline on embeddedci.com"
+	"     pod is offline on embeddedci.com\n" +
+	"  6  update the CLI: the pod's firmware needs a newer benchpod CLI"
 
 // usageError marks a command-line mistake (exit code 2).
 type usageError struct{ err error }
@@ -258,6 +281,10 @@ func exitCode(err error) int {
 	// Cobra's own complaint about an unknown subcommand is not a typed error.
 	if strings.HasPrefix(err.Error(), "unknown command ") {
 		return exitUsage
+	}
+	var upd *tcpclient.UpdateRequiredError
+	if errors.As(err, &upd) {
+		return exitUpdateCLI
 	}
 	if pe, ok := tcpclient.AsPodError(err); ok {
 		if pe.Kind() == tcpclient.Busy {

@@ -98,12 +98,14 @@ func TestLAVoltageLAN(t *testing.T) {
 }
 
 func TestLAVoltageLANRefusals(t *testing.T) {
-	addr, _ := fakeLANPod(t, `{"status":"error","message":"unknown cmd"}`)
-	if err := runLAVoltage(&globalFlags{connection: addr}, 0, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || err.Error() != laVoltageMissing {
-		t.Fatalf("old firmware: %v", err)
+	for _, reply := range unknownCmdReplies {
+		addr, _ := fakeLANPod(t, reply)
+		if err := runLAVoltage(&globalFlags{connection: addr}, 0, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || err.Error() != laVoltageMissing {
+			t.Fatalf("old firmware: %v", err)
+		}
 	}
 	msg := fwrefusals.Example("lan_locked")
-	addr, _ = fakeLANPod(t, `{"status":"error","message":"`+msg+`"}`)
+	addr, _ := fakeLANPod(t, `{"status":"error","message":"`+msg+`"}`)
 	err := runLAVoltage(&globalFlags{connection: addr}, 3300, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || err.Error() != "la voltage: the pod refused: "+msg+" ("+lockedUSBHint+")" {
 		t.Fatalf("locked: %v", err)

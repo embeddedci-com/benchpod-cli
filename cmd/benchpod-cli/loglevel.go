@@ -84,7 +84,7 @@ func logLevelJSON(ctx context.Context, c podCommander, set string) (string, erro
 	}
 	data, err := c.Command(ctx, req)
 	if err != nil {
-		if strings.Contains(err.Error(), "unknown cmd") {
+		if isUnknownCommand(err) {
 			return "", errors.New(logLevelMissing)
 		}
 		return "", err

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
-	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // blobTarget is where install-blobs reads the pod's W25Q slots and sends blobs: the pod's network
@@ -105,7 +104,7 @@ func (l lanBlobs) Blobs(ctx context.Context) ([]serialconsole.BlobSlot, error) {
 		} `json:"blobs"`
 	}
 	if err := l.lan.cmd(ctx, map[string]any{"cmd": "blob_status"}, &rep); err != nil {
-		if pe, ok := tcpclient.AsPodError(err); ok && strings.Contains(pe.Reason, "unknown cmd") {
+		if isUnknownCommand(err) {
 			return nil, serialconsole.ErrNoBlobSlots
 		}
 		return nil, err

@@ -95,7 +95,7 @@ func adcRange(ctx context.Context, c podCommander, via, action, what string, out
 	}
 	data, err := c.Command(ctx, req)
 	if err != nil {
-		if strings.Contains(err.Error(), "unknown cmd") {
+		if isUnknownCommand(err) {
 			return errors.New(adcRangeMissing)
 		}
 		if pe, ok := tcpclient.AsPodError(err); ok {

@@ -65,7 +65,7 @@ func (s *Session) Command(ctx context.Context, req map[string]any) (json.RawMess
 	_ = s.conn.SetDeadline(deadline)
 	defer watchContext(ctx, s.conn)()
 
-	line, err := json.Marshal(tagLease(req, false))
+	line, err := json.Marshal(tagRequest(req, false))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -81,6 +81,9 @@ func (s *Session) Command(ctx context.Context, req map[string]any) (json.RawMess
 	}
 	switch r.Status {
 	case "ok":
+		if err := checkReply(req, r.Data); err != nil {
+			return nil, err
+		}
 		return r.Data, nil
 	case "error":
 		return nil, replyError(r)

@@ -1038,11 +1038,40 @@ stderr with a `[benchpod]` prefix.
 | `3`  | Refused: the pod refused the command (a locked LAN, a missing role, a bad request).       |
 | `4`  | Busy: the pod or one of its engines is in use (a cloud job's lease, another session).     |
 | `5`  | Unreachable: nothing answered on the pod's address, no pod was found on USB, or the pod is offline on embeddedci.com. |
+| `6`  | Update the CLI: the pod's firmware needs a newer benchpod CLI (see [Firmware newer than the CLI](#firmware-newer-than-the-cli)). |
 
 `benchpod ci` has its own exit codes (a CI result, not a command's): see
 [Exit codes of `benchpod ci`](#exit-codes-of-benchpod-ci).
 
-A refusal is printed word for word as the pod sent it. For a `locked:` (LAN policy),
+#### Firmware newer than the CLI
+
+Every JSON command the CLI sends to the pod (on the LAN, over USB networking and through
+embeddedci.com) carries `"client_api"`, the pod API level this CLI was built for, and
+`"client"`, its name and version (`"cli 0.9.5"`). Firmware 3.10.13 and older ignores both.
+Newer firmware announces its own level in `status`; it goes up only when the firmware changes
+a reply in a way an older CLI would misread. When the pod's level is above this CLI's (a pod
+without one counts as level 1), a command that reads the pod's status stops with exit code
+`6` and says so. `status`, `flash-self`, `install-blobs`, `dfu`, `bootsel`, `discover` and
+`identity` still run: `status` prints the same line as a warning, and the firmware commands are
+how such a pod is updated or rolled back.
+
+```text
+[benchpod] la voltage: this pod's firmware 3.11.0 needs a newer benchpod CLI (pod API 2, this CLI handles 1): brew upgrade --cask benchpod, or download the latest release from https://github.com/embeddedci-com/benchpod-cli/releases/latest
+```
+
+A pod that no longer takes commands from a CLI this old refuses them with `BP0030`, which
+the CLI reports the same way. Update the CLI as you installed it (see
+[Installation](#installation)). Commands that only talk to embeddedci.com or work locally are
+not affected, and neither is the USB console.
+
+Firmware 3.10.8 and later sends more and more refusals with a stable error code (`BP0001` and up).
+The CLI then shows the code, what went wrong and what to run, from the error catalog it ships
+with, plus a link to the code's page; `benchpod explain <code>` prints the whole entry. The
+exit code follows the code: a session, the bus engine, the storage or a lease in use
+(`BP0003`, `BP0004`, `BP0005`, `BP0016`, `BP0025`) is `4`, every other code `3`.
+
+A refusal without a code (older firmware, or one that has no code yet) is printed word for
+word as the pod sent it. For a `locked:` (LAN policy),
 `busy:` (cloud lease) or `forbidden:` (missing role) refusal the CLI adds what to do next.
 So it does for `la voltage not set` (run `benchpod la voltage 3.3V` or 1.8V, or set it on
 the web app's Wiring tab) and for a `pin conflict: LA4 is in use by ...`, where the raw

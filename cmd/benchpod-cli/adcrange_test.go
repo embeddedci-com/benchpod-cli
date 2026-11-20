@@ -66,9 +66,11 @@ func TestADCRangeSelfTest(t *testing.T) {
 }
 
 func TestADCRangeOnOlderFirmware(t *testing.T) {
-	addr, _ := fakeLANPod(t, `{"status":"error","message":"unknown cmd"}`)
-	err := runADCRange(&globalFlags{connection: addr}, "show", &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "3.9.5 or later") {
-		t.Fatalf("err = %v", err)
+	for _, reply := range unknownCmdReplies {
+		addr, _ := fakeLANPod(t, reply)
+		err := runADCRange(&globalFlags{connection: addr}, "show", &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "3.9.5 or later") {
+			t.Fatalf("err = %v", err)
+		}
 	}
 }

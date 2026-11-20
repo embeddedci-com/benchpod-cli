@@ -33,12 +33,12 @@ func tooOldForBusMaster(feature string) string {
 }
 
 // busCommand sends one command and words the reply for the user: a firmware without the command
-// ("unknown cmd") says which update it needs, other refusals get the usual hints.
+// (BP0002, "unknown cmd" before codes) says which update it needs, other refusals get the usual hints.
 func busCommand(ctx context.Context, t *podTarget, what, feature string, req map[string]any, out any) error {
 	raw, err := t.client.Command(ctx, req)
 	if err != nil {
 		if pe, ok := tcpclient.AsPodError(err); ok {
-			if strings.TrimSpace(pe.Reason) == "unknown cmd" {
+			if isUnknownCommand(err) {
 				return &shownRefusal{msg: what + ": " + tooOldForBusMaster(feature), pe: pe}
 			}
 			return refusedError(what, pe, !t.spec.IsCloud())
@@ -574,7 +574,7 @@ type laPinsCommander interface {
 func laPinsFetch(ctx context.Context, c laPinsCommander, pins []int) (json.RawMessage, error) {
 	if pins == nil {
 		raw, err := c.Command(ctx, map[string]any{"cmd": "la_pins"})
-		if err == nil || !strings.Contains(err.Error(), "reply too large") {
+		if err == nil || !strings.Contains(err.Error(), "reply too large") { // no code yet
 			return raw, err
 		}
 		first, err1 := laPinsQuery(ctx, c, []int{1, 2, 3, 4, 5, 6, 7})
