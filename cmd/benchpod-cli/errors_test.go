@@ -121,9 +121,9 @@ func TestShownRefusalsKeepTheirExitCode(t *testing.T) {
 		err  error
 		want int
 	}{
-		{cloudCfgError("cloud ca set", caMissing, true, &tcpclient.PodError{Reason: "x", Code: "BP0040"}), exitRefused},
-		{cloudCfgError("cloud proxy clear", proxyMissing, true, &tcpclient.PodError{Reason: "x", Code: "BP0042"}), exitRefused},
-		{cloudCfgError("cloud ca set", caMissing, false, &tcpclient.PodError{Reason: "x", Code: "BP0051"}), exitBusy},
+		{cloudCfgError("cloud ca set", &tcpclient.PodError{Reason: "x", Code: "BP0040"}), exitRefused},
+		{cloudCfgError("cloud proxy clear", &tcpclient.PodError{Reason: "x", Code: "BP0042"}), exitRefused},
+		{cloudCfgError("cloud ca set", &tcpclient.PodError{Reason: "x", Code: "BP0051"}), exitBusy},
 		{cloudPolicyError(lanPolicy, "off", &serverapi.APIError{Status: http.StatusConflict, Code: "BP0041", Message: "BP0041"}), exitRefused},
 		{cloudPolicyError(lanPolicy, "off", &serverapi.APIError{Status: http.StatusForbidden}), exitRefused},
 	} {

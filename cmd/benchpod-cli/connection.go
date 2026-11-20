@@ -178,8 +178,8 @@ const cloudCommandList = "status, ping, la voltage, la pull, la status, la step,
 
 func newSetConnectionCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:     "set-connection <address|name|device|usb|embeddedci:name>",
-		Short:   `Store the default connection: a network address, a pod name, a device path, "usb", or embeddedci:<name>`,
+		Use:   "set-connection <address|name|device|usb|embeddedci:name>",
+		Short: `Store the default connection: a network address, a pod name, a device path, "usb", or embeddedci:<name>`,
 		Long: "Store the default connection in the config file, so later commands can leave out\n" +
 			"--connection. The value is what --connection takes: the pod's network address\n" +
 			"(192.168.1.5[:8080]), a USB device path, `usb` to auto-detect the pod on USB, or\n" +

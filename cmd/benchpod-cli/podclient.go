@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -216,60 +215,18 @@ const wiringSource = "the pod's wiring profile"
 // that has its flags anyway.
 const wiringLookupTimeout = 6 * time.Second
 
-// loadPodWiring returns the wiring profile of the pod behind g's connection, or nil when there is
-// none to use: over USB, without a sign-in, for a pod not on the account, or when the lookup
-// fails (then it writes one warning line to warn). A variable so tests can replace it.
+// loadPodWiring returns the wiring profile stored on the pod behind g's connection
+// (--wiring-profile, else its default), or nil when there is none to use. A variable so tests can
+// replace it. (Firmware before 3.10.8 kept the profile on embeddedci.com; CLI 0.10 reads the pod's.)
 var loadPodWiring = func(g *globalFlags, warn io.Writer) *podWiring {
 	// Firmware that stores profiles: the pod's own (--wiring-profile, else its default).
 	if w, ok := loadPodWiringFromPod(g, warn); ok {
 		return w
 	}
 	if g.wiringProfile != "" {
-		fmt.Fprintf(warn, "Warning: --wiring-profile %s: %v; using the flags only\n", g.wiringProfile, errNoWiringStore)
-		return nil
+		fmt.Fprintf(warn, "Warning: --wiring-profile %s: could not read the pod's wiring profiles; using the flags only\n", g.wiringProfile)
 	}
-	spec, err := g.resolveTarget()
-	if err != nil {
-		return nil
-	}
-	if spec = g.preferUSBNetwork(spec, "wiring"); spec.IsSerial() {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), wiringLookupTimeout)
-	defer cancel()
-	api := newServerAPI(cloudServerURL())
-	cred, err := cloudCredential(ctx, api)
-	if err != nil {
-		if !errors.Is(err, errNoCloudCredential) {
-			fmt.Fprintf(warn, "Warning: could not read the pod's wiring profile from embeddedci.com (%v); using the flags only\n", err)
-		}
-		return nil
-	}
-	id, err := cloudDeviceID(ctx, api, cred, spec)
-	if err != nil {
-		fmt.Fprintf(warn, "Warning: could not read the pod's wiring profile from embeddedci.com (%v); using the flags only\n", err)
-		return nil
-	}
-	if id == "" {
-		log.Printf("wiring: the pod is not on the signed-in account; using the flags only")
-		return nil
-	}
-	raw, err := api.GetDeviceWiringProfile(ctx, cred, id)
-	var apiErr *serverapi.APIError
-	if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
-		raw, err = api.GetDeviceWiring(ctx, cred, id) // a server without the profile route
-	}
-	if err != nil {
-		fmt.Fprintf(warn, "Warning: could not read the pod's wiring profile from embeddedci.com (%v); using the flags only\n", err)
-		return nil
-	}
-	b, _ := json.Marshal(raw)
-	var w podWiring
-	if err := json.Unmarshal(b, &w); err != nil {
-		fmt.Fprintf(warn, "Warning: the pod's wiring profile on embeddedci.com does not parse (%v); using the flags only\n", err)
-		return nil
-	}
-	return &w
+	return nil
 }
 
 // cloudDeviceID is the pod's id on embeddedci.com when it is on the credential's account, else

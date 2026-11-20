@@ -82,9 +82,8 @@ func newRootCmd() *cobra.Command {
 			"(embeddedci.com runs the update). flash-self reflashes the pod over USB DFU\n" +
 			"unless --network or an embeddedci: connection. A command that cannot use the\n" +
 			"connection says so and names what to use instead.\n\n" +
-			"flash and spi-flash over the network take the pins you leave out from the pod's\n" +
-			"wiring profile on embeddedci.com when you are signed in and the pod is on your\n" +
-			"account.\n\n" +
+			"Commands that take pins default the ones you leave out from the pod's wiring\n" +
+			"profile (--wiring-profile, else the pod's default).\n\n" +
 			exitCodesHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,

@@ -2,58 +2,21 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 )
 
-// stubLAVoltageProfile replaces the embeddedci.com side of `la voltage` for one test: id is the
-// device the connection resolves to on the signed-in account ("" = not on it), and the returned
-// slice records each save.
-func stubLAVoltageProfile(t *testing.T, id string, changed bool, err error) *[]int {
+// stubLAVoltageProfile records any save to embeddedci.com (la voltage makes none: the pod keeps
+// the I/O voltage in its own wiring profile).
+func stubLAVoltageProfile(t *testing.T, _ string, _ bool, _ error) *[]int {
 	t.Helper()
-	savedAcct, savedSave := accountDeviceForConnection, saveLaMVToProfile
-	t.Cleanup(func() { accountDeviceForConnection, saveLaMVToProfile = savedAcct, savedSave })
+	saved := saveLaMVToProfile
+	t.Cleanup(func() { saveLaMVToProfile = saved })
 	var saves []int
-	accountDeviceForConnection = func(*globalFlags) string { return id }
-	saveLaMVToProfile = func(dev string, mv int) (bool, error) {
-		if dev != id {
-			t.Errorf("saved to %q, want %q", dev, id)
-		}
-		saves = append(saves, mv)
-		return changed, err
-	}
+	saveLaMVToProfile = func(_ string, mv int) (bool, error) { saves = append(saves, mv); return true, nil }
 	return &saves
-}
-
-func TestLAVoltageSavesToTheProfile(t *testing.T) {
-	addr, _ := fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
-	saves := stubLAVoltageProfile(t, "dev-1", true, nil)
-	var out, warn bytes.Buffer
-	if err := runLAVoltage(&globalFlags{connection: addr}, 3300, &out, &warn); err != nil {
-		t.Fatal(err)
-	}
-	if len(*saves) != 1 || (*saves)[0] != 3300 || !strings.Contains(out.String(), "Saved to the pod's wiring profile on embeddedci.com") {
-		t.Fatalf("saves %v out %q", *saves, out.String())
-	}
-	// A failed save warns; the command still succeeds.
-	addr, _ = fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
-	stubLAVoltageProfile(t, "dev-1", false, errors.New("403 forbidden"))
-	out.Reset()
-	if err := runLAVoltage(&globalFlags{connection: addr}, 3300, &out, &warn); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(warn.String(), "could not save it to the pod's wiring profile on embeddedci.com: 403 forbidden") {
-		t.Fatalf("warn %q", warn.String())
-	}
-	// Showing the voltage never writes the profile.
-	addr, _ = fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
-	saves = stubLAVoltageProfile(t, "dev-1", true, nil)
-	if err := runLAVoltage(&globalFlags{connection: addr}, 0, &bytes.Buffer{}, &bytes.Buffer{}); err != nil || len(*saves) != 0 {
-		t.Fatalf("err %v saves %v", err, *saves)
-	}
 }
 
 func TestLAVoltageLAN(t *testing.T) {
@@ -67,7 +30,7 @@ func TestLAVoltageLAN(t *testing.T) {
 	if req := <-got; req != `{"cmd":"la_voltage","mv":3300}` {
 		t.Fatalf("request = %s", req)
 	}
-	if want := "LA voltage of " + addr + " is now 3.3 V\n"; out.String() != want || warn.Len() != 0 {
+	if want := "LA voltage of " + addr + " is now 3.3 V\n"; !strings.HasPrefix(out.String(), want) || warn.Len() != 0 {
 		t.Fatalf("out = %q, warn = %q", out.String(), warn.String())
 	}
 
@@ -119,7 +82,7 @@ func TestLAVoltageUSB(t *testing.T) {
 	if err := runLAVoltage(&globalFlags{connection: "usb", usbAddr: addr}, 1800, &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "LA voltage of "+addr+" is now 1.8 V\n" {
+	if !strings.HasPrefix(out.String(), "LA voltage of "+addr+" is now 1.8 V\n") {
 		t.Fatalf("out = %q", out.String())
 	}
 	if req := <-got; !strings.Contains(req, `"cmd":"la_voltage"`) || !strings.Contains(req, `"mv":1800`) {
@@ -148,9 +111,6 @@ func TestLAVoltageArgIsAUsageError(t *testing.T) {
 func TestLAVoltageSavesNothingWhenThePodStoresProfiles(t *testing.T) {
 	addr, _ := fakeLANPod(t, `{"status":"ok","data":{"mv":3300,"st":1,"readback_mv":3300}}`)
 	saves := stubLAVoltageProfile(t, "dev-1", true, nil)
-	saved := podStoresWiring
-	t.Cleanup(func() { podStoresWiring = saved })
-	podStoresWiring = func(*globalFlags) bool { return true }
 	var out, warn bytes.Buffer
 	if err := runLAVoltage(&globalFlags{connection: addr}, 3300, &out, &warn); err != nil {
 		t.Fatal(err)

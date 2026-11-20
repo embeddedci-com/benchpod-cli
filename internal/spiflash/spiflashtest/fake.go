@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"github.com/embeddedci-com/benchpod-cli/internal/spiflash"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
@@ -71,7 +72,13 @@ func (f *FakePod) Command(ctx context.Context, req map[string]any) (json.RawMess
 
 	switch r["cmd"] {
 	case "status":
-		return ok(map[string]any{"caps": f.Caps, "api": 2, "min_client_api": 2})
+		st := map[string]any{"api": 2, "min_client_api": 2}
+		for _, c := range f.Caps {
+			if c == spiflash.Cap { // the pod has SPI: the features table decides from features_rev
+				st["features_rev"], st["gateware"] = features.Revision(), 60
+			}
+		}
+		return ok(st)
 	case "nrst":
 		f.NRST = r["assert"].(bool)
 		return ok(map[string]any{"asserted": f.NRST})

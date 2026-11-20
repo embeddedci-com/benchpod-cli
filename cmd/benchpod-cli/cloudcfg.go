@@ -36,11 +36,9 @@ import (
 // policy ("cloud_ca: change it from the cloud or over USB"); only reading works there.
 
 const (
-	caMaxPEM     = 16 * 1024   // the pod's limit on the stored PEM
-	caMaxFile    = 1024 * 1024 // refuse to even read a larger file
-	caLANChunk   = 768         // raw bytes per ota_data line (as the hwe2e LAN OTA sends)
-	caMissing    = "this firmware has no company CA support; update the pod's firmware"
-	proxyMissing = "this firmware has no HTTP proxy support; update the pod's firmware"
+	caMaxPEM   = 16 * 1024   // the pod's limit on the stored PEM
+	caMaxFile  = 1024 * 1024 // refuse to even read a larger file
+	caLANChunk = 768         // raw bytes per ota_data line (as the hwe2e LAN OTA sends)
 )
 
 func newCloudCmd(g *globalFlags) *cobra.Command {
@@ -358,7 +356,7 @@ func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error 
 		certs, err = cloudCALAN(g, spec.Addr, action, upload, warn)
 	}
 	if err != nil {
-		return cloudCfgError(what, caMissing, !spec.IsSerial(), err)
+		return cloudCfgError(what, err)
 	}
 
 	printCACerts(out, label, certs, action != "show")
@@ -386,12 +384,9 @@ func sameCerts(local []caCert, pod []podCACert) bool {
 	return true
 }
 
-// cloudCfgError turns a failed command into one clear line: old firmware, a locked LAN, a change
-// the pod refuses from the LAN, or the pod's own reason.
-func cloudCfgError(what, missing string, lan bool, err error) error {
-	if isUnknownCommand(err) || tcpclient.HasCode(err, "BP0060") { // ota_unknown_target
-		return errors.New(missing)
-	}
+// cloudCfgError turns a failed command into one clear line: the pod's refusal (a locked LAN, a
+// change the pod refuses from the LAN), worded from its code.
+func cloudCfgError(what string, err error) error {
 	if pe, ok := tcpclient.AsPodError(err); ok {
 		return refusedError(what, pe)
 	}
@@ -634,7 +629,7 @@ func runCloudProxy(g *globalFlags, action, addr, user, password string, out, war
 		p, err = cloudProxyLAN(g, spec.Addr, action, addr, user, password)
 	}
 	if err != nil {
-		err = cloudCfgError(what, proxyMissing, !spec.IsSerial(), err)
+		err = cloudCfgError(what, err)
 		if password != "" && strings.Contains(err.Error(), password) {
 			err = errors.New(strings.ReplaceAll(err.Error(), password, "***"))
 		}

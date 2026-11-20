@@ -222,7 +222,7 @@ func TestPinsAddressesAndValues(t *testing.T) {
 	if _, err := Values([]string{"t=hot"}); err == nil {
 		t.Fatal("hot accepted")
 	}
-	if !HasCapability(json.RawMessage(`{"caps":["dac","sensors"]}`), "sensors") || HasCapability(json.RawMessage(`{"caps":["dac"]}`), "sensors") {
+	if !HasCapability(json.RawMessage(`{"features_rev":11,"gateware":60}`), "sensors") || HasCapability(json.RawMessage(`{"caps":["dac","sensors"]}`), "sensors") {
 		t.Fatal("caps")
 	}
 }

@@ -242,7 +242,6 @@ func TestCheckProxyAddr(t *testing.T) {
 type lanCfgPod struct {
 	t      *testing.T
 	mu     sync.Mutex
-	old    bool   // "unknown cmd" / "unknown target"
 	locked string // the T2/T3 verbs refused with "locked: ..."
 	gated  bool   // current firmware: every change refused from the LAN (pod_policy_cloud_link_gate)
 	certs  []podCACert
@@ -316,17 +315,11 @@ func (p *lanCfgPod) handle(req map[string]any) string {
 	}
 	switch cmd {
 	case "cloud_ca":
-		if p.old {
-			return codeReply("BP0002", map[string]any{"cmd": cmd})
-		}
 		if req["clear"] == true {
 			p.certs = nil
 		}
 		return okReply(map[string]any{"present": len(p.certs) > 0, "certs": p.certs})
 	case "cloud_proxy":
-		if p.old {
-			return codeReply("BP0002", map[string]any{"cmd": cmd})
-		}
 		if req["clear"] == true {
 			p.proxy = proxyReply{}
 		}
@@ -341,7 +334,7 @@ func (p *lanCfgPod) handle(req map[string]any) string {
 		}
 		return okReply(p.proxy)
 	case "ota_begin":
-		if p.old || req["target"] != "ca" {
+		if req["target"] != "ca" {
 			return codeReply("BP0060", map[string]any{"target": req["target"]})
 		}
 		p.staged = make([]byte, int(req["size"].(float64)))
@@ -476,24 +469,6 @@ func TestCloudLANGated(t *testing.T) {
 	}
 	if _, _, err := runProxyCapture(g, "show", "", "", ""); err != nil {
 		t.Fatalf("proxy show: %v", err)
-	}
-}
-
-func TestCloudLANOldFirmware(t *testing.T) {
-	pod := &lanCfgPod{t: t, old: true}
-	addr := pod.start()
-	g := &globalFlags{connection: addr}
-	if _, _, err := runCACapture(g, "set", tempPEM(t, "a.pem", testCertPEM(t, "A", true))); err == nil || err.Error() != caMissing {
-		t.Fatalf("ca set: err = %v", err)
-	}
-	if strings.Contains(pod.cmds(), "ota_") {
-		t.Fatalf("old firmware got an upload: %s", pod.cmds())
-	}
-	if _, _, err := runCACapture(g, "show", ""); err == nil || err.Error() != caMissing {
-		t.Fatalf("ca show: err = %v", err)
-	}
-	if _, _, err := runProxyCapture(g, "set", "p:1", "", ""); err == nil || err.Error() != proxyMissing {
-		t.Fatalf("proxy set: err = %v", err)
 	}
 }
 

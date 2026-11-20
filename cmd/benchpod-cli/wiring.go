@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,7 +55,7 @@ func wiringList(ctx context.Context, c podCommander) (*wiringListReply, error) {
 		Profiles *json.RawMessage `json:"profiles"`
 	}
 	if json.Unmarshal(raw, &probe) != nil || probe.Profiles == nil {
-		return nil, errNoWiringStore // firmware that stores profiles always lists them
+		return nil, fmt.Errorf("wiring_list: unexpected reply %s", strings.TrimSpace(string(raw)))
 	}
 	var l wiringListReply
 	if err := json.Unmarshal(raw, &l); err != nil {
@@ -65,16 +64,9 @@ func wiringList(ctx context.Context, c podCommander) (*wiringListReply, error) {
 	return &l, nil
 }
 
-// errNoWiringStore: the pod's firmware stores no wiring profiles.
-var errNoWiringStore = errors.New("this pod's firmware does not store wiring profiles; update it with `benchpod flash-self`")
-
-// wiringStoreList is wiringList, with an older firmware's BP0002 ("unknown cmd") as errNoWiringStore.
+// wiringStoreList is wiringList (the pod keeps its wiring profiles itself).
 func wiringStoreList(ctx context.Context, c podCommander) (*wiringListReply, error) {
-	l, err := wiringList(ctx, c)
-	if isUnknownCommand(err) {
-		return nil, errNoWiringStore
-	}
-	return l, err
+	return wiringList(ctx, c)
 }
 
 // wiringGet reads one profile in pieces; a save meanwhile (the revision moves) starts over.
@@ -450,29 +442,7 @@ func newExplainCmd() *cobra.Command {
 }
 
 // loadPodWiringFromPod reads the pod's own profile (--wiring-profile, else its default) for the
-// flags a command leaves out. ok false: the pod's firmware stores no profiles, so the caller
-// falls back to embeddedci.com.
-// podStoresWiring says whether the pod behind g's connection keeps its wiring profiles itself
-// (firmware 3.10.8+). Then nothing is saved to embeddedci.com on the side. A variable so tests can
-// replace it.
-var podStoresWiring = func(g *globalFlags) bool {
-	spec, err := g.resolveTarget()
-	if err != nil {
-		return false
-	}
-	if spec = g.preferUSBNetwork(spec, "wiring"); spec.IsSerial() {
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), wiringLookupTimeout)
-	defer cancel()
-	t, err := openPodTarget(ctx, spec)
-	if err != nil {
-		return false
-	}
-	_, err = wiringStoreList(ctx, t.client)
-	return err == nil
-}
-
+// flags a command leaves out. ok false: no profile could be read (no network to the pod).
 func loadPodWiringFromPod(g *globalFlags, warn io.Writer) (*podWiring, bool) {
 	spec, err := g.resolveTarget()
 	if err != nil {

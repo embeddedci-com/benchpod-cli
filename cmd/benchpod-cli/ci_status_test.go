@@ -121,7 +121,7 @@ func TestCILeaseFromFeaturesRev(t *testing.T) {
 	}{
 		{5, true, true, ""},
 		{4, false, false, "features_rev 4; the lease needs features_rev 5"},
-		{0, false, true, "the caps list"}, // older firmware: lease_acquire answers unknown command
+		{0, false, true, "no features_rev"}, // lease_acquire answers unknown command
 	}
 	for _, c := range cases {
 		p := startStatusFormPod(t, c.rev)

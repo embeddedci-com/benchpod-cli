@@ -125,48 +125,10 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 			fmt.Fprintln(warn, "Warning: "+w)
 		}
 	}
-	if mv != 0 && podStoresWiring(g) {
-		fmt.Fprintln(out, "Not saved: the pod uses the I/O voltage in its wiring profile after a restart (change it there with `benchpod wiring save`, or in the Pins pane).")
-		return nil
-	}
 	if mv != 0 {
-		if id := accountDeviceForConnection(g); id != "" {
-			changed, err := saveLaMVToProfile(id, rep.MV)
-			switch {
-			case err != nil:
-				fmt.Fprintf(warn, "Warning: could not save it to the pod's wiring profile on embeddedci.com: %v\n", err)
-			case changed:
-				fmt.Fprintln(out, "Saved to the pod's wiring profile on embeddedci.com (applied on every connect).")
-			}
-		}
+		fmt.Fprintln(out, "Not saved: the pod uses the I/O voltage in its wiring profile after a restart (change it there with `benchpod wiring save`, or in the Pins pane).")
 	}
 	return nil
-}
-
-// accountDeviceForConnection returns the cloud device id of the pod behind g's network or
-// embeddedci.com connection when this machine is signed in and the pod is registered to that
-// account, so its wiring profile can be written; "" otherwise (also over USB, and whenever it
-// cannot tell). It never prompts or fails. A variable so tests can replace it.
-var accountDeviceForConnection = func(g *globalFlags) string {
-	spec, err := g.resolveTarget()
-	if err != nil {
-		return ""
-	}
-	if spec = g.preferUSBNetwork(spec, "la voltage"); spec.IsSerial() {
-		return ""
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	api := newServerAPI(cloudServerURL())
-	cred, err := cloudCredential(ctx, api)
-	if err != nil {
-		return ""
-	}
-	id, err := cloudDeviceID(ctx, api, cred, spec)
-	if err != nil {
-		return ""
-	}
-	return id
 }
 
 // saveLaMVToProfile stores mv as la_mv in the wiring profile of the pod with this cloud device id

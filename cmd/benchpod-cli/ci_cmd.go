@@ -200,29 +200,24 @@ func takeCILease(ctx context.Context, c *ciConnected, join *tcpclient.LeaseJoin,
 type leaseHas int
 
 const (
-	leaseUnknown leaseHas = iota // no features_rev (the caps-list form, or no status)
+	leaseUnknown leaseHas = iota // no features_rev, or no status
 	leaseNo
 	leaseYes
 )
 
-// leaseFeature decides the lease feature from a {"cmd":"status","caps":false} reply: with
-// features_rev the embedded features table decides; without it (a pod that sent the frozen caps
-// list) it is unknown. form says which reply it was, for the log.
+// leaseFeature decides the lease feature from a status reply: the embedded features table
+// decides from features_rev; without it, it is unknown. form says which reply it was, for the log.
 func leaseFeature(st json.RawMessage, err error) (leaseHas, string) {
 	if err != nil {
 		return leaseUnknown, "no status (" + err.Error() + ")"
 	}
 	var v struct {
-		FeaturesRev *int     `json:"features_rev"`
-		Caps        []string `json:"caps"`
+		FeaturesRev *int `json:"features_rev"`
 	}
 	if json.Unmarshal(st, &v) != nil {
 		return leaseUnknown, "an unreadable status"
 	}
 	if v.FeaturesRev == nil {
-		if v.Caps != nil {
-			return leaseUnknown, `the caps list (no features_rev: the pod ignored "caps":false)`
-		}
 		return leaseUnknown, "no features_rev"
 	}
 	form := fmt.Sprintf("features_rev %d", *v.FeaturesRev)

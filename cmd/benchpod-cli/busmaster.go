@@ -567,74 +567,31 @@ type laPinsCommander interface {
 	Command(ctx context.Context, req map[string]any) (json.RawMessage, error)
 }
 
-// laPinsFetch reads la_pins: every pin (pins nil) or only those pins. Firmware after 3.10.12 sends
-// only the pins asked for; older firmware sends all 14 and they are filtered here. A full listing
-// the pod answers with "reply too large" (a long sensor instance name on every pin) is read in two
-// parts, LA1-7 and LA8-14, and joined.
+// laPinsFetch reads la_pins: every pin (pins nil) or only those pins (the pod sends only the pins
+// asked for). A full listing the pod answers with BP0053 (reply_too_large: a long sensor instance
+// name on every pin) is read in two parts, LA1-7 and LA8-14, and joined.
 func laPinsFetch(ctx context.Context, c laPinsCommander, pins []int) (json.RawMessage, error) {
-	if pins == nil {
-		raw, err := c.Command(ctx, map[string]any{"cmd": "la_pins"})
-		if err == nil || !tcpclient.HasCode(err, "BP0053") { // reply_too_large
-			return raw, err
+	if pins != nil {
+		return c.Command(ctx, map[string]any{"cmd": "la_pins", "la": pins})
+	}
+	raw, err := c.Command(ctx, map[string]any{"cmd": "la_pins"})
+	if err == nil || !tcpclient.HasCode(err, "BP0053") {
+		return raw, err
+	}
+	var parts [2]map[string]any
+	for i, half := range [][]int{{1, 2, 3, 4, 5, 6, 7}, {8, 9, 10, 11, 12, 13, 14}} {
+		raw, err := c.Command(ctx, map[string]any{"cmd": "la_pins", "la": half})
+		if err != nil {
+			return nil, err
 		}
-		first, err1 := laPinsQuery(ctx, c, []int{1, 2, 3, 4, 5, 6, 7})
-		if err1 != nil {
-			return nil, laPinsUpdateHint(err)
-		}
-		if n, _ := first["pins"].([]any); len(n) > 7 {
-			return nil, laPinsUpdateHint(err) // firmware without the pin subset: it sent everything again
-		}
-		second, err2 := laPinsQuery(ctx, c, []int{8, 9, 10, 11, 12, 13, 14})
-		if err2 != nil {
-			return nil, err2
-		}
-		a, _ := first["pins"].([]any)
-		b, _ := second["pins"].([]any)
-		first["pins"] = append(a, b...)
-		return json.Marshal(first)
-	}
-	m, err := laPinsQuery(ctx, c, pins)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(m)
-}
-
-// laPinsUpdateHint says what to do when older firmware (no pin subset) cannot send the whole list.
-func laPinsUpdateHint(err error) error {
-	return fmt.Errorf("%w; firmware after 3.10.12 reads this list in parts: update the pod "+
-		"(benchpod flash-self, or the firmware update in the web app), or ask for fewer pins "+
-		"(benchpod la pins 1-7)", err)
-}
-
-// laPinsQuery sends la_pins with "la" and keeps only the entries of those pins.
-func laPinsQuery(ctx context.Context, c laPinsCommander, pins []int) (map[string]any, error) {
-	raw, err := c.Command(ctx, map[string]any{"cmd": "la_pins", "la": pins})
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("unexpected reply %s", strings.TrimSpace(string(raw)))
-	}
-	want := map[int]bool{}
-	for _, p := range pins {
-		want[p] = true
-	}
-	var keep []any
-	entries, _ := m["pins"].([]any)
-	for _, e := range entries {
-		if em, ok := e.(map[string]any); ok {
-			if la, ok := em["la"].(float64); ok && want[int(la)] {
-				keep = append(keep, e)
-			}
+		if err := json.Unmarshal(raw, &parts[i]); err != nil {
+			return nil, fmt.Errorf("unexpected reply %s", strings.TrimSpace(string(raw)))
 		}
 	}
-	if keep == nil {
-		keep = []any{}
-	}
-	m["pins"] = keep
-	return m, nil
+	a, _ := parts[0]["pins"].([]any)
+	b, _ := parts[1]["pins"].([]any)
+	parts[0]["pins"] = append(a, b...)
+	return json.Marshal(parts[0])
 }
 
 func newLAPinsCmd(g *globalFlags) *cobra.Command {
@@ -644,7 +601,7 @@ func newLAPinsCmd(g *globalFlags) *cobra.Command {
 		Short: "List every LA pin: function, GPIO state, live level, pull-up, direction and warnings",
 		Long: "List every LA pin, or only PINS (a pin, a list or a range: 9, 9,10, 9-12, la9, or a\n" +
 			"name from the pod's wiring profile). A list too large for one cloud reply is read\n" +
-			"in two parts by itself (firmware after 3.10.12).",
+			"in two parts by itself.",
 		Example: "  benchpod la pins\n  benchpod la pins 1-4\n  benchpod la pins uart_rx --json",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {

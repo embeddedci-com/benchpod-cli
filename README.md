@@ -265,9 +265,10 @@ cloud connection: embeddedci.com runs OpenOCD. The CLI has no UART command; use 
 
 ### One wiring profile
 
-The pod's wiring profile on embeddedci.com (the web app's Wiring tab; the SDK and
-MCP read the same one) says which LA channel carries which signal. `flash` and
-`spi-flash` take the pins you leave out from it:
+The pod keeps its wiring profiles itself (the web app's Pins pane, the SDK and MCP read the
+same ones; `benchpod wiring` lists and saves them): which LA channel carries which signal.
+Commands that take pins (`flash`, `spi-flash`, `i2c`, `sensor start`, ...) take the ones you
+leave out from the profile named by `--wiring-profile`, else the pod's default:
 
 | Command     | Flag         | Profile field |
 |-------------|--------------|---------------|
@@ -277,16 +278,9 @@ MCP read the same one) says which LA channel carries which signal. `flash` and
 | `flash`     | `--target`   | `swd_target`  |
 | `spi-flash` | `--sck`, `--mosi`, `--miso`, `--cs` | `spi_sclk`, `spi_mosi`, `spi_miso`, `spi_cs` |
 
-That happens when the connection is the pod's network address (or, for `flash --build`,
-`embeddedci:<pod>`), this machine is
-signed in (`benchpod login` or `BENCHPOD_API_KEY`) and the pod is on that account
-(its `cloud_status` device id is in the account's pod list, as `status` and
-`discover` check). Flags always win. The log says which values came from the
-profile (`[benchpod] flash: SWCLK LA11, SWDIO LA12 from the pod's wiring profile on
-embeddedci.com; ...`) or that the flags were used. Without a profile (over USB, not
-signed in, another account) the command behaves as before: the pin flags are
-required. If the lookup fails (it gives up after a few seconds), the CLI prints one
-warning line and goes on with the flags.
+Flags always win. The log says which values came from the profile (`[benchpod] flash: SWCLK
+LA11, SWDIO LA12 from the pod's wiring profile; ...`) or that the flags were used. Firmware
+before 3.10.8 kept one profile on embeddedci.com instead; CLI 0.10 reads only the pod's.
 
 ### Shared config
 
@@ -612,9 +606,9 @@ speaks it.
 
 `spi-flash` reads, erases and programs a 25-series SPI NOR flash (W25Q, MX25,
 GD25, IS25, ...) wired to four LA pins, through the pod's SPI master. It needs
-gateware v45 or newer (`spi_master` in the `status` caps; the CLI checks first)
+gateware v45 or newer (`spi_master` in the features table; the CLI checks first)
 and the LA voltage set. Network (TCP) connection only for now. Pins you leave out
-come from the pod's wiring profile on embeddedci.com when you are signed in (see
+come from the pod's wiring profile (see
 [One wiring profile](#one-wiring-profile)).
 
 ```bash
@@ -1423,7 +1417,7 @@ replaces it. It prints the params `sensor set` takes.
 
 | Flag         | Default | Purpose |
 |--------------|---------|---------|
-| `--pin`      | (none)  | `role=channel`, repeatable. I2C `sda`, `scl` (default: the wiring profile's `i2c_sda`/`i2c_scl` on embeddedci.com) and `drdy`; SPI `sclk`, `mosi`, `miso`, `cs` (default: the profile's `spi_*`; the emulated SPI target has no data-ready pin); UART `tx` (pod to DUT RX) and `rx`; analog `output=dac` (default) or `output=current`. A channel is `1`-`14` or `la1`-`la14`; another word is a name in the wiring profile on embeddedci.com (a role such as `i2c_sda` or a signal such as `DRDY`), resolved to its channel here. |
+| `--pin`      | (none)  | `role=channel`, repeatable. I2C `sda`, `scl` (default: the wiring profile's `i2c_sda`/`i2c_scl`) and `drdy`; SPI `sclk`, `mosi`, `miso`, `cs` (default: the profile's `spi_*`; the emulated SPI target has no data-ready pin); UART `tx` (pod to DUT RX) and `rx`; analog `output=dac` (default) or `output=current`. A channel is `1`-`14` or `la1`-`la14`; another word is a name in the pod's wiring profile (a role such as `i2c_sda` or a signal such as `DRDY`), resolved to its channel here. |
 | `--instance` | (the definition's name) | Instance name, 1 to 16 characters of `a-z`, `0-9` and `_`. |
 | `--addr`     | (none)  | I2C: the definition's address or one of its `alt_addresses` (`0x77`). |
 | `--set`      | (none)  | Initial value as `key=number`, repeatable. |

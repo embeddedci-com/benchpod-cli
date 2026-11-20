@@ -2,9 +2,9 @@
 // (generated from features/features.toml), copied here by scripts/sync-feature-map.sh. It says
 // which firmware and gateware have which feature, so the CLI needs no network to decide.
 //
-// Firmware after 3.10.10 answers {"cmd":"status","caps":false} with features_rev (the table
-// revision it is built from), fpga_image and the hw facts instead of the caps list; older
-// firmware ignores the argument and sends the list. Has handles both.
+// The pod's status carries features_rev (the table revision it is built from), fpga_image and
+// the hw facts; Has decides from them. Firmware 4.0 sends no caps list (CLI 0.10 dropped the
+// caps fallback for firmware up to 3.10.10).
 package features
 
 import (
@@ -22,13 +22,12 @@ func StatusRequest() map[string]any { return map[string]any{"cmd": "status", "ca
 
 // Entry is one feature of the table.
 type Entry struct {
-	Rev        int      `json:"rev"`
-	Firmware   string   `json:"firmware"`
-	Gateware   int      `json:"gateware"`
-	Board      string   `json:"board"`
-	Requires   []string `json:"requires"`
-	LegacyCaps string   `json:"legacy_caps"`
-	Status     string   `json:"status"`
+	Rev      int      `json:"rev"`
+	Firmware string   `json:"firmware"`
+	Gateware int      `json:"gateware"`
+	Board    string   `json:"board"`
+	Requires []string `json:"requires"`
+	Status   string   `json:"status"`
 }
 
 // Fact is a hardware or runtime fact the pod still announces.
@@ -71,7 +70,6 @@ func Lookup(name string) (Entry, bool) {
 }
 
 type status struct {
-	Caps        []string `json:"caps"`
 	FeaturesRev int      `json:"features_rev"`
 	Gateware    int      `json:"gateware"`
 	FPGAImage   string   `json:"fpga_image"`
@@ -80,8 +78,8 @@ type status struct {
 }
 
 // Has reports whether the pod whose status reply this is has the feature `name` (a table name,
-// for example "spi_master", "sensors", "generate16"). With features_rev the table decides;
-// without it the reply's caps list does (the entry's legacy name, else the name itself).
+// for example "spi_master", "sensors"): the table decides from features_rev. A reply without
+// features_rev (firmware before 3.10.11) has none.
 func Has(statusReply json.RawMessage, name string) (bool, error) {
 	var st status
 	if err := json.Unmarshal(statusReply, &st); err != nil {
@@ -91,15 +89,6 @@ func Has(statusReply json.RawMessage, name string) (bool, error) {
 	_ = json.Unmarshal(statusReply, &top)
 	if st.FeaturesRev > 0 {
 		return resolve(st, top, name), nil
-	}
-	want := name
-	if e, ok := table.Features[name]; ok && e.LegacyCaps != "" {
-		want = e.LegacyCaps
-	}
-	for _, c := range st.Caps {
-		if strings.EqualFold(c, want) {
-			return true, nil
-		}
 	}
 	return false, nil
 }

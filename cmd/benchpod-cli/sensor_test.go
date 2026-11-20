@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"io"
 	"net"
 	"os"
@@ -89,7 +90,13 @@ func (p *fakeSensorPod) handle(req map[string]any) (any, string) {
 	}
 	switch req["cmd"] {
 	case "status":
-		return map[string]any{"board": "stm32h563", "caps": p.caps, "api": 2, "min_client_api": 2}, ""
+		st := map[string]any{"board": "stm32h563", "api": 2, "min_client_api": 2}
+		for _, c := range p.caps {
+			if c == "sensors" { // a pod with the feature: the table decides from features_rev
+				st["features_rev"], st["gateware"], st["fpga_image"] = features.Revision(), 60, "emu"
+			}
+		}
+		return st, ""
 	case "sensor_define", "sensor_stimulus":
 		key, _ := req["instance"].(string)
 		chunk, _ := base64.StdEncoding.DecodeString(req["data_b64"].(string))

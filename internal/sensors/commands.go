@@ -200,7 +200,7 @@ func Values(pairs []string) (map[string]any, error) {
 }
 
 // HasCapability reports whether the pod whose status reply this is has cap (features.Has: the
-// features table when the reply has features_rev, else its caps list).
+// features table, from the reply's features_rev).
 func HasCapability(status json.RawMessage, cap string) bool {
 	ok, err := features.Has(status, cap)
 	return err == nil && ok
