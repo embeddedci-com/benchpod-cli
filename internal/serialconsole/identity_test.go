@@ -64,35 +64,9 @@ func TestIdentityShow(t *testing.T) {
 	}
 }
 
-func TestIdentityWipe(t *testing.T) {
-	pod := &identityPod{problem: "unknown identity record", newID: "ed6313"}
-	c, fc := pod.console()
-	if _, err := c.IdentityWipe(testContext(t), "a1b2c3"); err == nil {
-		t.Fatal("a wrong token was accepted")
-	} else {
-		var ie *IdentityError
-		if !errors.As(err, &ie) || !strings.Contains(ie.Reason, "identity-wipe unknown") {
-			t.Fatalf("err = %v", err)
-		}
-	}
-	id, err := c.IdentityWipe(testContext(t), "unknown")
-	if err != nil || id != "ed6313" {
-		t.Fatalf("wipe = %q, %v", id, err)
-	}
-	if got := fc.written.String(); got != "identity-wipe a1b2c3\nidentity-wipe unknown\n" {
-		t.Fatalf("written = %q", got)
-	}
-	if _, err := c.IdentityWipe(testContext(t), "two words"); err == nil {
-		t.Fatal("a token with a space was sent")
-	}
-}
-
 func TestIdentityOldFirmware(t *testing.T) {
 	c, _ := (&identityPod{old: true}).console()
 	if _, err := c.Identity(testContext(t)); !errors.Is(err, ErrIdentityUnsupported) {
 		t.Fatalf("identity err = %v", err)
-	}
-	if _, err := c.IdentityWipe(testContext(t), "unknown"); !errors.Is(err, ErrIdentityUnsupported) {
-		t.Fatalf("wipe err = %v", err)
 	}
 }

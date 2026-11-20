@@ -88,38 +88,6 @@ func parseIdentityState(reply string) (IdentityState, error) {
 	return IdentityState{ShortID: f[0], PublicKey: f[1]}, nil
 }
 
-// IdentityWipe erases the pod's device key and makes a new one, confirming with token (the
-// current short id, or "unknown"). It returns the new short id.
-func (c *Console) IdentityWipe(ctx context.Context, token string) (string, error) {
-	token = strings.TrimSpace(token)
-	if token == "" || strings.ContainsAny(token, " \t\r\n") {
-		return "", fmt.Errorf("identity-wipe: bad confirmation token %q", token)
-	}
-	line := "identity-wipe " + token
-	complete := func(acc string) bool {
-		_, _, err := parseConsoleReply(acc, "identity-wipe", line)
-		return !errors.Is(err, errNoConsoleReply)
-	}
-	out, err := c.sendCommandUntil(ctx, line, line, "", complete)
-	reply, refused, perr := parseConsoleReply(out, "identity-wipe", line)
-	switch {
-	case perr == nil && refused:
-		return "", &IdentityError{Cmd: "identity-wipe", Reason: reply}
-	case perr == nil:
-		f := strings.Fields(reply)
-		if len(f) < 2 || f[0] != "ok" {
-			return "", fmt.Errorf("identity-wipe: unexpected reply %q", reply)
-		}
-		return f[1], nil
-	case !errors.Is(perr, errNoConsoleReply):
-		return "", perr
-	case err != nil:
-		return "", fmt.Errorf("identity-wipe: %w", err)
-	default:
-		return "", fmt.Errorf("identity-wipe: no reply from the pod (got: %q)", tail([]byte(out), 200))
-	}
-}
-
 var errNoConsoleReply = errors.New("no reply yet")
 
 // parseConsoleReply finds "<cmd> <reply>" in raw console output, skipping the line editor's echo
