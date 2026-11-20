@@ -1516,7 +1516,7 @@ embeddedci.com; `la voltage` also works over USB.
 ### `benchpod la voltage [VOLTAGE]`
 
 Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
-(also `1800mV`, `3.3` or `3300`), or `5V` on a pod with the digital board v3r4
+(also `1800mV` or `3.3`: a bare number is volts), or `5V` on a pod with the digital board v3r4
 ([5 V I/O](https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io): pin 21 goes to 5 V,
 and the output then shows pin 21). Leave it out to show the setting. The pod refuses
 LA capture, UART, SWD flash, pull-ups and sensor emulation until it is set;
