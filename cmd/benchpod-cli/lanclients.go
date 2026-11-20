@@ -320,8 +320,8 @@ func lanPairing(addr string) (known, required, paired bool) {
 	if json.Unmarshal(data, &st) != nil || st.Pairing == nil {
 		return false, false, false
 	}
-	if st.Paired == nil { // the USB link: needs none
-		return true, false, true
+	if st.Paired == nil { // the USB link, or pairing off: nothing to say about this computer
+		return false, false, false
 	}
 	return true, *st.Pairing, *st.Paired
 }
