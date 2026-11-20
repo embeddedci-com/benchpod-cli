@@ -20,16 +20,15 @@ import (
 
 // ── lan-tls ─────────────────────────────────────────────────────────────────
 //
-// The pod's LAN API over TLS (firmware 3.9.3+, benchpod-firmware docs/design/lan-tls.md): the
-// certificate on port 8443 and the HTTPS-only setting. The client side (TLS by default, pinning)
-// is internal/tcpclient/tls.go.
+// The pod's LAN API over TLS (benchpod-firmware docs/design/lan-tls.md): the certificate on port
+// 8443, the HTTPS-only setting and SCPI. The client side (TLS by default, pinning) is
+// internal/tcpclient/tls.go.
 //
-// The pod takes changes (https-only off, regenerate, set-cert) over TLS, over USB and from the
-// cloud, never over plaintext Ethernet or Wi-Fi.
+// The pod takes changes (https-only, scpi, regenerate, set-cert) over its USB network adapter or
+// from the cloud only, never over Ethernet or Wi-Fi (BP0042), TLS or not.
 
 const (
-	lanTLSMissing   = "this pod's firmware has no LAN TLS; update its firmware (3.9.3 or later)"
-	lanTLSPlainHint = "the pod takes this only over TLS, USB or embeddedci.com, not over plaintext; connect with --tls on, --connection usb or --connection embeddedci:<name>"
+	lanTLSMissing   = "this pod's firmware has no LAN TLS; update its firmware with `benchpod flash-self`"
 	lanTLSMaxUpload = 7664 // the pod's limit on the certificate + key bundle (LAN_TLS_UPLOAD_MAX)
 )
 
@@ -37,6 +36,7 @@ const (
 type lanTLSReply struct {
 	Port      int      `json:"port"`
 	HTTPSOnly bool     `json:"https_only"`
+	SCPI      bool     `json:"scpi"`
 	Sessions  int      `json:"sessions"`
 	Origin    string   `json:"origin"`
 	Key       string   `json:"key"`
@@ -67,20 +67,23 @@ func newLanTLSCmd(g *globalFlags) *cobra.Command {
 	}
 	root := &cobra.Command{
 		Use:   "lan-tls [show]",
-		Short: "Show or change the pod's LAN TLS certificate and the HTTPS-only setting",
-		Long: "The pod serves its API on port 8443 with TLS as well as on plaintext 8080\n" +
-			"(firmware 3.9.3+). benchpod connects with TLS when the pod has it and pins the\n" +
-			"pod's certificate the first time (trust on first use, in known_pods.json next to\n" +
-			"the CLI config). --tls off forces plaintext; --tls-ca verifies a certificate\n" +
-			"signed by your own CA instead of pinning.\n\n" +
-			"  show         the certificate, its SHA-256 and whether it is pinned here\n" +
-			"  https-only   on: the pod answers plaintext 8080 only on its USB link\n" +
+		Short: "Show or change the pod's LAN TLS certificate, HTTPS-only and SCPI",
+		Long: "Firmware 4.0 serves its API on Ethernet and Wi-Fi on port 8443 with TLS only;\n" +
+			"plaintext 8080 answers on its USB network adapter. benchpod connects to a LAN pod\n" +
+			"with TLS and pins the pod's certificate the first time (trust on first use, in\n" +
+			"known_pods.json next to the CLI config): nothing to set up. --tls-ca verifies a\n" +
+			"certificate signed by your own CA instead of pinning.\n\n" +
+			"  show         the certificate, its SHA-256, the settings and whether it is pinned here\n" +
+			"  https-only   on (the default): the LAN takes TLS only; off: plaintext 8080 on the LAN too\n" +
+			"  scpi         on: SCPI answers on the pod's TCP ports (off by default)\n" +
 			"  regenerate   a new key and self-signed certificate\n" +
 			"  set-cert     install your own certificate and key\n" +
 			"  trust        pin the certificate the pod presents now\n" +
 			"  forget       drop the pin for this pod\n\n" +
-			"Turning HTTPS-only off, regenerating and set-cert need a TLS, USB or\n" +
-			"embeddedci.com connection: the pod refuses them over plaintext Ethernet or Wi-Fi.",
+			"https-only, scpi, regenerate and set-cert only work over USB (--connection usb,\n" +
+			"the pod's USB network adapter) or through embeddedci.com (--connection\n" +
+			"embeddedci:<name>): the pod refuses them from Ethernet and Wi-Fi, TLS or not. The\n" +
+			"pod's USB console has the same switches (`lan-tls https-only on|off`, `lan-tls scpi on|off`).",
 		Args: cobra.NoArgs,
 		RunE: show,
 	}
@@ -94,8 +97,8 @@ func newLanTLSCmd(g *globalFlags) *cobra.Command {
 		Short: "Install your own certificate and private key for port 8443",
 		Long: "Install a certificate (optionally followed by its chain) and its unencrypted\n" +
 			"private key (EC P-256/P-384 or RSA 2048-4096). The pod checks both and that the\n" +
-			"key matches before it stores them; new TLS connections use it. Over the network\n" +
-			"only (TLS or the USB network adapter). This computer's pin is updated.",
+			"key matches before it stores them; new TLS connections use it. Over the pod's USB\n" +
+			"network adapter only (--connection usb). This computer's pin is updated.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return run(func(out, warn io.Writer) error { return runLanTLSSetCert(g, certFile, keyFile, out, warn) })
@@ -116,21 +119,27 @@ func newLanTLSCmd(g *globalFlags) *cobra.Command {
 	}
 	trust.Flags().StringVar(&expect, "sha256", "", "only trust a certificate with this SHA-256 (from the pod's console `lan-tls` or the web app)")
 
-	root.AddCommand(showCmd, &cobra.Command{
-		Use:       "https-only <on|off>",
-		Short:     "Turn plaintext 8080 off (on) or back on (off) for Ethernet and Wi-Fi",
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: []string{"on", "off"},
-		RunE: func(_ *cobra.Command, args []string) error {
-			v := strings.ToLower(strings.TrimSpace(args[0]))
-			if v != "on" && v != "off" {
-				return fmt.Errorf("lan-tls https-only: %q is not on or off", args[0])
-			}
-			return run(func(out, warn io.Writer) error {
-				return runLanTLS(g, map[string]any{"https_only": v == "on"}, out, warn)
-			})
-		},
-	}, &cobra.Command{
+	onOffCmd := func(use, key, short string) *cobra.Command {
+		return &cobra.Command{
+			Use:       use + " <on|off>",
+			Short:     short + " (over USB or embeddedci.com only)",
+			Args:      cobra.ExactArgs(1),
+			ValidArgs: []string{"on", "off"},
+			RunE: func(_ *cobra.Command, args []string) error {
+				v := strings.ToLower(strings.TrimSpace(args[0]))
+				if v != "on" && v != "off" {
+					return usageErrorf("lan-tls %s: %q is not on or off", use, args[0])
+				}
+				return run(func(out, warn io.Writer) error {
+					return runLanTLS(g, map[string]any{key: v == "on"}, out, warn)
+				})
+			},
+		}
+	}
+	root.AddCommand(showCmd,
+		onOffCmd("https-only", "https_only", "Take only TLS on Ethernet and Wi-Fi (on, the default) or plaintext 8080 too (off)"),
+		onOffCmd("scpi", "scpi", "Turn SCPI on the pod's TCP ports on or off (off by default)"),
+		&cobra.Command{
 		Use:   "regenerate",
 		Short: "Make a new key and self-signed certificate on the pod",
 		Args:  cobra.NoArgs,
@@ -191,9 +200,11 @@ func runLanTLS(g *globalFlags, change map[string]any, out, warn io.Writer) error
 		}
 	}
 	printLanTLS(out, t.label, addr, rep, lastTLS(t))
-	if hs, ok := change["https_only"].(bool); ok && hs {
-		fmt.Fprintln(warn, "Plaintext port 8080 now answers only on the pod's USB link. Tools that need it there:\n"+
-			"VISA raw sockets and older benchpod/SDK releases (see the pod's API docs, LAN TLS).")
+	if hs, ok := change["https_only"].(bool); ok && !hs {
+		fmt.Fprintln(warn, "Plaintext port 8080 now answers on Ethernet and Wi-Fi too: anyone on the LAN can read and drive the pod without TLS.")
+	}
+	if sc, ok := change["scpi"].(bool); ok && sc && rep.HTTPSOnly {
+		fmt.Fprintln(warn, "SCPI answers on 8443 (TLS) and on plaintext 8080; on the LAN 8080 takes SCPI only while https-only is on.")
 	}
 	return nil
 }
@@ -221,6 +232,7 @@ func printLanTLS(out io.Writer, label, addr string, r lanTLSReply, via string) {
 	fmt.Fprintf(out, "LAN TLS of %s (connected over %s)\n", label, via)
 	fmt.Fprintf(out, "  port        %d\n", r.Port)
 	fmt.Fprintf(out, "  https-only  %s\n", onOff[r.HTTPSOnly])
+	fmt.Fprintf(out, "  scpi        %s\n", onOff[r.SCPI])
 	fmt.Fprintf(out, "  sessions    %d\n", r.Sessions)
 	if r.SHA256 == "" {
 		fmt.Fprintf(out, "  certificate none (%s)\n", valueOr(r.Error, "unknown"))

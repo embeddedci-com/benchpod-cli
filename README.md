@@ -147,10 +147,11 @@ reach the pod; the transport is inferred from its value:
 | `embeddedci:<name>`              | Through embeddedci.com to the pod with that name on your account (see below). |
 | *(omitted)*                      | the default saved by `benchpod discover --save`, `benchpod setup` or `benchpod set-connection`. |
 
-**TLS.** Pods with firmware 3.9.3 or later also serve the API on port 8443 with
-TLS. For a network address on the default port (`192.168.1.5`, `:8080`, a pod
-name) `benchpod` connects to 8443 first and falls back to plaintext 8080 only when
-the pod has no TLS port and has never been pinned. The pod's certificate is
+**TLS.** Firmware 4.0 serves the API on Ethernet and Wi-Fi on port 8443 with TLS only
+(plaintext 8080 answers on its USB network adapter). For a network address on the default
+port (`192.168.1.5`, `:8080`, a pod name) `benchpod` connects to 8443 first, with nothing to
+set up, and falls back to plaintext 8080 only when the pod has no TLS port (firmware before
+3.9.3, for `flash-self`) and has never been pinned. The pod's certificate is
 pinned the first time (trust on first use) in `known_pods.json` next to the
 config; a different certificate later stops the command with both fingerprints.
 `:8443` means TLS only, any other port and the USB network adapter mean
@@ -465,15 +466,18 @@ LAN policy of benchpod-baea06: locked (read and instrument control only on the L
 
 #### LAN TLS: encrypted LAN API
 
-The pod's API on port 8443 is the same as on 8080, over TLS (firmware 3.9.3+). The
-pod makes its own key and self-signed certificate on first boot; `benchpod`
-pins it on first use. `benchpod lan-tls` shows it:
+The pod's API on port 8443 is the same as on 8080, over TLS. From firmware 4.0 it is the only
+port the JSON API answers on over Ethernet and Wi-Fi (HTTPS-only is on by default), and SCPI is
+off until you switch it on. The pod makes its own key and self-signed certificate on first boot
+and keeps it across updates; `benchpod` pins it on first use, so this needs no action from you.
+`benchpod lan-tls` shows it:
 
 ```
 $ benchpod lan-tls --connection 192.168.1.220
 LAN TLS of 192.168.1.220:8080 (connected over TLS)
   port        8443
-  https-only  off
+  https-only  on
+  scpi        off
   sessions    1
   certificate CN=benchpod-baea06 (generated, EC P-256), valid to 9999-12-31
   names       benchpod-baea06, benchpod-baea06.local
@@ -481,9 +485,11 @@ LAN TLS of 192.168.1.220:8080 (connected over TLS)
   pinned      yes, for 192.168.1.220:8443
 ```
 
-- `benchpod lan-tls https-only on` turns plaintext 8080 off on Ethernet and Wi-Fi
-  (the pod keeps it on its USB link). Use it when the LAN path is shared, for
-  example through a Wi-Fi bridge.
+- `benchpod lan-tls https-only off` turns plaintext 8080 back on for Ethernet and
+  Wi-Fi (for older tools); `on`, the default, takes only TLS there. The pod keeps
+  8080 on its USB link either way.
+- `benchpod lan-tls scpi on` turns SCPI on: it then answers on 8443 and on 8080 (on
+  the LAN, 8080 takes SCPI only while HTTPS-only is on); `off` turns it off again.
 - `benchpod lan-tls set-cert --cert pod.pem --key pod.key` installs your own
   certificate (with its chain) and unencrypted key; `regenerate` makes a new
   self-signed one. Both update this computer's pin.
@@ -494,9 +500,11 @@ LAN TLS of 192.168.1.220:8080 (connected over TLS)
 - A TLS handshake costs the pod about 0.5 s; `benchpod` keeps the pod's session
   ticket for an hour in `tls_sessions.json` (mode 0600, next to the pins), so later
   runs resume in about 40 ms.
-- The pod refuses `https-only off`, `regenerate` and `set-cert` over plaintext
-  Ethernet or Wi-Fi: use TLS (the default), `--connection usb` or
-  `--connection embeddedci:<name>`.
+- `https-only`, `scpi`, `regenerate` and `set-cert` only work over USB
+  (`--connection usb`, the pod's USB network adapter) or through embeddedci.com
+  (`--connection embeddedci:<name>`): the pod refuses them from Ethernet and Wi-Fi,
+  TLS or not (`BP0042`). The pod's USB console has the same switches
+  (`lan-tls https-only on|off`, `lan-tls scpi on|off`).
 - `benchpod lan-tls show --pem > pod.pem` saves the certificate, for curl or socat
   (VISA raw sockets have no TLS; see the firmware API docs, LAN TLS).
 
@@ -1003,7 +1011,7 @@ and `token.json` for the embeddedci.com session.
 | `--config-file`     | `~/.config/benchpod-cli/config.json` | The CLI's config file, where `set-connection` saves the default. |
 | `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.              |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
-| `--tls`             | `auto`                           | TLS to the pod's LAN API: `auto` (8443 when the pod has it, pinned on first use), `on` (TLS only) or `off` (plaintext 8080). Also `BENCHPOD_TLS`. See [Connection](#connection). |
+| `--tls`             | `auto`                           | TLS to the pod's LAN API: `auto` (8443 when the pod has it, pinned on first use), `on` (TLS only) or `off` (plaintext 8080; firmware 4.0 answers it on the LAN only after `benchpod lan-tls https-only off`). Also `BENCHPOD_TLS`. See [Connection](#connection). |
 | `--tls-ca`          | (none)                           | PEM file of CA certificates: verify the pod's certificate and name against them instead of pinning. Also `BENCHPOD_TLS_CA`. |
 | `--org`             | (the active organization)        | The embeddedci.com organization cloud calls act in: its id, slug or name. Also `BENCHPOD_ORG`. See [Organizations](#organizations). |
 | `--wiring-profile`  | (the pod's default profile)      | The wiring profile stored on the pod that fills in the pins a command leaves out (`flash`, `i2c`, `spi-flash`, ...). Also `BENCHPOD_WIRING_PROFILE`. See [`benchpod wiring`](#benchpod-wiring). |
@@ -2202,8 +2210,8 @@ Every code is also on [embeddedci.com/docs/errors](https://embeddedci.com/docs/e
 
 ### `benchpod lan-tls`
 
-Show the pod's LAN TLS certificate, its SHA-256, the HTTPS-only setting and
-whether this computer has it pinned (firmware 3.9.3+). See
+Show the pod's LAN TLS certificate, its SHA-256, the HTTPS-only and SCPI settings
+and whether this computer has it pinned. See
 [LAN TLS](#lan-tls-encrypted-lan-api). Over the network, USB or embeddedci.com.
 
 | Flag    | Default | Purpose                                                          |
@@ -2220,20 +2228,28 @@ Same as `benchpod lan-tls`.
 
 ### `benchpod lan-tls https-only <on|off>`
 
-`on`: the pod refuses plaintext 8080 on Ethernet and Wi-Fi and answers only on
-8443 there; its USB link keeps 8080. `off` needs a TLS, USB or embeddedci.com
-connection. Stored on the pod.
+`on` (the default from firmware 4.0): the pod refuses plaintext 8080 on Ethernet and
+Wi-Fi and answers only on 8443 there; its USB link keeps 8080. `off`: plaintext 8080
+on the LAN too. Only over USB (`--connection usb`) or embeddedci.com. Stored on the pod.
+
+### `benchpod lan-tls scpi <on|off>`
+
+`on`: SCPI answers on the pod's TCP ports (8443, and 8080; on the LAN 8080 takes SCPI
+only while HTTPS-only is on), and the pod advertises `_scpi-raw._tcp`. `off` (the
+default from firmware 4.0) closes SCPI sessions. Only over USB (`--connection usb`)
+or embeddedci.com. Stored on the pod.
 
 ### `benchpod lan-tls regenerate`
 
 A new key and self-signed certificate on the pod; this computer's pin follows.
-Needs a TLS, USB or embeddedci.com connection.
+Only over USB (`--connection usb`) or embeddedci.com.
 
 ### `benchpod lan-tls set-cert`
 
 Install your own certificate and key. Checks them here first (they must match,
 the key must not be encrypted, at most 7.6 KB together), uploads them over the
-network (TLS or the USB network adapter), checks the pod reports the new
+pod's USB network adapter (`--connection usb`; the pod refuses the upload from
+Ethernet and Wi-Fi), checks the pod reports the new
 certificate and updates the pin.
 
 | Flag     | Default | Purpose                                                        |

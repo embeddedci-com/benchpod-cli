@@ -116,7 +116,7 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")
 	pf.StringVar(&g.tls, "tls", "auto",
-		"TLS to the pod's LAN API: auto (TLS on 8443 when the pod has it, pinned on first use), on (TLS only) or off (plaintext 8080)")
+		"TLS to the pod's LAN API: auto (TLS on 8443 when the pod has it, pinned on first use), on (TLS only) or off (plaintext 8080: firmware 4.0 answers it on the LAN only after `benchpod lan-tls https-only off`)")
 	pf.StringVar(&g.tlsCA, "tls-ca", "", "PEM file of CA certificates: verify the pod's TLS certificate and name against them instead of pinning")
 	pf.StringVar(&g.org, "org", "",
 		"embeddedci.com organization for cloud calls (embeddedci:<name>, login-backed commands): its id, slug or name (default: the active organization in the web app; also BENCHPOD_ORG)")
