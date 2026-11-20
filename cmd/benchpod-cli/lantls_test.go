@@ -23,7 +23,7 @@ func TestLanTLSSwitches(t *testing.T) {
 		{[]string{"lan-tls", "https-only", "off"}, map[string]any{"cmd": "lan_tls", "https_only": false}},
 		{[]string{"lan-tls"}, map[string]any{"cmd": "lan_tls"}},
 	} {
-		if code := run(append(c.args, "--connection", addr, "--output-filename", out)); code != exitOK {
+		if code := run(append(c.args, "--connection", addr, "--out", out)); code != exitOK {
 			t.Fatalf("%v: exit %d", c.args, code)
 		}
 		var req map[string]any

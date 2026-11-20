@@ -167,7 +167,7 @@ system resolver as before.
 
 The global flags are also settable via a `BENCHPOD_*` environment variable
 (`BENCHPOD_CONNECTION=usb`, `BENCHPOD_TIMEOUT=2m`, `BENCHPOD_CONFIG_FILE`,
-`BENCHPOD_OUTPUT_FILENAME`), with precedence flag > env > default. Command flags
+`BENCHPOD_OUT`), with precedence flag > env > default. Command flags
 are flags only.
 
 The firmware itself is unauthenticated; `benchpod login` is independent of the
@@ -341,7 +341,7 @@ benchpod la voltage 3.3V                          # the DUT's I/O voltage for no
 benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (see the 5 V page linked under la voltage)
 benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1 --offset-v 1.65 --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
-benchpod capture --samples 1024 --output csv      # ADC snapshot
+benchpod capture --samples 1024 --format csv      # ADC snapshot
 benchpod test ...
 benchpod la pull 3 up                             # LA pin pull resistor: up, down or off (digital v3r4: every pin, strength picked by the pod)
 benchpod la status
@@ -1010,7 +1010,7 @@ and `token.json` for the embeddedci.com session.
 |---------------------|----------------------------------|-------------------------------------------------------------------|
 | `--connection`      | (saved `set-connection` target)  | Network address, pod name (`benchpod-a1b2c3`), device path, `usb`, or `embeddedci:<name>` (through embeddedci.com); see [Connection](#connection). |
 | `--config-file`     | `~/.config/benchpod-cli/config.json` | The CLI's config file, where `set-connection` saves the default. |
-| `--output-filename` | (stdout)                         | Write command output to this file instead of stdout.              |
+| `--out`             | (stdout)                         | Write command output to this file instead of stdout (`benchpod ci` takes `--out` as its run folder). Also `BENCHPOD_OUT`. |
 | `--timeout`         | `0` (per-command default)        | Overall command deadline; `0` uses each command's own default.    |
 | `--tls`             | `auto`                           | TLS to the pod's LAN API: `auto` (8443 when the pod has it, pinned on first use), `on` (TLS only) or `off` (plaintext 8080; firmware 4.0 answers it on the LAN only after `benchpod lan-tls https-only off`). Also `BENCHPOD_TLS`. See [Connection](#connection). |
 | `--tls-ca`          | (none)                           | PEM file of CA certificates: verify the pod's certificate and name against them instead of pinning. Also `BENCHPOD_TLS_CA`. |
@@ -1281,7 +1281,7 @@ Blocking ADC snapshot (network). Prints the samples.
 | Flag                | Default | Purpose                                              |
 |---------------------|---------|------------------------------------------------------|
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
-| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
+| `--format`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
 | `--sample-rate`     | max     | ADC sample rate, e.g. `100kHz`; leave it out for the maximum (400 kSPS). |
 
 ### `benchpod measure`
@@ -1296,7 +1296,7 @@ DAC plus ADC loopback capture (network): play a waveform and capture the ADC. It
 | `--amplitude`       | `127`   | Half-scale amplitude code, 0-127.                    |
 | `--offset`          | `128`   | DC offset code, 0-255.                               |
 | `--samples`         | `256`   | Number of ADC samples, 1-4096.                       |
-| `--output`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
+| `--format`          | `json`  | Output format: `json`, `csv` or `ndjson`.            |
 | `--sample-rate`     | auto    | Sample-clock rate, e.g. `10MHz`; leave it out to auto-pick. |
 
 ### `benchpod test`
@@ -1308,7 +1308,7 @@ A diagnostic sample pattern made by the pod's MCU, without the FPGA (network).
 | `--pattern` | `sine`  | `sine`, `counter`, `ramp` or `const` (`const` when only `--value` is set). |
 | `--value`   | `255`   | Constant byte value, 0-255, for the `const` pattern.                      |
 | `--samples` | `256`   | Number of samples, 1-4096.                                               |
-| `--output`  | `json`  | Output format: `json`, `csv` or `ndjson`.                                |
+| `--format`  | `json`  | Output format: `json`, `csv` or `ndjson`.                                |
 
 ### `benchpod adc-range [show|normal|low|test]`
 
@@ -1393,7 +1393,7 @@ your own part.
 
 | Flag              | Default | Purpose                                                       |
 |-------------------|---------|---------------------------------------------------------------|
-| `--output`, `-o`  | (stdout) | Write to this file.                                          |
+| `--out`, `-o`     | (stdout) | Write to this file.                                          |
 | `--version`       | (none)  | Library version (default: the pinned one, or the saved one).  |
 | `--format-doc`    | `false` | Write the library's format reference (`docs/format.md`) instead. |
 
@@ -1425,14 +1425,14 @@ replaces it. It prints the params `sensor set` takes.
 |--------------|---------|---------|
 | `--pin`      | (none)  | `role=channel`, repeatable. I2C `sda`, `scl` (default: the wiring profile's `i2c_sda`/`i2c_scl` on embeddedci.com) and `drdy`; SPI `sclk`, `mosi`, `miso`, `cs` (default: the profile's `spi_*`; the emulated SPI target has no data-ready pin); UART `tx` (pod to DUT RX) and `rx`; analog `output=dac` (default) or `output=current`. A channel is `1`-`14` or `la1`-`la14`; another word is a name in the wiring profile on embeddedci.com (a role such as `i2c_sda` or a signal such as `DRDY`), resolved to its channel here. |
 | `--instance` | (the definition's name) | Instance name, 1 to 16 characters of `a-z`, `0-9` and `_`. |
-| `--address`  | (none)  | I2C: the definition's address or one of its `alt_addresses` (`0x77`). |
+| `--addr`     | (none)  | I2C: the definition's address or one of its `alt_addresses` (`0x77`). |
 | `--set`      | (none)  | Initial value as `key=number`, repeatable. |
 | `--baud`     | `0` (the definition's) | UART: override the baud rate. |
 | `--version`  | (none)  | Library version for a library name. |
 
 ```bash
 benchpod sensor start gps_nmea --instance gps --pin tx=9 --set lat_deg=50.85 --set lon_deg=4.35
-benchpod sensor start sensors/my_adc.yaml --pin sda=2 --pin scl=1 --address 0x49
+benchpod sensor start sensors/my_adc.yaml --pin sda=2 --pin scl=1 --addr 0x49
 ```
 
 ### `benchpod sensor set <instance> <key=value>...`
@@ -1829,7 +1829,7 @@ embeddedci.com. See [Flashing the pod itself](#flashing-the-pod-itself-stm32-usb
 | `--firmware-version` | (latest)     | Fetch this release tag instead of the latest.                 |
 | `--firmware-url`     | (latest)     | Download the firmware from this URL instead (https only).     |
 | `--allow-unsigned`   | off          | Flash a downloaded image whose signature is missing or fails (a local file is never refused). |
-| `--address`          | `0x08000000` | Flash base address (STM32 main flash).                        |
+| `--addr`             | `0x08000000` | Flash base address (STM32 main flash).                        |
 | `--dfu-util`         | (`PATH`)     | Path to the `dfu-util` binary.                                |
 | `--no-leave`         | off          | Stay in DFU after flashing instead of starting the firmware.  |
 | `--skip-blobs`       | off          | Do not install the gateware and ESP32-C3 images afterwards.   |

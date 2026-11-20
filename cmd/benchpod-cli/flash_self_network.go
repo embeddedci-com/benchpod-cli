@@ -36,7 +36,7 @@ var (
 )
 
 // dfuOnlyFlags are the flash-self flags that only mean something for DFU.
-var dfuOnlyFlags = []string{"enter-dfu", "no-leave", "dfu-util", "address", "wait"}
+var dfuOnlyFlags = []string{"enter-dfu", "no-leave", "dfu-util", "addr", "wait"}
 
 // podStatusInfo is what flash-self --network reads from the pod's JSON status.
 type podStatusInfo struct {

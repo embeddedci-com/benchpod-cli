@@ -251,7 +251,7 @@ func newFlashSelfCmd(g *globalFlags) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.address, "address", stmDfuBaseAddr, "flash base address (STM32 main flash)")
+	fl.StringVar(&f.address, "addr", stmDfuBaseAddr, "flash base address (STM32 main flash)")
 	fl.StringVar(&f.dfuUtil, "dfu-util", "", "path to the dfu-util binary; defaults to the one on PATH")
 	fl.BoolVar(&f.noLeave, "no-leave", false, "stay in DFU after flashing instead of starting the new firmware")
 	fl.BoolVar(&f.enterDfu, "enter-dfu", false, "first reboot a running pod into DFU over the USB console, then flash")

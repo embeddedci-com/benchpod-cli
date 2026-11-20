@@ -174,7 +174,7 @@ func newSampleCmd(g *globalFlags, name, short string) *cobra.Command {
 				return usageErrorf("--samples must be between 1 and 4096")
 			}
 			if !validOutput(output) {
-				return usageErrorf("--output must be json, csv, or ndjson")
+				return usageErrorf("--format must be json, csv, or ndjson")
 			}
 			ctx, cancel, client, err := g.networkClient(name, 30*time.Second)
 			if err != nil {
@@ -194,7 +194,7 @@ func newSampleCmd(g *globalFlags, name, short string) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&samples, "samples", 256, "number of ADC samples (1-4096)")
-	cmd.Flags().StringVar(&output, "output", "json", "output format: json|csv|ndjson")
+	cmd.Flags().StringVar(&output, "format", "json", "output format: json|csv|ndjson")
 	cmd.Flags().Var(newFrequencyValue(0, &sampleRateHz), "sample-rate", "ADC sample rate, e.g. 100kHz (omit for the maximum, 400 kSPS)")
 	return cmd
 }
@@ -217,7 +217,7 @@ func newMeasureCmd(g *globalFlags) *cobra.Command {
 				return usageErrorf("--samples must be between 1 and 4096")
 			}
 			if !validOutput(output) {
-				return usageErrorf("--output must be json, csv, or ndjson")
+				return usageErrorf("--format must be json, csv, or ndjson")
 			}
 			ctx, cancel, client, err := g.networkClient("measure", 30*time.Second)
 			if err != nil {
@@ -249,7 +249,7 @@ func newMeasureCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().IntVar(&offset, "offset", 128, "DC offset 0-255")
 	cmd.Flags().IntVar(&samples, "samples", 256, "number of ADC samples (1-4096)")
 	cmd.Flags().Var(newFrequencyValue(0, &sampleRateHz), "sample-rate", "sample-clock rate, e.g. 10MHz (omit to auto-pick)")
-	cmd.Flags().StringVar(&output, "output", "json", "output format: json|csv|ndjson")
+	cmd.Flags().StringVar(&output, "format", "json", "output format: json|csv|ndjson")
 	return cmd
 }
 
@@ -267,7 +267,7 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 				return usageErrorf("--samples must be between 1 and 4096")
 			}
 			if !validOutput(output) {
-				return usageErrorf("--output must be json, csv, or ndjson")
+				return usageErrorf("--format must be json, csv, or ndjson")
 			}
 
 			// Mirror the firmware default: const when --value is given without
@@ -301,7 +301,7 @@ func newTestCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&pattern, "pattern", "", "pattern: sine|counter|ramp|const (default sine, or const when --value is set)")
 	cmd.Flags().IntVar(&value, "value", 255, "constant byte value 0-255 (used by const pattern)")
 	cmd.Flags().IntVar(&samples, "samples", 256, "number of samples (1-4096)")
-	cmd.Flags().StringVar(&output, "output", "json", "output format: json|csv|ndjson")
+	cmd.Flags().StringVar(&output, "format", "json", "output format: json|csv|ndjson")
 	return cmd
 }
 

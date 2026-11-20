@@ -234,7 +234,7 @@ func newSensorExportCmd(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVarP(&outFile, "output", "o", "", "write to this file instead of stdout")
+	c.Flags().StringVarP(&outFile, "out", "o", "", "write to this file instead of stdout")
 	c.Flags().StringVar(&version, "version", "", "library version (default: the pinned one, BENCHPOD_SENSOR_LIBRARY or the saved default)")
 	c.Flags().BoolVar(&format, "format-doc", false, "write the library's format reference (docs/format.md) instead; <name> is then ignored")
 	return c
@@ -420,7 +420,7 @@ func newSensorStartCmd(g *globalFlags) *cobra.Command {
 	}
 	c.Flags().StringVar(&f.instance, "instance", "", "instance name, 1 to 16 characters of a-z, 0-9 and _ (default: the definition's name)")
 	c.Flags().StringArrayVar(&f.pins, "pin", nil, "pin as role=channel, e.g. --pin sda=2 --pin scl=1 (repeatable)")
-	c.Flags().StringVar(&f.address, "address", "", "I2C address: the definition's address or one of its alt_addresses (e.g. 0x77)")
+	c.Flags().StringVar(&f.address, "addr", "", "I2C address: the definition's address or one of its alt_addresses (e.g. 0x77)")
 	c.Flags().StringArrayVar(&f.values, "set", nil, "initial value as key=number, e.g. --set temperature_c=30 (repeatable)")
 	c.Flags().IntVar(&f.baud, "baud", 0, "UART: override the definition's baud rate")
 	c.Flags().StringVar(&f.version, "version", "", "library version for a library name")

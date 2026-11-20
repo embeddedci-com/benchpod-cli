@@ -463,7 +463,7 @@ func newI2CStopCmd(g *globalFlags) *cobra.Command {
 	}
 }
 
-// writeLine prints one line to the command output (--output-filename or stdout).
+// writeLine prints one line to the command output (--out or stdout).
 func writeLine(g *globalFlags, line string) error {
 	out, closeOut, err := resolveOutput(g.outputFilename)
 	if err != nil {

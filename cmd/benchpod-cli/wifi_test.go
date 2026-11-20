@@ -219,14 +219,14 @@ func TestShowNetworkScanAndClearWifi(t *testing.T) {
 	})
 	out := t.TempDir() + "/out.txt"
 	read := func() string { b, _ := os.ReadFile(out); return string(b) }
-	if code := run([]string{"show-network", "--connection", addr, "--output-filename", out}); code != exitOK {
+	if code := run([]string{"show-network", "--connection", addr, "--out", out}); code != exitOK {
 		t.Fatalf("show-network: exit %d", code)
 	}
 	if got := read(); got != "IP:    192.168.1.77\nSSID:  lab\nState: connected\nRSSI:  -61 dBm\n" {
 		t.Fatalf("show-network:\n%s", got)
 	}
 	captureStderr(t, func() {
-		if code := run([]string{"scan-wifi", "--connection", addr, "--output-filename", out}); code != exitOK {
+		if code := run([]string{"scan-wifi", "--connection", addr, "--out", out}); code != exitOK {
 			t.Fatalf("scan-wifi: exit %d", code)
 		}
 	})

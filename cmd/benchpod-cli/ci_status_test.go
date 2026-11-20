@@ -152,7 +152,7 @@ func TestCILeaseFromFeaturesRev(t *testing.T) {
 func TestStatusJSONHasLocalLease(t *testing.T) {
 	p := startStatusFormPod(t, 5)
 	out := filepath.Join(t.TempDir(), "status.json")
-	if code := run([]string{"--connection", p.addr, "--tls", "off", "status", "--json", "--output-filename", out}); code != 0 {
+	if code := run([]string{"--connection", p.addr, "--tls", "off", "status", "--json", "--out", out}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	data, _ := os.ReadFile(out)

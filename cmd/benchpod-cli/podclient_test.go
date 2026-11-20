@@ -125,7 +125,7 @@ func podReplies(replies map[string]string) func(map[string]any) (int, string) {
 func runOut(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "out.txt")
-	code := run(append(args, "--output-filename", out))
+	code := run(append(args, "--out", out))
 	b, _ := os.ReadFile(out)
 	return code, string(b)
 }

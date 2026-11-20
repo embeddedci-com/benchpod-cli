@@ -768,7 +768,7 @@ func TestCICommandExitCodes(t *testing.T) {
 	}
 	a, b := mk("a", ci.Passed), mk("b", ci.Failed)
 	out := filepath.Join(dir, "diff.json")
-	if code := run([]string{"ci", "diff", a, filepath.Join(b, "run.json"), "--json", "--output-filename", out}); code != 0 {
+	if code := run([]string{"ci", "diff", a, filepath.Join(b, "run.json"), "--json", "--out", out}); code != 0 {
 		t.Errorf("diff: %d", code)
 	}
 	if code := run([]string{"ci", "diff", a, filepath.Join(dir, "missing")}); code != 1 {

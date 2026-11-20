@@ -102,3 +102,30 @@ func TestSIFlagsAndFirmware4Names(t *testing.T) {
 		}
 	}
 }
+
+// One name each: --out for output files, --format for formats, --addr for addresses.
+func TestOneFlagName(t *testing.T) {
+	root := newRootCmd()
+	for _, c := range []struct {
+		path      []string
+		has, gone string
+	}{
+		{[]string{"capture"}, "format", "output"},
+		{[]string{"measure"}, "format", "output"},
+		{[]string{"test"}, "format", "output"},
+		{[]string{"sensor", "export"}, "out", "output"},
+		{[]string{"sensor", "start"}, "addr", "address"},
+		{[]string{"flash-self"}, "addr", "address"},
+	} {
+		cmd, _, err := root.Find(c.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Flags().Lookup(c.has) == nil || cmd.Flags().Lookup(c.gone) != nil {
+			t.Errorf("%v: want --%s and no --%s", c.path, c.has, c.gone)
+		}
+	}
+	if root.PersistentFlags().Lookup("out") == nil || root.PersistentFlags().Lookup("output-filename") != nil {
+		t.Error("global --out")
+	}
+}

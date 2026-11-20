@@ -94,7 +94,7 @@ func newRootCmd() *cobra.Command {
 			tcpclient.SetAPIProbe(apiProbe)
 			g.connection = viper.GetString("connection")
 			g.configFile = viper.GetString("config-file")
-			g.outputFilename = viper.GetString("output-filename")
+			g.outputFilename = viper.GetString("out")
 			g.timeout = viper.GetDuration("timeout")
 			g.tls = viper.GetString("tls")
 			g.tlsCA = viper.GetString("tls-ca")
@@ -115,7 +115,7 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.connection, "connection", "",
 		`how to reach the pod: its network address (192.168.1.5[:8080]), its name (benchpod-a1b2c3 or a1b2c3, found on the LAN over mDNS, else on USB), a device path (/dev/tty..., COM3), "usb" to auto-detect the pod over USB (its console, and its USB network adapter for the network commands), usb:<name> for one of several pods on USB, or embeddedci:<name> to go through embeddedci.com (default: the saved set-connection target)`)
 	pf.StringVar(&g.configFile, "config-file", "", "path to config file")
-	pf.StringVar(&g.outputFilename, "output-filename", "", "write command output to this file instead of stdout")
+	pf.StringVar(&g.outputFilename, "out", "", "write command output to this file instead of stdout (benchpod ci: the run folder)")
 	pf.DurationVar(&g.timeout, "timeout", 0, "overall command deadline (0 = per-command default)")
 	pf.StringVar(&g.tls, "tls", "auto",
 		"TLS to the pod's LAN API: auto (TLS on 8443 when the pod has it, pinned on first use), on (TLS only) or off (plaintext 8080: firmware 4.0 answers it on the LAN only after `benchpod lan-tls https-only off`)")
@@ -130,7 +130,7 @@ func newRootCmd() *cobra.Command {
 	viper.SetEnvPrefix("BENCHPOD")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
-	for _, name := range []string{"connection", "config-file", "output-filename", "timeout", "tls", "tls-ca", "org", "wiring-profile"} {
+	for _, name := range []string{"connection", "config-file", "out", "timeout", "tls", "tls-ca", "org", "wiring-profile"} {
 		_ = viper.BindPFlag(name, pf.Lookup(name))
 	}
 
