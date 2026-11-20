@@ -94,6 +94,7 @@ func stoppedWhy(ctx context.Context, lease ciLease) string {
 type ciExit struct {
 	code int
 	msg  string
+	err  error // the error a setup failure came from, when there was one (its CLI exit code may apply)
 }
 
 func (e *ciExit) Error() string {
@@ -104,7 +105,13 @@ func (e *ciExit) Error() string {
 }
 
 func setupErr(format string, args ...any) *ciExit {
-	return &ciExit{code: ci.ExitSetup, msg: fmt.Sprintf(format, args...)}
+	e := &ciExit{code: ci.ExitSetup, msg: fmt.Sprintf(format, args...)}
+	for _, a := range args {
+		if err, ok := a.(error); ok {
+			e.err = err
+		}
+	}
+	return e
 }
 
 // execute runs the whole run and returns its exit code. ctx ends on Ctrl-C.

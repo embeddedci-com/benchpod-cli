@@ -750,7 +750,7 @@ func TestCICommandExitCodes(t *testing.T) {
 	if code := run([]string{"ci", "run", "-f", bad}); code != 1 {
 		t.Errorf("run bad: %d", code)
 	}
-	if code := run([]string{"ci", "run", "--no-such-flag"}); code != 1 {
+	if code := run([]string{"ci", "run", "--no-such-flag"}); code != exitUsage {
 		t.Errorf("usage error under ci: %d", code)
 	}
 	if code := run([]string{"ci", "-f", filepath.Join(dir, "nope.yaml")}); code != 1 {

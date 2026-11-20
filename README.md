@@ -777,10 +777,10 @@ dies it expires on its own after 5 minutes. Every command the run sends to the p
 the lease's id, and so do the commands of its pytest and run steps (the SDK reads
 `BENCHPOD_LEASE`).
 
-A pod that is in use when the run starts ends it at once with exit code 4 and who holds it;
+A pod that is in use when the run starts ends it at once with exit code 12 and who holds it;
 `--wait 10m` waits for it instead. A pod whose firmware has no lease gets one warning and the
 run goes on without one. A lease lost during the run (someone stopped the run from the web
-app, the pod rebooted) makes the run invalid (exit code 4). The step that is running stops
+app, the pod rebooted) makes the run invalid (exit code 12). The step that is running stops
 at once (a pytest or run step is stopped like at its timeout, and the cases it recorded so far
 are kept), the steps left are skipped, and cleanup still runs, without the lease (if another session took the pod meanwhile, the pod
 refuses it, and `logs/cleanup.log` says so).
@@ -856,7 +856,7 @@ suite: process-node-hil          # required: the name runs are stored and compar
 dut: process-node                # required: the board on the pod; "none" for a pod-only suite
 wiring: process-node             # the pod's stored wiring profile (default: the pod's default)
 require:
-  pod_firmware: ">=3.10.12"      # not met: the run is invalid (exit 4) and nothing is driven
+  pod_firmware: ">=3.10.12"      # not met: the run is invalid (exit 12) and nothing is driven
 firmware:
   build: make -C firmware        # optional; runs in this file's directory before flashing
   file: firmware/build/app.elf   # the image to flash (relative to this file)
@@ -869,7 +869,7 @@ keep: {traces: failed}           # all | failed | none
 cleanup: default                 # or none, or a list: [dac_stop, power_off, sensors_off, pulls_off]
 upload: auto                     # auto (when signed in) | true | false
 baseline: main                   # after the upload, compare with the last valid run on this branch
-gate: drift                      # optional: every drift allowance gates (exit 3); default: per metric
+gate: drift                      # optional: every drift allowance gates (exit 11); default: per metric
 steps:
   - id: boot                     # stable id: the case id across runs (default: from name)
     power_cycle: {until: "APP_OK", timeout: 10s, off_ms: 500}
@@ -941,10 +941,10 @@ Baseline main (run 3f9c...): 0 newly failing, 1 fixed, 2 drifted, 1 beyond a gat
 ```
 
 A measurement whose change against the baseline is beyond its `drift` allowance fails the run
-with exit code 3 when the metric says `fail_on_drift: true`, or the file says `gate: drift`
+with exit code 11 when the metric says `fail_on_drift: true`, or the file says `gate: drift`
 (every measurement with a drift allowance gates, including the ones a test records with
-`measure()`; `fail_on_drift: false` on a metric opts it out). Exit code 3 only replaces a
-passing run's 0: a failed or invalid run keeps its 2 or 4. Without a baseline run on the
+`measure()`; `fail_on_drift: false` on a metric opts it out). Exit code 11 only replaces a
+passing run's 0: a failed or invalid run keeps its 10 or 12. Without a baseline run on the
 branch yet, or when the run was not uploaded, the compare is skipped with a note and gates
 nothing.
 
@@ -975,13 +975,21 @@ from a repository the organization trusts.
 
 ### Exit codes of `benchpod ci`
 
+Codes 0 to 7 mean what they mean for every benchpod command ([Exit codes](#exit-codes)); a run's
+results are 10 and up, so a script never mistakes one for the other (CLI 0.10 moved them from 2,
+3 and 4).
+
 | Code | Meaning |
 |---|---|
 | `0` | Every case passed (skipped and expected failures included). |
-| `1` | A file, usage or setup error: the YAML, the firmware build, no pod, a missing wiring profile, `upload: true` without a sign-in. |
-| `2` | A test failed or errored, or a required step failed. |
-| `3` | The run passed, but a gated measurement drifted beyond its allowance against the baseline (see [Baseline gating](#baseline-gating)). |
-| `4` | The run is not valid: the pod was in use, `require` was not met, the pod rebooted or stopped answering, the lease was lost, a capture lost samples, or the run was interrupted. |
+| `1` | A file or setup error: the YAML, the firmware build, a missing wiring profile, `upload: true` without a sign-in. |
+| `2` | Usage: a bad flag or argument. |
+| `5` | The pod did not answer, or no pod was found. |
+| `6` | The pod's firmware needs a newer benchpod CLI. |
+| `7` | The pod's firmware is too old for this CLI (firmware before 4.0: `benchpod flash-self`). |
+| `10` | A test failed or errored, or a required step failed. |
+| `11` | The run passed, but a gated measurement drifted beyond its allowance against the baseline (see [Baseline gating](#baseline-gating)). |
+| `12` | The run is not valid: the pod was in use, `require` was not met, the pod rebooted or stopped answering, the lease was lost, a capture lost samples, or the run was interrupted. |
 
 ## Command reference
 

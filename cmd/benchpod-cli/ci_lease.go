@@ -54,7 +54,7 @@ type ciLease interface {
 	Release(ctx context.Context)
 }
 
-// ciBusyError is the pod held by someone else (exit 4).
+// ciBusyError is the pod held by someone else (exit 12).
 type ciBusyError struct{ msg string }
 
 func (e *ciBusyError) Error() string { return e.msg }

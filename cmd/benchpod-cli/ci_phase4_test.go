@@ -28,8 +28,8 @@ func TestCIBaselineGating(t *testing.T) {
 		name, extra, expect string
 		code                int
 	}{
-		{"fail_on_drift", "", "", 3},
-		{"gate drift", "gate: drift\n", "", 3},
+		{"fail_on_drift", "", "", ci.ExitRegression},
+		{"gate drift", "gate: drift\n", "", ci.ExitRegression},
 		{"not gated", "", "", 0},
 		{"fail_on_drift false beats gate", "gate: drift\n", "", 0},
 	}
@@ -59,7 +59,7 @@ func TestCIBaselineGating(t *testing.T) {
 			if !strings.Contains(out, "Baseline main (run r-base): 0 newly failing, 0 fixed, 1 drifted") {
 				t.Errorf("headline:\n%s", out)
 			}
-			if c.code == 3 && !strings.Contains(out, "boot mean_ma drifted +30.0%") {
+			if c.code == ci.ExitRegression && !strings.Contains(out, "boot mean_ma drifted +30.0%") {
 				t.Errorf("gated line:\n%s", out)
 			}
 			md, _ := os.ReadFile(summary)
@@ -69,7 +69,7 @@ func TestCIBaselineGating(t *testing.T) {
 					t.Errorf("summary lacks %q:\n%s", want, text)
 				}
 			}
-			if strings.Contains(text, "(fails the run)") != (c.code == 3) {
+			if strings.Contains(text, "(fails the run)") != (c.code == ci.ExitRegression) {
 				t.Errorf("summary gating mark:\n%s", text)
 			}
 		})

@@ -197,7 +197,13 @@ func run(args []string) int {
 	}
 	log.Printf("%v", withSavedConnectionHint(withRefusalHint(err), savedConnectionUsed))
 	if cmd != nil && isCICommand(cmd) {
-		return ci.ExitSetup // benchpod ci: a usage error is a setup error (exit 1), see its exit codes
+		// benchpod ci: the CLI's codes 2 (usage), 5, 6 and 7 mean the same there; anything else
+		// before the run is a setup error.
+		switch c := exitCode(err); c {
+		case exitUsage, exitUnreachable, exitUpdateCLI, exitUpdatePod:
+			return c
+		}
+		return ci.ExitSetup
 	}
 	return exitCode(err)
 }
