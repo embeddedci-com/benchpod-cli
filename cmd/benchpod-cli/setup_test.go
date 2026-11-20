@@ -568,3 +568,25 @@ func TestSetupStopsWhenItCannotPair(t *testing.T) {
 		t.Fatalf("setup went on unpaired: %v", env.calls)
 	}
 }
+
+func TestUSBPodsForPicksThePodByName(t *testing.T) {
+	pods := []serialconsole.SerialPod{
+		{Device: "/dev/cu.usbmodem1", ShortID: "c2f662"},
+		{Device: "/dev/cu.usbmodem2", ShortID: "30a9f1"},
+	}
+	for _, name := range []string{"30a9f1", "benchpod-30a9f1", "BenchPod-30A9F1"} {
+		got := usbPodsFor(pods, ConnSpec{Kind: connSerial, Pod: name})
+		if len(got) != 1 || got[0].Device != "/dev/cu.usbmodem2" {
+			t.Errorf("usb:%s picked %v", name, got)
+		}
+	}
+	if got := usbPodsFor(pods, ConnSpec{Kind: connSerial}); len(got) != 2 {
+		t.Errorf("plain usb kept %d pods", len(got))
+	}
+	if got := usbPodsFor(pods, ConnSpec{Kind: connSerial, Device: "/dev/cu.usbmodem1"}); len(got) != 1 || got[0].ShortID != "c2f662" {
+		t.Errorf("device path picked %v", got)
+	}
+	if got := usbPodsFor(pods, ConnSpec{Kind: connSerial, Pod: "ffffff"}); len(got) != 0 {
+		t.Errorf("an unknown name picked %v", got)
+	}
+}
