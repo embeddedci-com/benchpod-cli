@@ -141,6 +141,11 @@ func runLanClients(g *globalFlags, o lanClientsOp, out io.Writer) error {
 	} else {
 		v, label, err = lanClientsNetwork(g, o, key)
 	}
+	if errors.Is(err, errAlreadyPaired) {
+		fmt.Fprintf(out, "This computer (%s) is already paired with the pod at %s.\n", o.name, label)
+		printLanClients(out, label, v, "")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -217,6 +222,26 @@ func lanClientsNetwork(g *globalFlags, o lanClientsOp, key string) (lanClientsVi
 		return lanClientsView{}, "", err
 	}
 	defer cancel()
+	// A LAN address: changes, and a list this computer may not read, go over the pod's USB link.
+	lanAddr := ""
+	if t.spec.IsNetwork() && !isUSBLinkAddr(t.spec.Addr) {
+		usb, err := lanClientsRoute(ctx, t.spec.Addr, o)
+		if errors.Is(err, errAlreadyPaired) {
+			v, err := lanClientsAll(ctx, t.client, map[string]any{"cmd": "lan_clients"})
+			if err != nil {
+				return lanClientsView{}, "", fmt.Errorf("lan-clients: %w", err)
+			}
+			return v, t.label, errAlreadyPaired
+		}
+		if err != nil {
+			return lanClientsView{}, "", err
+		}
+		if usb != "" {
+			lanAddr = t.spec.Addr
+			t = &podTarget{spec: ConnSpec{Kind: connNetwork, Addr: usb}, client: &tcpclient.Client{Addr: usb},
+				label: t.spec.Addr + " (over its USB link " + hostOf(usb) + ")"}
+		}
+	}
 	req := map[string]any{"cmd": "lan_clients"}
 	switch o.op {
 	case "add":
@@ -232,6 +257,9 @@ func lanClientsNetwork(g *globalFlags, o lanClientsOp, key string) (lanClientsVi
 			return lanClientsView{}, "", errors.New(lanClientsMissing)
 		}
 		return lanClientsView{}, "", fmt.Errorf("lan-clients: %w", err)
+	}
+	if lanAddr != "" && o.op == "add" {
+		pinLanCertOverUSBLink(ctx, t.spec.Addr, lanAddr)
 	}
 	return v, t.label, nil
 }
