@@ -2319,6 +2319,13 @@ Pair this computer: its TLS client key (made on first use, `client.key` and `cli
 next to `known_pods.json`) goes on the pod's list. Only over USB or embeddedci.com (as an
 organization owner or admin), never over the network.
 
+Given the pod's network address or name (`--connection 192.168.1.164`,
+`benchpod-a1b2c3` or `benchpod-a1b2c3.local`), it reads the pod's status there and, when the
+pod's USB-C cable is in this computer, pairs over that pod's own USB link: no need to pick
+it among several pods on USB. Otherwise it says to plug the pod in over USB-C, or to use
+`--connection embeddedci:<name>`. A computer that is paired already is told so. `remove`,
+`clear` and `benchpod setup` take the USB link the same way.
+
 | Flag        | Default         | Purpose                                                              |
 |-------------|-----------------|----------------------------------------------------------------------|
 | `--name`    | this host name  | The name the pod lists it under (1 to 23 characters).                |

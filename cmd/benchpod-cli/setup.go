@@ -765,6 +765,9 @@ func (e *realSetupEnv) pair(p setupPod) (string, error) {
 	if !known || !required || paired {
 		return "", nil
 	}
+	if msg, ok, err := pairOverUSBLink(p.addr); ok {
+		return msg, err
+	}
 	if p.cloud.Configured && e.signedIn() != "" {
 		if name, ok := e.accountDevices()[strings.TrimSpace(p.cloud.DeviceID)]; ok {
 			msg, err := pairOverCloud(e.g, name)
