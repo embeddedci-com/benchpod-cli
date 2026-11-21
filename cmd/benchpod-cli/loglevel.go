@@ -69,9 +69,9 @@ func runLogLevel(g *globalFlags, set string, out io.Writer) error {
 		return fmt.Errorf("log-level: %w", err)
 	}
 	if set == "" {
-		fmt.Fprintf(out, "Console log level of the pod at %s: %s\n", t.label, level)
+		fmt.Fprintf(out, "Console log level of the pod at %s: %s\n", t.where(), level)
 	} else {
-		fmt.Fprintf(out, "Console log level of the pod at %s is now %s (stored on the pod).\n", t.label, level)
+		fmt.Fprintf(out, "Console log level of the pod at %s is now %s (stored on the pod).\n", t.where(), level)
 	}
 	return nil
 }

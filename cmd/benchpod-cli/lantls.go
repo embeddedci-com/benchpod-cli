@@ -177,6 +177,17 @@ func runLanTLS(g *globalFlags, change map[string]any, out, warn io.Writer) error
 		return err
 	}
 	defer cancel()
+	// A change over a LAN address goes over the pod's USB link when it is plugged into this
+	// computer (the pod takes changes over USB or the cloud only); so does showing it to a
+	// computer that is not paired.
+	need := notPairedHere
+	if len(change) > 0 {
+		need = nil
+	}
+	t, lanAddr, err := targetOverUSBLink(ctx, t, need)
+	if err != nil {
+		return fmt.Errorf("lan-tls: %w", err)
+	}
 	req := map[string]any{"cmd": "lan_tls"}
 	for k, v := range change {
 		req[k] = v
@@ -189,8 +200,8 @@ func runLanTLS(g *globalFlags, change map[string]any, out, warn io.Writer) error
 	if err := json.Unmarshal(raw, &rep); err != nil {
 		return fmt.Errorf("lan-tls: unexpected reply: %s", strings.TrimSpace(string(raw)))
 	}
-	addr := ""
-	if !t.spec.IsCloud() {
+	addr := lanAddr
+	if addr == "" && !t.spec.IsCloud() {
 		addr = t.spec.Addr
 	}
 	// This computer made the change: pin the new certificate for the address it used.
@@ -199,7 +210,7 @@ func runLanTLS(g *globalFlags, change map[string]any, out, warn io.Writer) error
 			fmt.Fprintf(warn, "Could not update the pin: %v\n", err)
 		}
 	}
-	printLanTLS(out, t.label, addr, rep, lastTLS(t))
+	printLanTLS(out, t.where(), addr, rep, lastTLS(t))
 	if hs, ok := change["https_only"].(bool); ok && !hs {
 		fmt.Fprintln(warn, "Plaintext port 8080 now answers on Ethernet and Wi-Fi too: anyone on the LAN can read and drive the pod without TLS.")
 	}
@@ -374,7 +385,11 @@ func runLanTLSSetCert(g *globalFlags, certFile, keyFile string, out, warn io.Wri
 	defer cancel()
 	defer installSignalHandler(ctx, cancel)()
 
-	lan, err := openLAN(ctx, addr)
+	dial, label, err := overUSBLink(ctx, addr, nil)
+	if err != nil {
+		return fmt.Errorf("lan-tls set-cert: %w", err)
+	}
+	lan, err := openLAN(ctx, dial)
 	if err != nil {
 		return fmt.Errorf("lan-tls set-cert: %w", err)
 	}
@@ -382,7 +397,7 @@ func runLanTLSSetCert(g *globalFlags, certFile, keyFile string, out, warn io.Wri
 	if err := lan.cmd(ctx, map[string]any{"cmd": "lan_tls"}, &lanTLSReply{}); err != nil {
 		return lanTLSError("lan-tls set-cert", err)
 	}
-	fmt.Fprintf(warn, "Uploading %d bytes to %s ...\n", len(bundle), addr)
+	fmt.Fprintf(warn, "Uploading %d bytes to %s ...\n", len(bundle), label)
 	if err := uploadOTALAN(ctx, lan, bundle, "tls"); err != nil {
 		if !lan.s.Broken() {
 			_ = lan.cmd(ctx, map[string]any{"cmd": "ota_abort"}, nil)
@@ -401,6 +416,6 @@ func runLanTLSSetCert(g *globalFlags, certFile, keyFile string, out, warn io.Wri
 			fmt.Fprintf(warn, "Could not update the pin: %v\n", err)
 		}
 	}
-	printLanTLS(out, addr, addr, rep, map[bool]string{true: "TLS", false: "plaintext"}[lan.s.TLS()])
+	printLanTLS(out, label, addr, rep, map[bool]string{true: "TLS", false: "plaintext"}[lan.s.TLS()])
 	return nil
 }

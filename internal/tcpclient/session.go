@@ -27,6 +27,7 @@ type Session struct {
 
 	mu     sync.Mutex
 	broken error
+	addr   string // the Client's address, for refusals (PodError.Addr)
 }
 
 // Open dials the pod and returns a Session. The caller must Close it.
@@ -49,7 +50,7 @@ func (c *Client) Open(ctx context.Context) (*Session, error) {
 	if tc, ok := conn.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 	}
-	return &Session{conn: conn, reader: bufio.NewReader(conn)}, nil
+	return &Session{conn: conn, reader: bufio.NewReader(conn), addr: addr}, nil
 }
 
 // Command sends req and reads its one reply line, like Client.Command, on the
@@ -89,7 +90,7 @@ func (s *Session) Command(ctx context.Context, req map[string]any) (json.RawMess
 		}
 		return r.Data, nil
 	case "error":
-		return nil, replyError(r)
+		return nil, replyErrorAt(r, s.addr)
 	default:
 		return nil, fmt.Errorf("unexpected response status %q", r.Status)
 	}

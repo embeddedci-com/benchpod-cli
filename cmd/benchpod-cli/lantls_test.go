@@ -28,6 +28,10 @@ func TestLanTLSSwitches(t *testing.T) {
 		}
 		var req map[string]any
 		_ = json.Unmarshal([]byte(<-got), &req)
+		if req["cmd"] == "status" { // whether the pod's USB link answers here
+			req = nil
+			_ = json.Unmarshal([]byte(<-got), &req)
+		}
 		if len(req) != len(c.want) {
 			t.Fatalf("%v: sent %v", c.args, req)
 		}

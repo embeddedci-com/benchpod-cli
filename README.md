@@ -249,7 +249,7 @@ Which command works over which connection:
 
 | Connection          | Commands |
 |---------------------|----------|
-| Network address     | Every pod command except the USB console ones below. Settings the pod changes only over USB or the cloud (`lan-tls` switches, `cloud ca`/`proxy` changes, `identity wipe`, `usb-network`) are refused there with their code. |
+| Network address     | Every pod command except the USB console ones below. Settings the pod changes only over USB or the cloud (`lan-pairing`, `lan-clients` changes, `lan-tls` switches, `cloud ca`/`proxy` changes) go over the pod's own USB link when its USB-C cable is in this computer; otherwise they are refused with their code, as are `identity wipe` and `usb-network`. |
 | USB                 | Every pod command, as JSON over the pod's USB network adapter. With USB networking off (Wi-Fi configured), the pod's Ethernet or Wi-Fi address from its console `status` when this computer reaches it (its external LAN policy applies there), and the command says so. |
 | `embeddedci:<name>` | `flash-self`, `status`, `ping`, `la voltage`, `la pull`, `la status`, `la step`, `la pins`, `la dir`, `i2c`, `generate`, `lan-policy`, `sig-policy`, `cloud ca show`, `cloud ca clear`, `cloud proxy` (show, set, clear), `set-wifi`, `show-network`, `scan-wifi`, `clear-wifi`, `deregister`. |
 | USB console only    | `dfu`, `bootsel`, `net-reset`, `usb-network`, `usb-bridge`, `lan-policy set` over USB; `flash-self` uses USB DFU (or, with `--connection embeddedci:<name>`, embeddedci.com). A saved address or `embeddedci:` default falls through to USB auto-detection, a device path still selects the port, and an explicit `--connection embeddedci:<name>` is refused. |
@@ -531,8 +531,9 @@ LAN TLS of 192.168.1.220:8080 (connected over TLS)
 - `https-only`, `scpi`, `regenerate` and `set-cert` only work over USB
   (`--connection usb`, the pod's USB network adapter) or through embeddedci.com
   (`--connection embeddedci:<name>`): the pod refuses them from Ethernet and Wi-Fi,
-  TLS or not (`BP0042`). The pod's USB console has the same switches
-  (`lan-tls https-only on|off`, `lan-tls scpi on|off`).
+  TLS or not (`BP0042`). Given the pod's network address while its USB-C cable is in
+  this computer, `benchpod` sends them over that pod's own USB link. The pod's USB
+  console has the same switches (`lan-tls https-only on|off`, `lan-tls scpi on|off`).
 - `benchpod lan-tls show --pem > pod.pem` saves the certificate, for curl or socat
   (VISA raw sockets have no TLS; see the firmware API docs, LAN TLS).
 
@@ -2324,7 +2325,9 @@ Given the pod's network address or name (`--connection 192.168.1.164`,
 pod's USB-C cable is in this computer, pairs over that pod's own USB link: no need to pick
 it among several pods on USB. Otherwise it says to plug the pod in over USB-C, or to use
 `--connection embeddedci:<name>`. A computer that is paired already is told so. `remove`,
-`clear` and `benchpod setup` take the USB link the same way.
+`clear` and `benchpod setup` take the USB link the same way, and so do `benchpod lan-pairing`
+and the `lan-tls` changes. A command refused with `BP0081` (this computer is not paired) from a
+pod whose USB-C cable is in this computer says to pair it now with `benchpod lan-clients add`.
 
 | Flag        | Default         | Purpose                                                              |
 |-------------|-----------------|----------------------------------------------------------------------|

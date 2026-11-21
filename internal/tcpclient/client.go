@@ -54,7 +54,8 @@ type Client struct {
 	// commands themselves, and read-only probes of other pods).
 	NoLeaseJoin bool
 
-	lastTLS bool // the last connection used TLS
+	lastTLS  bool   // the last connection used TLS
+	lastAddr string // where the last connection went (host:8443 for TLS), "" before one
 }
 
 // reply is one decoded response line from the firmware.
@@ -91,7 +92,7 @@ func (c *Client) Command(ctx context.Context, req map[string]any) (json.RawMessa
 		}
 		return r.Data, nil
 	case "error":
-		return nil, replyError(r)
+		return nil, replyErrorAt(r, c.Addr)
 	default:
 		return nil, fmt.Errorf("unexpected response status %q", r.Status)
 	}
@@ -134,7 +135,7 @@ func (c *Client) Samples(ctx context.Context, req map[string]any) ([]int, error)
 				return out, nil
 			}
 		case "error":
-			return nil, replyError(r)
+			return nil, replyErrorAt(r, c.Addr)
 		default:
 			return nil, fmt.Errorf("unexpected response status %q", r.Status)
 		}
@@ -181,7 +182,7 @@ func (c *Client) Chunks(ctx context.Context, req map[string]any) ([]json.RawMess
 		}
 		switch head.Status {
 		case "error":
-			return nil, replyError(&head)
+			return nil, replyErrorAt(&head, c.Addr)
 		case "ok", "chunk":
 		default:
 			return nil, fmt.Errorf("unexpected response status %q", head.Status)

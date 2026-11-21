@@ -137,7 +137,7 @@ func (c *Client) dial(ctx context.Context, budget time.Duration) (net.Conn, erro
 		}
 	}
 	if p.tlsAddr == "" {
-		c.lastTLS = false
+		c.lastTLS, c.lastAddr = false, p.plainAddr
 		return dialWithRetry(ctx, "tcp", p.plainAddr, budget, dialAttemptTimeout, dialRetryBackoff)
 	}
 	if p.fallback && !pinned(p.tlsAddr) {
@@ -147,7 +147,7 @@ func (c *Client) dial(ctx context.Context, budget time.Duration) (net.Conn, erro
 			if errors.Is(err, syscall.ECONNREFUSED) {
 				noTLS.Store(p.plainAddr, true)
 			}
-			c.lastTLS = false
+			c.lastTLS, c.lastAddr = false, p.plainAddr
 			return dialWithRetry(ctx, "tcp", p.plainAddr, budget, dialAttemptTimeout, dialRetryBackoff)
 		}
 		return c.handshake(ctx, raw, p.tlsAddr)
@@ -179,12 +179,33 @@ func (c *Client) handshake(ctx context.Context, raw net.Conn, addr string) (net.
 		}
 		return nil, &dialError{addr: addr, err: fmt.Errorf("TLS handshake: %w", err)}
 	}
-	c.lastTLS = true
+	c.lastTLS, c.lastAddr = true, addr
 	return conn, nil
 }
 
 // LastDialTLS reports whether the Client's most recent connection used TLS.
 func (c *Client) LastDialTLS() bool { return c.lastTLS }
+
+// ShownAddr is how messages name the pod at addr before anything is sent to it: the host alone
+// for the default port on the LAN (the client picks TLS on 8443, or plaintext 8080 on a pod
+// without TLS), else addr as given.
+func ShownAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port != PlainPort || IsUSBLinkAddr(host) || DefaultTLSMode == TLSOff {
+		return addr
+	}
+	return host
+}
+
+// Shown is how messages name the pod: the address the last connection went to (host:8443 over
+// TLS), else ShownAddr of c.Addr.
+func (c *Client) Shown() string {
+	if c.lastAddr != "" {
+		return c.lastAddr
+	}
+	return ShownAddr(c.Addr)
+}
 
 // tlsConfig is the client configuration for addr (host:8443). pin: check (and on first use
 // record) the pin; false accepts any certificate (PeerCertificate, for showing and trusting).

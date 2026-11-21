@@ -38,8 +38,20 @@ var (
 type podTarget struct {
 	spec     ConnSpec
 	client   podCommander
-	label    string // how messages name the pod: "192.168.1.5:8080" or "benchpod-a1b2c3 on embeddedci.com"
+	label    string // how messages name the pod when set: "benchpod-a1b2c3 on embeddedci.com"; "" for the address (where)
 	deviceID string // the pod's id on embeddedci.com when the connection goes through it, else ""
+}
+
+// where is how messages name the pod: its label, else the address the connection went to
+// ("192.168.1.5:8443" over TLS; the host alone before the first command).
+func (t *podTarget) where() string {
+	if t.label != "" {
+		return t.label
+	}
+	if c, ok := t.client.(*tcpclient.Client); ok {
+		return c.Shown()
+	}
+	return tcpclient.ShownAddr(t.spec.Addr)
 }
 
 // podClient resolves the connection for a single-reply JSON command: the pod's network address,
@@ -69,7 +81,7 @@ func openPodTarget(ctx context.Context, spec ConnSpec) (*podTarget, error) {
 		}
 		return &podTarget{spec: spec, client: c, label: c.Label(), deviceID: c.DeviceID}, nil
 	}
-	return &podTarget{spec: spec, client: &tcpclient.Client{Addr: spec.Addr}, label: spec.Addr}, nil
+	return &podTarget{spec: spec, client: &tcpclient.Client{Addr: spec.Addr}}, nil
 }
 
 // cloudServerURL is the embeddedci.com base URL the cloud connection uses: BENCHPOD_API_BASE (the

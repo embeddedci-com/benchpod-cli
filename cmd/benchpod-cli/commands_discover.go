@@ -489,7 +489,7 @@ func printReport(in reportInput) {
 			w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 			fmt.Fprintln(w, "  INSTANCE\tADDRESS\tHOSTNAME\tID")
 			for _, p := range in.netPods {
-				fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", p.instance, p.addr, p.hostname, shortID(p.id))
+				fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", p.instance, tcpclient.ShownAddr(p.addr), p.hostname, shortID(p.id))
 			}
 			_ = w.Flush()
 			for _, p := range in.netPods {
@@ -540,7 +540,7 @@ func printVerdict(out *os.File, in reportInput) {
 		if !p.reachable {
 			fmt.Fprintf(out, "\n%s advertises itself but does not answer its API on %s.\n"+
 				"The record may be stale (a pod that has since rebooted or moved), or a firewall\n"+
-				"may be blocking port 8080.\n", p.instance, p.addr)
+				"may be blocking ports 8443 (TLS) and 8080.\n", p.instance, tcpclient.ShownAddr(p.addr))
 		}
 	}
 
