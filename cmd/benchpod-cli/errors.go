@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/cloudpod"
 	"github.com/embeddedci-com/benchpod-cli/internal/errcatalog"
@@ -209,8 +211,37 @@ func codedRefusal(pe *tcpclient.PodError) (string, bool) {
 	if pe == nil || pe.Code == "" {
 		return "", false
 	}
+	if fix := pairHereFix(pe); fix != "" {
+		e, _ := errcatalog.Lookup(pe.Code)
+		code := strings.ToUpper(strings.TrimSpace(pe.Code))
+		return fmt.Sprintf("%s: %s; %s (%s)", code, errcatalog.Fill(e.Message, pe.Args), fix, errcatalog.DocsURL(code)), true
+	}
 	if text, ok := errcatalog.Render(pe.Code, pe.Args, "cli"); ok {
 		return text, true
 	}
 	return fmt.Sprintf("%s: %s (%s)", strings.ToUpper(pe.Code), strings.TrimSpace(pe.Reason), errcatalog.DocsURL(pe.Code)), true
 }
+
+// pairHereFix is the fix for a computer that is not paired (BP0081) with a pod it reached on the
+// LAN when that pod's USB-C cable is in this very computer (its status shows the USB link, and
+// the link answers from here): pair now, no plugging in. "" otherwise, and the catalog's fix
+// stands.
+func pairHereFix(pe *tcpclient.PodError) string {
+	if !strings.EqualFold(strings.TrimSpace(pe.Code), "BP0081") || pe.Addr == "" || isUSBLinkAddr(pe.Addr) {
+		return ""
+	}
+	fix, ok := pairHereFixes[pe.Addr]
+	if !ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		if usb, err := reachUSBLink(ctx, pe.Addr, readLanPodState(ctx, pe.Addr).usbIP); err == nil && usb != "" {
+			fix = "the pod is plugged into this computer over USB, so pair this computer now with " +
+				"`benchpod lan-clients add --connection " + tcpclient.ShownAddr(pe.Addr) + "`, then run this again"
+		}
+		pairHereFixes[pe.Addr] = fix
+	}
+	return fix
+}
+
+// pairHereFixes keeps pairHereFix's answer per address for the run (a refusal is worded more than once).
+var pairHereFixes = map[string]string{}

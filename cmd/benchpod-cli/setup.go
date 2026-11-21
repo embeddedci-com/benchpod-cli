@@ -13,6 +13,7 @@ import (
 
 	"github.com/embeddedci-com/benchpod-cli/internal/benchpodconfig"
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // ── setup ────────────────────────────────────────────────────────────────────
@@ -242,7 +243,7 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 	step(2, "Network")
 	switch {
 	case p.lanAddr != "":
-		fmt.Fprintf(out, "     Done: the pod is on the network at %s.\n", p.lanAddr)
+		fmt.Fprintf(out, "     Done: the pod is on the network at %s.\n", tcpclient.ShownAddr(p.lanAddr))
 	case p.addr != "" && isUSBLinkAddr(p.addr):
 		// Enough for this computer: the whole API runs over the USB cable. Other machines and CI
 		// need Ethernet or Wi-Fi, which setup does not force on a pod that already works.
@@ -250,7 +251,7 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 		fmt.Fprintln(out, "     No Ethernet or Wi-Fi address was found. To use it from other machines or CI, plug in")
 		fmt.Fprintln(out, "     Ethernet (it takes a DHCP lease on its own) or join Wi-Fi with `benchpod set-wifi`.")
 	case p.addr != "":
-		fmt.Fprintf(out, "     Done: the pod is on the network at %s.\n", p.addr)
+		fmt.Fprintf(out, "     Done: the pod is on the network at %s.\n", tcpclient.ShownAddr(p.addr))
 	default:
 		if p.device == "" {
 			return errors.New("the pod has no network address and is not on USB; connect it over USB and run setup again")
@@ -263,7 +264,7 @@ func runSetup(env setupEnv, ui *setupUI, o setupOpts) error {
 		if !isUSBLinkAddr(addr) {
 			p.lanAddr = addr
 		}
-		fmt.Fprintf(out, "     The pod is on the network at %s.\n", p.addr)
+		fmt.Fprintf(out, "     The pod is on the network at %s.\n", tcpclient.ShownAddr(p.addr))
 	}
 
 	// 3. Board I/O voltage.
@@ -313,10 +314,10 @@ func describeSetupPod(p setupPod) string {
 	case p.addr != "" && isUSBLinkAddr(p.addr):
 		parts = append(parts, "USB network "+p.addr)
 		if p.lanAddr != "" {
-			parts = append(parts, "network "+p.lanAddr)
+			parts = append(parts, "network "+tcpclient.ShownAddr(p.lanAddr))
 		}
 	case p.addr != "":
-		parts = append(parts, "network "+p.addr)
+		parts = append(parts, "network "+tcpclient.ShownAddr(p.addr))
 	default:
 		parts = append(parts, "no network address yet")
 	}

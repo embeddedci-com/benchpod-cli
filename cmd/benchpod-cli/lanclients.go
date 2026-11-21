@@ -231,7 +231,7 @@ func lanClientsNetwork(g *globalFlags, o lanClientsOp, key string) (lanClientsVi
 			if err != nil {
 				return lanClientsView{}, "", fmt.Errorf("lan-clients: %w", err)
 			}
-			return v, t.label, errAlreadyPaired
+			return v, t.where(), errAlreadyPaired
 		}
 		if err != nil {
 			return lanClientsView{}, "", err
@@ -239,7 +239,7 @@ func lanClientsNetwork(g *globalFlags, o lanClientsOp, key string) (lanClientsVi
 		if usb != "" {
 			lanAddr = t.spec.Addr
 			t = &podTarget{spec: ConnSpec{Kind: connNetwork, Addr: usb}, client: &tcpclient.Client{Addr: usb},
-				label: t.spec.Addr + " (over its USB link " + hostOf(usb) + ")"}
+				label: usbLinkLabel(t.spec.Addr, usb)}
 		}
 	}
 	req := map[string]any{"cmd": "lan_clients"}
@@ -261,7 +261,7 @@ func lanClientsNetwork(g *globalFlags, o lanClientsOp, key string) (lanClientsVi
 	if lanAddr != "" && o.op == "add" {
 		pinLanCertOverUSBLink(ctx, t.spec.Addr, lanAddr)
 	}
-	return v, t.label, nil
+	return v, t.where(), nil
 }
 
 // lanClientsAll runs req and reads every page of the list (the pod sends 12 a reply).
@@ -384,7 +384,8 @@ func newLanPairingCmd(g *globalFlags) *cobra.Command {
 		Long: "Show or set LAN pairing (firmware 4.0.1+). on (the default): a computer on Ethernet or\n" +
 			"Wi-Fi drives the pod only once it is paired (`benchpod setup`, `benchpod lan-clients`).\n" +
 			"off: every computer on the network may, as before 4.0.1; then keep the pod on a trusted\n" +
-			"lab network. Changed over USB (the console or --connection usb) or embeddedci.com.",
+			"lab network. Changed over USB (the console or --connection usb) or embeddedci.com; given\n" +
+			"the pod's network address, over that pod's own USB link when it is plugged in here.",
 		Args:      cobra.MaximumNArgs(1),
 		ValidArgs: []string{"on", "off"},
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -429,6 +430,15 @@ func runLanPairing(g *globalFlags, set string, out io.Writer) error {
 			return err
 		}
 		defer cancel()
+		// A LAN address: a change, and a read this computer may not make while it is not paired,
+		// go over the pod's USB link when it is plugged into this computer.
+		var need func(lanPodState) bool
+		if set == "" {
+			need = notPairedHere
+		}
+		if t, _, err = targetOverUSBLink(ctx, t, need); err != nil {
+			return fmt.Errorf("lan-pairing: %w", err)
+		}
 		req := map[string]any{"cmd": "lan_policy"}
 		if set != "" {
 			req["pairing"] = set == "on"
@@ -443,7 +453,7 @@ func runLanPairing(g *globalFlags, set string, out io.Writer) error {
 		if json.Unmarshal(data, &rep) != nil || rep.Pairing == nil {
 			return errors.New(lanClientsMissing)
 		}
-		on, label = *rep.Pairing, t.label
+		on, label = *rep.Pairing, t.where()
 	}
 	state := map[bool]string{true: "on: computers on Ethernet and Wi-Fi must be paired", false: "off: every computer on the network may use the pod"}[on]
 	if set != "" {

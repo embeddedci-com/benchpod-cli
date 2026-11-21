@@ -395,7 +395,8 @@ func TestCloudCALAN(t *testing.T) {
 		t.Fatalf("set = %q", out)
 	}
 	nChunks := (len(pemData) + caLANChunk - 1) / caLANChunk
-	want := "cloud_ca,ota_begin" + strings.Repeat(",ota_data", nChunks) + ",ota_end,ota_commit,cloud_ca"
+	// status first: whether the pod's USB link answers here (the change would go over it).
+	want := "status,cloud_ca,ota_begin" + strings.Repeat(",ota_data", nChunks) + ",ota_end,ota_commit,cloud_ca"
 	if got := pod.cmds(); got != want {
 		t.Fatalf("requests = %s\nwant %s", got, want)
 	}
@@ -486,7 +487,13 @@ func TestCloudProxyLAN(t *testing.T) {
 		warn != "The pod reconnects to the cloud through proxy.corp:3128.\n" {
 		t.Fatalf("set = %q, %q, %v", out, warn, err)
 	}
-	set := pod.reqs[1]
+	var set map[string]any // each command reads status first (is the pod's USB link here?)
+	for _, r := range pod.reqs {
+		if _, ok := r["set"]; ok {
+			set = r
+			break
+		}
+	}
 	if set["set"] != "proxy.corp:3128" || set["user"] != "alice" || set["password"] != "pa ss" {
 		t.Fatalf("set request = %v", set)
 	}
@@ -494,13 +501,24 @@ func TestCloudProxyLAN(t *testing.T) {
 	if err != nil || !strings.HasSuffix(out, "is now 10.1.2.3:8080 (no authentication)\n") {
 		t.Fatalf("set noauth = %q, %v", out, err)
 	}
-	if _, ok := pod.reqs[3]["password"]; ok {
-		t.Fatalf("a password went out without --user: %v", pod.reqs[3])
+	if last := lastSet(pod.reqs); last["password"] != nil {
+		t.Fatalf("a password went out without --user: %v", last)
 	}
 	out, _, err = runProxyCapture(g, "clear", "", "", "")
 	if err != nil || !strings.HasSuffix(out, "is now none (the pod connects to the cloud directly)\n") {
 		t.Fatalf("clear = %q, %v", out, err)
 	}
+}
+
+// lastSet is the last cloud_proxy set request.
+func lastSet(reqs []map[string]any) map[string]any {
+	var last map[string]any
+	for _, r := range reqs {
+		if _, ok := r["set"]; ok {
+			last = r
+		}
+	}
+	return last
 }
 
 func TestCloudCfgNeedsATarget(t *testing.T) {

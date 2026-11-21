@@ -44,10 +44,14 @@ func readLanPodState(ctx context.Context, addr string) lanPodState {
 			IP   string `json:"ip"`
 		} `json:"usb"`
 	}
-	if json.Unmarshal(data, &st) != nil || st.Pairing == nil {
+	if json.Unmarshal(data, &st) != nil {
 		return lanPodState{}
 	}
-	s := lanPodState{known: true, pairing: *st.Pairing, paired: st.Paired}
+	var s lanPodState
+	if st.Pairing != nil {
+		s = lanPodState{known: true, pairing: *st.Pairing, paired: st.Paired}
+	}
+	// The USB link is there on firmware without pairing too (LAN TLS changes go over it).
 	if st.USB != nil && st.USB.Link && tcpclient.IsUSBLinkAddr(strings.TrimSpace(st.USB.IP)) {
 		s.usbIP = strings.TrimSpace(st.USB.IP)
 	}
@@ -105,6 +109,49 @@ func pinLanCertOverUSBLink(ctx context.Context, usbAddr, lanAddr string) {
 	}
 }
 
+// overUSBLink is where a change the pod takes only over USB or the cloud (LAN pairing, LAN TLS,
+// the cloud CA and proxy) goes when the connection is the LAN address lanAddr: the same pod's USB
+// link when it answers from this computer, with a label that names both; else lanAddr itself,
+// and the pod's refusal then says what to do. A USB link address stays as it is. need, when not
+// nil, decides from the pod's status whether to go over the USB link at all.
+func overUSBLink(ctx context.Context, lanAddr string, need func(lanPodState) bool) (dial, label string, err error) {
+	if isUSBLinkAddr(lanAddr) {
+		return lanAddr, tcpclient.ShownAddr(lanAddr), nil
+	}
+	st := readLanPodState(ctx, lanAddr)
+	if need != nil && !need(st) {
+		return lanAddr, tcpclient.ShownAddr(lanAddr), nil
+	}
+	usb, err := reachUSBLink(ctx, lanAddr, st.usbIP)
+	if err != nil || usb == "" {
+		return lanAddr, tcpclient.ShownAddr(lanAddr), err
+	}
+	return usb, usbLinkLabel(lanAddr, usb), nil
+}
+
+func usbLinkLabel(lanAddr, usb string) string {
+	return tcpclient.ShownAddr(lanAddr) + " (over its USB link " + hostOf(usb) + ")"
+}
+
+// notPairedHere says the pod has pairing on and this computer is not paired with it (it may
+// only read status over the LAN).
+func notPairedHere(st lanPodState) bool {
+	return st.known && st.pairing && st.paired != nil && !*st.paired
+}
+
+// targetOverUSBLink is overUSBLink for a podClient target: a LAN target becomes the USB link's
+// when it answers here. lanAddr is the LAN address it stands for ("" when t is unchanged).
+func targetOverUSBLink(ctx context.Context, t *podTarget, need func(lanPodState) bool) (nt *podTarget, lanAddr string, err error) {
+	if !t.spec.IsNetwork() || isUSBLinkAddr(t.spec.Addr) {
+		return t, "", nil
+	}
+	dial, label, err := overUSBLink(ctx, t.spec.Addr, need)
+	if err != nil || dial == t.spec.Addr {
+		return t, "", err
+	}
+	return &podTarget{spec: ConnSpec{Kind: connNetwork, Addr: dial}, client: &tcpclient.Client{Addr: dial}, label: label}, t.spec.Addr, nil
+}
+
 // errNeedsUSBLink is what lan-clients says when a LAN connection cannot reach the pod's USB link.
 func errNeedsUSBLink(what, lanAddr string, notPaired bool) error {
 	if notPaired {
@@ -129,7 +176,7 @@ func lanClientsRoute(ctx context.Context, lanAddr string, o lanClientsOp) (strin
 	if !st.known {
 		return "", nil // no pairing on this firmware, or no answer: the command says so itself
 	}
-	notPaired := st.pairing && st.paired != nil && !*st.paired
+	notPaired := notPairedHere(st)
 	if o.op == "" && !notPaired {
 		return "", nil // a paired computer lists over the LAN
 	}

@@ -88,7 +88,7 @@ func newSensorImageCmd(g *globalFlags) *cobra.Command {
 				verb = "switched to"
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "The pod on %s %s the %s FPGA image (image %v, gateware v%v)\n",
-				t.label, verb, valueOrUnknown(name), reply["image"], reply["version"])
+				t.where(), verb, valueOrUnknown(name), reply["image"], reply["version"])
 			return nil
 		},
 	}
@@ -366,7 +366,7 @@ func runSensorValidate(g *globalFlags, src, version string, offline bool, stdin 
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "%s: compiles on %s (%s sensor %s, %v program bytes)\n", src, t.label, doc.Kind(), doc.Name(), rep["program_bytes"])
+	fmt.Fprintf(out, "%s: compiles on %s (%s sensor %s, %v program bytes)\n", src, t.where(), doc.Kind(), doc.Name(), rep["program_bytes"])
 	printParams(out, rep["params"])
 	return nil
 }
@@ -484,7 +484,7 @@ func runSensorStart(g *globalFlags, src string, f sensorStartFlags, stdin io.Rea
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Started %s (%s sensor %s) on %s, %s", instance, doc.Kind(), doc.Name(), t.label, formatPins(pins))
+	fmt.Fprintf(out, "Started %s (%s sensor %s) on %s, %s", instance, doc.Kind(), doc.Name(), t.where(), formatPins(pins))
 	if slot, _ := started["slot"].(string); slot != "" {
 		fmt.Fprintf(out, ", slot %s", slot)
 	}
@@ -705,7 +705,7 @@ func runStimulusLoad(g *globalFlags, src string, stdin io.Reader, out io.Writer)
 	if _, err := uploadDocument(ctx, t, "sensor stimulus load", "sensor_stimulus", doc, "", false); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Loaded stimulus %s on %s; play it with `benchpod sensor stimulus start`\n", doc.Name(), t.label)
+	fmt.Fprintf(out, "Loaded stimulus %s on %s; play it with `benchpod sensor stimulus start`\n", doc.Name(), t.where())
 	return nil
 }
 
@@ -812,7 +812,7 @@ func newSensorStatusCmd(g *globalFlags) *cobra.Command {
 				_, err := fmt.Fprintln(out, string(b))
 				return err
 			}
-			printSensorStatus(out, t.label, st)
+			printSensorStatus(out, t.where(), st)
 			return nil
 		},
 	}

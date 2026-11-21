@@ -23,6 +23,9 @@ type PodError struct {
 	// (benchpod-firmware errors/catalog.toml); "" / nil for a refusal without a code.
 	Code string
 	Args map[string]any
+	// Addr is the network address (host:port as dialed from) that refused, for a refusal a Client
+	// or Session read; "" otherwise (the USB console, embeddedci.com).
+	Addr string
 }
 
 func (e *PodError) Error() string {
@@ -209,6 +212,15 @@ func codedReason(code string, args map[string]any) string {
 
 // replyError is an error reply from the JSON API with its code and args.
 func replyError(r *reply) error { return RefusalError(r.Message, r.Code, r.Args) }
+
+// replyErrorAt is replyError for a reply from the pod at addr.
+func replyErrorAt(r *reply, addr string) error {
+	err := replyError(r)
+	if pe, ok := err.(*PodError); ok {
+		pe.Addr = strings.TrimSpace(addr)
+	}
+	return err
+}
 
 // RefusalError is a refusal with its text, code and args, from any JSON transport (the LAN, the
 // USB network, embeddedci.com's command channel): a *PodError, or for BP0030 (the pod takes no

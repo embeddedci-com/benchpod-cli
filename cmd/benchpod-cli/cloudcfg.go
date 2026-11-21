@@ -204,6 +204,19 @@ func cloudCfgTarget(g *globalFlags, what string) (spec ConnSpec, err error) {
 	return parseTarget(raw)
 }
 
+// cloudCfgOverUSBLink is where a cloud ca / cloud proxy command for the LAN address addr goes: a
+// change (or a computer that is not paired) over the pod's USB link when it is plugged into this
+// computer, since the pod refuses those from the LAN.
+func cloudCfgOverUSBLink(g *globalFlags, addr, action string) (dial, label string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(15*time.Second))
+	defer cancel()
+	need := notPairedHere
+	if action != "show" {
+		need = nil
+	}
+	return overUSBLink(ctx, addr, need)
+}
+
 // cloudCfgPod runs one cloud_ca / cloud_proxy JSON command through embeddedci.com and decodes the
 // reply into out (nil to skip).
 func cloudCfgPod(g *globalFlags, spec ConnSpec, def time.Duration, req map[string]any, out any) (string, error) {
@@ -216,14 +229,14 @@ func cloudCfgPod(g *globalFlags, spec ConnSpec, def time.Duration, req map[strin
 	}
 	data, err := pod.client.Command(ctx, req)
 	if err != nil {
-		return pod.label, err
+		return pod.where(), err
 	}
 	if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {
-			return pod.label, fmt.Errorf("unexpected reply to %v: %s", req["cmd"], strings.TrimSpace(string(data)))
+			return pod.where(), fmt.Errorf("unexpected reply to %v: %s", req["cmd"], strings.TrimSpace(string(data)))
 		}
 	}
-	return pod.label, nil
+	return pod.where(), nil
 }
 
 // ── CA certificate checks ───────────────────────────────────────────────────
@@ -352,8 +365,11 @@ func runCloudCA(g *globalFlags, action, file string, out, warn io.Writer) error 
 		label = nt.Addr
 		certs, err = cloudCALAN(g, nt.Addr, action, upload, warn)
 	default:
-		label = spec.Addr
-		certs, err = cloudCALAN(g, spec.Addr, action, upload, warn)
+		var dial string
+		if dial, label, err = cloudCfgOverUSBLink(g, spec.Addr, action); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		certs, err = cloudCALAN(g, dial, action, upload, warn)
 	}
 	if err != nil {
 		return cloudCfgError(what, err)
@@ -625,8 +641,11 @@ func runCloudProxy(g *globalFlags, action, addr, user, password string, out, war
 		label = nt.Addr
 		p, err = cloudProxyLAN(g, nt.Addr, action, addr, user, password)
 	default:
-		label = spec.Addr
-		p, err = cloudProxyLAN(g, spec.Addr, action, addr, user, password)
+		var dial string
+		if dial, label, err = cloudCfgOverUSBLink(g, spec.Addr, action); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		p, err = cloudProxyLAN(g, dial, action, addr, user, password)
 	}
 	if err != nil {
 		err = cloudCfgError(what, err)

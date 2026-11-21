@@ -74,7 +74,11 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				printJSON(out, data) // not the shape we know: show it as it is
 				return nil
 			}
-			sum := statusSummary{addr: pod.label, st: st, cloudID: pod.deviceID}
+			where := pod.where()
+			if c, ok := pod.client.(*tcpclient.Client); ok && c.LastDialTLS() {
+				where += " over TLS"
+			}
+			sum := statusSummary{addr: where, st: st, cloudID: pod.deviceID}
 			gatherStatusExtras(ctx, pod.client, &sum)
 			printStatusSummary(out, sum)
 			return nil

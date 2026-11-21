@@ -82,7 +82,7 @@ func runADCRange(g *globalFlags, action string, out io.Writer) error {
 		return err
 	}
 	defer cancel()
-	return adcRange(ctx, t.client, t.label, action, what, out)
+	return adcRange(ctx, t.client, t.where(), action, what, out)
 }
 
 func adcRange(ctx context.Context, c podCommander, via, action, what string, out io.Writer) error {

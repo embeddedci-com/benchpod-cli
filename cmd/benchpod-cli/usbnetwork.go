@@ -77,7 +77,7 @@ func runUSBNetwork(g *globalFlags, set string, out io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", what, err)
 		}
-		printUSBNetwork(out, t.label, setting, "")
+		printUSBNetwork(out, t.where(), setting, "")
 		return nil
 	}
 	// Reading and turning off work over the USB link itself when it is up (no console needed);

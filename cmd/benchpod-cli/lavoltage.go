@@ -169,7 +169,7 @@ func laVoltageDo(g *globalFlags, mv int) (string, laVoltageReply, error) {
 	if rep, err = laVoltageLAN(ctx, pod.client, mv); err != nil {
 		return "", rep, laVoltageError(what, err)
 	}
-	return pod.label, rep, nil
+	return pod.where(), rep, nil
 }
 
 // laVoltageLAN runs la_voltage as a JSON command, on the pod's network port or through

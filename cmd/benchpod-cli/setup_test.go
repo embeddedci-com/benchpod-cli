@@ -471,8 +471,9 @@ func TestSetupSavesTheLANAddressOfAPodAlsoOnUSB(t *testing.T) {
 	if env.saved != "192.168.1.220:8080" {
 		t.Errorf("saved %q, want the LAN address", env.saved)
 	}
-	for _, want := range []string{"USB network 10.237.8.85:8080, network 192.168.1.220:8080",
-		"on the network at 192.168.1.220:8080", "--benchpod-connection=192.168.1.220`"} {
+	// The LAN address without the plaintext port: on firmware 4.0 the LAN API is TLS on 8443.
+	for _, want := range []string{"USB network 10.237.8.85:8080, network 192.168.1.220,",
+		"on the network at 192.168.1.220.", "--benchpod-connection=192.168.1.220`"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

@@ -187,10 +187,10 @@ func runSetWifi(g *globalFlags, ssid, pw string, skipBlobs bool) (string, error)
 	_ = json.Unmarshal(raw, &rep)
 	bridge := before.viaBridge() || rep.Via == "wifi-bridge"
 	if bridge {
-		fmt.Fprintf(os.Stderr, "Saved Wi-Fi credentials for SSID %q on the pod's Wi-Fi bridge via %s; waiting for it to join...\n", ssid, t.label)
+		fmt.Fprintf(os.Stderr, "Saved Wi-Fi credentials for SSID %q on the pod's Wi-Fi bridge via %s; waiting for it to join...\n", ssid, t.where())
 	} else {
 		fmt.Fprintf(os.Stderr, "Saved Wi-Fi credentials for SSID %q via %s; waiting for the pod to join "+
-			"(USB networking turns off now)...\n", ssid, t.label)
+			"(USB networking turns off now)...\n", ssid, t.where())
 	}
 	return waitWifiJoin(ctx, g, t, ssid, bridge)
 }
