@@ -66,11 +66,13 @@ const (
 	TargetESP      uint8 = 3
 	TargetBridge   uint8 = 6 // the Wi-Fi bridge's firmware (4 and 5, ca and tls, are not signed)
 	TargetGW2      uint8 = 7 // gateware image 2, the sensor emulation image (gateware v54+)
+	// 8 is a Wi-Fi bridge's identity certificate, never an update.
+	TargetXIP uint8 = 9 // code the pod runs from its W25Q (blob-xip.bin, firmware 4.0.2+)
 )
 
-var targetNames = []string{"firmware", "gw0", "gw1", "esp", "", "", "bridge", "gw2"}
+var targetNames = []string{"firmware", "gw0", "gw1", "esp", "", "", "bridge", "gw2", "", "xip"}
 
-// TargetByName maps "firmware", "gw0", "gw1", "esp", "bridge", "gw2" to its number.
+// TargetByName maps "firmware", "gw0", "gw1", "esp", "bridge", "gw2", "xip" to its number.
 func TargetByName(name string) (uint8, bool) {
 	for i, n := range targetNames {
 		if n != "" && n == name {
