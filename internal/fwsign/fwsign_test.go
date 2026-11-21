@@ -156,6 +156,12 @@ func TestTargetNames(t *testing.T) {
 		t.Fatalf("bridge: %d %v", n, ok)
 	}
 	// 4 and 5 (ca, tls) are not signed targets: no name, and "" maps to nothing.
+	if n, ok := TargetByName("xip"); !ok || TargetXIP != 9 || n != TargetXIP || TargetName(9) != "xip" {
+		t.Errorf("xip: TargetByName = %d, %v; TargetName(9) = %q", n, ok, TargetName(9))
+	}
+	if _, ok := TargetByName(""); ok {
+		t.Error("the unused target numbers have names")
+	}
 	if n, ok := TargetByName("gw2"); !ok || TargetGW2 != 7 || n != TargetGW2 || TargetName(7) != "gw2" {
 		t.Fatalf("gw2: %d %v", n, ok)
 	}
