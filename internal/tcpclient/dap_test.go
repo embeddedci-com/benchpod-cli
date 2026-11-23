@@ -91,3 +91,45 @@ func TestDAPStartSendsNoOptions(t *testing.T) {
 		}
 	}
 }
+
+// JTAG pins only: no swclk/swdio, no port; trst sent only when wired.
+func TestDAPStartJTAGOnly(t *testing.T) {
+	addr, gotReq := mockServer(t, []string{`{"status":"ok","data":"dap ready"}`})
+	c := &Client{Addr: addr}
+
+	conn, err := c.DAPStartWith(testContext(t), 0, 0, DAPOptions{JTAG: &JTAGPins{TCK: 1, TMS: 2, TDI: 3, TDO: 4}})
+	if err != nil {
+		t.Fatalf("DAPStartWith: %v", err)
+	}
+	defer conn.Close()
+
+	req := <-gotReq
+	if req["cmd"] != "dap_start" || req["tck"] != float64(1) || req["tms"] != float64(2) || req["tdi"] != float64(3) || req["tdo"] != float64(4) {
+		t.Errorf("request = %v", req)
+	}
+	for _, k := range []string{"swclk", "swdio", "trst", "port"} {
+		if _, ok := req[k]; ok {
+			t.Errorf("%s present, want omitted: %v", k, req)
+		}
+	}
+}
+
+// Both pin sets: "port":"jtag" only when JTAG is chosen; trst when wired.
+func TestDAPStartBothPortJTAG(t *testing.T) {
+	for _, tt := range []struct {
+		port, want string
+	}{{"jtag", "jtag"}, {"swd", ""}, {"", ""}} {
+		addr, gotReq := mockServer(t, []string{`{"status":"ok","data":"dap ready"}`})
+		c := &Client{Addr: addr}
+		conn, err := c.DAPStartWith(testContext(t), 1, 2, DAPOptions{JTAG: &JTAGPins{TCK: 1, TMS: 2, TDI: 3, TDO: 4, TRST: 5}, Port: tt.port})
+		if err != nil {
+			t.Fatalf("DAPStartWith: %v", err)
+		}
+		conn.Close()
+		req := <-gotReq
+		got, _ := req["port"].(string)
+		if got != tt.want || req["swclk"] != float64(1) || req["swdio"] != float64(2) || req["trst"] != float64(5) {
+			t.Errorf("port %q: request = %v", tt.port, req)
+		}
+	}
+}

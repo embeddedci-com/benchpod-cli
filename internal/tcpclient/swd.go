@@ -26,7 +26,10 @@ func (c *Client) TargetPower(ctx context.Context, efuse int, on bool) error {
 // returns the untouched connection for the caller to bridge to OpenOCD. The
 // caller owns closing it; closing returns the pod to a safe JSON state.
 func (c *Client) startRawMode(ctx context.Context, cmd string, swclk, swdio int, extra map[string]any) (net.Conn, error) {
-	req := map[string]any{"cmd": cmd, "swclk": swclk, "swdio": swdio}
+	req := map[string]any{"cmd": cmd}
+	if swclk > 0 || swdio > 0 { // dap_start with JTAG pins only sends none
+		req["swclk"], req["swdio"] = swclk, swdio
+	}
 	for k, v := range extra {
 		req[k] = v
 	}

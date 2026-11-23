@@ -46,7 +46,10 @@ const (
 // length-framed PROTO_DAP stream, translating the per-packet header in each
 // direction. Leaving DAP mode is handled by runBridge closing the connection
 // (the firmware disarms on disconnect), so no in-band leave frame is sent.
-func dapStrategy() bridgeStrategy {
+func dapStrategy(transport string) bridgeStrategy {
+	if transport != "jtag" {
+		transport = "swd"
+	}
 	return bridgeStrategy{
 		adapterArgs: func(port int) []string {
 			return []string{
@@ -54,7 +57,7 @@ func dapStrategy() bridgeStrategy {
 				"-c", "cmsis-dap backend tcp",
 				"-c", "cmsis-dap tcp host 127.0.0.1",
 				"-c", "cmsis-dap tcp port " + strconv.Itoa(port),
-				"-c", "transport select swd",
+				"-c", "transport select " + transport,
 			}
 		},
 		copyToPod:   copyOpenOCDToPod,
@@ -68,7 +71,13 @@ func dapStrategy() bridgeStrategy {
 // 8-byte DAP header and the pod's 2-byte length frame. Requires an OpenOCD build
 // with the cmsis_dap_tcp backend — see SupportsCMSISDAPTCP.
 func BridgeDAP(ctx context.Context, bin string, args []string, podConn io.ReadWriteCloser, stdout, stderr io.Writer) error {
-	return runBridge(ctx, bin, dapStrategy(), args, podConn, stdout, stderr)
+	return BridgeDAPTransport(ctx, bin, "swd", args, podConn, stdout, stderr)
+}
+
+// BridgeDAPTransport is BridgeDAP with OpenOCD's transport: "swd" (the default for any other
+// value) or "jtag", which the pod's CMSIS-DAP probe does with dap_start JTAG pins.
+func BridgeDAPTransport(ctx context.Context, bin, transport string, args []string, podConn io.ReadWriteCloser, stdout, stderr io.Writer) error {
+	return runBridge(ctx, bin, dapStrategy(transport), args, podConn, stdout, stderr)
 }
 
 // copyOpenOCDToPod reads OpenOCD cmsis_dap_tcp request frames (8-byte header +
