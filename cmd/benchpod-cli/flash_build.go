@@ -82,7 +82,7 @@ func (f *flashFlags) resolveBuild(g *globalFlags, download bool) (*serverapi.Bui
 }
 
 // flashOnServer has embeddedci.com flash art through the pod with its own OpenOCD.
-func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi.BuildArtifact, swclk, swdio int) error {
+func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi.BuildArtifact, pins dapPins) error {
 	var localOnly []string
 	for name, set := range map[string]bool{
 		"--no-verify": f.noVerify, "--no-reset": f.noReset, "--keep-reset-init": f.keepResetInit,
@@ -113,7 +113,7 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 		return fmt.Errorf("flash: %w", err)
 	}
 	if spec.IsCloud() && isGitHubActionCredential(cred) {
-		return f.flashOnCloudRoute(ctx, api, cred, spec, art, swclk, swdio)
+		return f.flashOnCloudRoute(ctx, api, cred, spec, art, pins)
 	}
 	deviceID, err := cloudDeviceID(ctx, api, cred, spec)
 	if err != nil {
@@ -124,7 +124,10 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 	}
 	req := serverapi.FlashRequest{
 		JobID: art.JobID, PackID: art.PackID, ArtifactName: art.Name, Target: f.target,
-		LoadAddr: f.loadAddr, SWCLK: swclk, SWDIO: swdio, NReset: f.nreset, Efuse: f.targetPower,
+		LoadAddr: f.loadAddr, SWCLK: pins.swclk, SWDIO: pins.swdio, NReset: f.nreset, Efuse: f.targetPower,
+	}
+	if pins.jtag {
+		req.JTAGPins = jtagRequestPins(pins)
 	}
 	if f.noConnectUnderReset {
 		off := false
@@ -135,13 +138,16 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 	if err != nil {
 		return fmt.Errorf("flash: %w", err)
 	}
-	return f.flashVerdict(resp)
+	return f.flashVerdict(resp, pins.jtag)
 }
 
 // flashOnCloudRoute is flashOnServer for a GitHub Actions token: POST /api/cloud/devices/flash
 // with the pod's name and the build's selector (or its artifact, when one was resolved).
-func (f *flashFlags) flashOnCloudRoute(ctx context.Context, api *serverapi.Client, cred string, spec ConnSpec, art *serverapi.BuildArtifact, swclk, swdio int) error {
-	req := serverapi.CloudFlashRequest{Target: f.target, LoadAddr: f.loadAddr, SWCLK: swclk, SWDIO: swdio, NReset: f.nreset, Efuse: f.targetPower}
+func (f *flashFlags) flashOnCloudRoute(ctx context.Context, api *serverapi.Client, cred string, spec ConnSpec, art *serverapi.BuildArtifact, pins dapPins) error {
+	req := serverapi.CloudFlashRequest{Target: f.target, LoadAddr: f.loadAddr, SWCLK: pins.swclk, SWDIO: pins.swdio, NReset: f.nreset, Efuse: f.targetPower}
+	if pins.jtag {
+		req.JTAGPins = jtagRequestPins(pins)
+	}
 	if art != nil {
 		req.JobID, req.PackID, req.ArtifactName = art.JobID, art.PackID, art.Name
 	} else {
@@ -170,11 +176,11 @@ func (f *flashFlags) flashOnCloudRoute(ctx context.Context, api *serverapi.Clien
 	if err != nil {
 		return fmt.Errorf("flash: %w", err)
 	}
-	return f.flashVerdict(resp)
+	return f.flashVerdict(resp, pins.jtag)
 }
 
 // flashVerdict prints the server's OpenOCD output and returns its verdict.
-func (f *flashFlags) flashVerdict(resp *serverapi.FlashResponse) error {
+func (f *flashFlags) flashVerdict(resp *serverapi.FlashResponse, jtag bool) error {
 	if resp.Output != "" {
 		fmt.Fprint(os.Stdout, resp.Output)
 		if !strings.HasSuffix(resp.Output, "\n") {
@@ -184,10 +190,15 @@ func (f *flashFlags) flashVerdict(resp *serverapi.FlashResponse) error {
 	if !resp.OK {
 		if resp.TargetUnreachable {
 			f.hasNRST = true // the server does not say; assume the pod has its reset pin (rev3+)
-			printTargetUnreachableHint(f)
+			printTargetUnreachableHint(f, jtag)
 		}
 		return fmt.Errorf("flash: %s", resp.Error)
 	}
 	fmt.Fprintln(os.Stderr, "flash: success")
 	return nil
+}
+
+// jtagRequestPins is the JTAG part of a server-side flash request.
+func jtagRequestPins(p dapPins) *serverapi.JTAGPins {
+	return &serverapi.JTAGPins{TCK: p.jtagPins.TCK, TMS: p.jtagPins.TMS, TDI: p.jtagPins.TDI, TDO: p.jtagPins.TDO, TRST: p.jtagPins.TRST}
 }

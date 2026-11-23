@@ -765,6 +765,15 @@ func (c *Client) DownloadBuildArtifact(ctx context.Context, accessToken string, 
 	return err
 }
 
+// JTAGPins are the LA channels (1-14) of a JTAG flash request; TRST 0 is not wired.
+type JTAGPins struct {
+	TCK  int `json:"tck"`
+	TMS  int `json:"tms"`
+	TDI  int `json:"tdi"`
+	TDO  int `json:"tdo"`
+	TRST int `json:"trst,omitempty"`
+}
+
 // FlashRequest is the body of POST /api/benchpod/devices/{id}/flash: the artifact (JobID, PackID,
 // ArtifactName) and the SWD settings. Efuse 0 leaves target power alone.
 type FlashRequest struct {
@@ -773,8 +782,9 @@ type FlashRequest struct {
 	ArtifactName      string `json:"artifact_name"`
 	Target            string `json:"target"`
 	LoadAddr          string `json:"load_addr,omitempty"`
-	SWCLK             int    `json:"swclk"`
-	SWDIO             int    `json:"swdio"`
+	SWCLK             int    `json:"swclk,omitempty"`
+	SWDIO             int    `json:"swdio,omitempty"`
+	*JTAGPins                // set when flash chose JTAG: tck, tms, tdi, tdo (and trst) instead of swclk/swdio
 	NReset            bool   `json:"nreset"`
 	Efuse             int    `json:"efuse"`
 	ConnectUnderReset *bool  `json:"connect_under_reset,omitempty"`
@@ -791,8 +801,9 @@ type CloudFlashRequest struct {
 	PackID            string `json:"pack_id,omitempty"`
 	ArtifactName      string `json:"artifact_name,omitempty"`
 	Target            string `json:"target"`
-	SWCLK             int    `json:"swclk"`
-	SWDIO             int    `json:"swdio"`
+	SWCLK             int    `json:"swclk,omitempty"`
+	SWDIO             int    `json:"swdio,omitempty"`
+	*JTAGPins                // set when flash chose JTAG: tck, tms, tdi, tdo (and trst) instead of swclk/swdio
 	NReset            bool   `json:"nreset"`
 	Efuse             int    `json:"efuse"`
 	LoadAddr          string `json:"load_addr,omitempty"`

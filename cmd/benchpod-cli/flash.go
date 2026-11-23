@@ -57,6 +57,8 @@ const (
 // flashFlags holds the flash-specific (non-global) flags.
 type flashFlags struct {
 	swclk, swdio        string
+	tck, tms, tdi, tdo  string
+	trst                string
 	nreset              bool
 	target, file        string
 	loadAddr            string
@@ -112,7 +114,12 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 			"swd_nreset and swd_target in the pod's wiring profile when this\n" +
 			"machine is signed in (`benchpod login` or BENCHPOD_API_KEY), the pod is on that\n" +
 			"account and the connection is a network address. Flags always win; the log says\n" +
-			"where each value came from. Without a profile, --swclk and --swdio are required.",
+			"where each value came from. Without a profile, --swclk and --swdio are required.\n\n" +
+			"JTAG is picked automatically, there is no transport flag: when --tck, --tms, --tdi and\n" +
+			"--tdo (default: jtag_tck, jtag_tms, jtag_tdi, jtag_tdo in the wiring profile; --trst\n" +
+			"is optional) are all known and either no SWD pins are or the target is JTAG-only\n" +
+			"(esp32, esp32s2, gd32vf103, fe310, k210, riscv*), flash uses JTAG; otherwise SWD.\n" +
+			"JTAG needs a pod with the jtag feature (gateware 61 or newer).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			f.nresetSet = cmd.Flags().Changed("nreset")
@@ -123,6 +130,11 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.swclk, "swclk", "", "LA pin for SWCLK, 1-14, e.g. 1 or la1 (default: swd_swclk from the pod's wiring profile)")
 	fl.StringVar(&f.swdio, "swdio", "", "LA pin for SWDIO, 1-14, e.g. 2 or la2 (default: swd_swdio from the pod's wiring profile)")
+	fl.StringVar(&f.tck, "tck", "", "LA pin for JTAG TCK (default: jtag_tck from the pod's wiring profile)")
+	fl.StringVar(&f.tms, "tms", "", "LA pin for JTAG TMS (default: jtag_tms from the pod's wiring profile)")
+	fl.StringVar(&f.tdi, "tdi", "", "LA pin for JTAG TDI (default: jtag_tdi from the pod's wiring profile)")
+	fl.StringVar(&f.tdo, "tdo", "", "LA pin for JTAG TDO (default: jtag_tdo from the pod's wiring profile)")
+	fl.StringVar(&f.trst, "trst", "", "LA pin for JTAG nTRST, optional (default: jtag_trst from the pod's wiring profile)")
 	fl.BoolVar(&f.nreset, "nreset", false, "the target's NRST is wired to the pod's reset pin ("+nrstPinLocation+"); enables connect-under-reset (default: swd_nreset from the pod's wiring profile)")
 	fl.StringVar(&f.target, "target", "", "OpenOCD target config (passed as -f), e.g. target/stm32f1x.cfg (default: swd_target from the pod's wiring profile)")
 	fl.StringVar(&f.file, "file", "", "firmware image to flash (used with --target)")
@@ -197,19 +209,9 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 			log.Printf("flash: target %s from the build", f.target)
 		}
 	}
-	if strings.TrimSpace(f.swclk) == "" || strings.TrimSpace(f.swdio) == "" {
-		return usageErrorf("--swclk and --swdio are required (or set swd_swclk and swd_swdio in the pod's wiring profile)")
-	}
-	swclk, err := parseLAPin(f.swclk)
+	pins, err := f.resolveDAPPins()
 	if err != nil {
-		return usageErrorf("--swclk: %w", err)
-	}
-	swdio, err := parseLAPin(f.swdio)
-	if err != nil {
-		return usageErrorf("--swdio: %w", err)
-	}
-	if swclk == swdio {
-		return usageErrorf("--swclk and --swdio must be different pins")
+		return err
 	}
 	if strings.TrimSpace(f.file) != "" && strings.TrimSpace(f.target) == "" {
 		if fromBuild {
@@ -221,7 +223,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 		return usageErrorf("--target-power must be 1 (internal 5V) or 2 (external)")
 	}
 	if fromBuild && serverSide {
-		return f.flashOnServer(g, spec, art, swclk, swdio)
+		return f.flashOnServer(g, spec, art, pins)
 	}
 	// 1. Identify OpenOCD. 2. Validate it actually runs.
 	bin := strings.TrimSpace(f.openocdBin)
@@ -258,7 +260,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	// (a child of the flash ctx) so that if the pod never reports ready we abort
 	// here, with the firmware's output, rather than handing a dead link to OpenOCD.
 	hsCtx, hsCancel := context.WithTimeout(ctx, dapHandshakeTimeout)
-	podConn, hasNRST, err := openDAP(hsCtx, g, swclk, swdio, f.targetPower)
+	podConn, hasNRST, err := openDAP(hsCtx, g, pins, f.targetPower)
 	hsCancel()
 	if err != nil {
 		return err
@@ -293,9 +295,9 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 
 	// 5. Run OpenOCD bridged to the pod connection over its cmsis-dap TCP backend
 	// (BridgeDAP translates the per-packet framing). Its exit code is the verdict.
-	if err := openocd.BridgeDAP(ctx, bin, ocArgs, podConn, os.Stdout, os.Stderr); err != nil {
+	if err := openocd.BridgeDAPTransport(ctx, bin, pins.transport(), ocArgs, podConn, os.Stdout, os.Stderr); err != nil {
 		if errors.Is(err, openocd.ErrTargetUnreachable) {
-			printTargetUnreachableHint(f)
+			printTargetUnreachableHint(f, pins.jtag)
 		}
 		return fmt.Errorf("flash: %w", err)
 	}
@@ -306,16 +308,25 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 // fillFromWiring takes the SWD settings left out of the flags from the pod's wiring profile on
 // embeddedci.com, and logs where each one came from.
 func (f *flashFlags) fillFromWiring(g *globalFlags) {
-	needed := f.swclk == "" || f.swdio == "" || !f.nresetSet || f.target == ""
+	needed := f.swclk == "" || f.swdio == "" || f.tck == "" || f.tms == "" || f.tdi == "" || f.tdo == "" || f.trst == "" || !f.nresetSet || f.target == ""
 	var w *podWiring
 	if needed {
 		w = loadPodWiring(g, os.Stderr)
 	}
 	if w == nil {
-		log.Printf("flash: SWD settings from the flags")
+		log.Printf("flash: settings from the flags")
 		return
 	}
 	var from []string
+	for _, jp := range []struct {
+		flag *string
+		pin  *int
+		name string
+	}{{&f.tck, w.JtagTck, "TCK"}, {&f.tms, w.JtagTms, "TMS"}, {&f.tdi, w.JtagTdi, "TDI"}, {&f.tdo, w.JtagTdo, "TDO"}, {&f.trst, w.JtagTrst, "TRST"}} {
+		if pinFromWiring(jp.flag, jp.pin) {
+			from = append(from, jp.name+" LA"+*jp.flag)
+		}
+	}
 	if pinFromWiring(&f.swclk, w.SwdSwclk) {
 		from = append(from, "SWCLK LA"+f.swclk)
 	}
@@ -333,21 +344,29 @@ func (f *flashFlags) fillFromWiring(g *globalFlags) {
 	if len(from) > 0 {
 		log.Printf("flash: %s from %s; the other settings from the flags", strings.Join(from, ", "), wiringSource)
 	} else {
-		log.Printf("flash: SWD settings from the flags")
+		log.Printf("flash: settings from the flags")
 	}
 }
 
 // printTargetUnreachableHint explains a failed DAP connect: the pod's probe is
 // working but no target answered on SWD. The advice is ordered by likelihood and
 // references the exact pins/flags the user passed.
-func printTargetUnreachableHint(f *flashFlags) {
-	fmt.Fprintln(os.Stderr, "\nThe pod's SWD probe is working, but the target MCU never answered. Check, in order:")
+func printTargetUnreachableHint(f *flashFlags, jtag bool) {
+	if jtag {
+		fmt.Fprintln(os.Stderr, "\nThe pod's JTAG probe is working, but the target never answered. Check, in order:")
+	} else {
+		fmt.Fprintln(os.Stderr, "\nThe pod's SWD probe is working, but the target MCU never answered. Check, in order:")
+	}
 	if f.targetPower == 0 {
 		fmt.Fprintln(os.Stderr, "  • power — the target must be powered. The pod can do it: re-run with --target-power 1 (internal 5V) or 2 (external)")
 	} else {
 		fmt.Fprintf(os.Stderr, "  • power — eFuse %d was enabled; confirm the target actually receives voltage (check for an over-current fault)\n", f.targetPower)
 	}
-	fmt.Fprintf(os.Stderr, "  • wiring — SWCLK (%s) and SWDIO (%s) must reach the target's SWCLK/SWDIO pins (not swapped), with a common ground\n", f.swclk, f.swdio)
+	if jtag {
+		fmt.Fprintf(os.Stderr, "  • wiring — TCK (%s), TMS (%s), TDI (%s) and TDO (%s) must reach the target's TCK/TMS/TDI/TDO pins (TDI and TDO not swapped), with a common ground\n", f.tck, f.tms, f.tdi, f.tdo)
+	} else {
+		fmt.Fprintf(os.Stderr, "  • wiring — SWCLK (%s) and SWDIO (%s) must reach the target's SWCLK/SWDIO pins (not swapped), with a common ground\n", f.swclk, f.swdio)
+	}
 	switch {
 	case !f.hasNRST:
 		fmt.Fprintln(os.Stderr, "  • running firmware — this pod has no reset pin, so if the target already runs firmware that remaps/disables SWD or sleeps, there is no way to connect under reset. A rev3 pod has a dedicated NRST pin")
@@ -364,7 +383,7 @@ func printTargetUnreachableHint(f *flashFlags) {
 // the network, or over USB on the pod's USB network adapter) and returns the length-framed DAP
 // stream to bridge to OpenOCD.
 // powerEfuse 0 leaves target power untouched; 1/2 enables that eFuse first.
-func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse int) (io.ReadWriteCloser, bool, error) {
+func openDAP(ctx context.Context, g *globalFlags, pins dapPins, powerEfuse int) (io.ReadWriteCloser, bool, error) {
 	spec, err := g.resolveConnection()
 	if err != nil {
 		return nil, false, err
@@ -376,6 +395,11 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 		// probe — once the connection is in DAP mode it no longer speaks JSON.
 		// A probe failure is not fatal: assume the pin is there (every current
 		// board has it) and let the real failure surface at dap_start.
+		if pins.jtag {
+			if err := requireJTAGFeature(ctx, client); err != nil {
+				return nil, false, err
+			}
+		}
 		hasNRST := true
 		if v, err := client.HasNRSTPin(ctx); err == nil {
 			hasNRST = v
@@ -387,7 +411,14 @@ func openDAP(ctx context.Context, g *globalFlags, swclk, swdio int, powerEfuse i
 			fmt.Fprintf(os.Stderr, "flash: target-power eFuse %d on\n", powerEfuse)
 			settle(ctx, targetPowerSettle)
 		}
-		conn, err := client.DAPStartWith(ctx, swclk, swdio, dapOptions(powerEfuse != 0))
+		opts := dapOptions(powerEfuse != 0)
+		swclk, swdio := pins.swclk, pins.swdio
+		if pins.jtag {
+			jp := pins.jtagPins
+			opts.JTAG, opts.Port = &jp, "jtag"
+			swclk, swdio = 0, 0
+		}
+		conn, err := client.DAPStartWith(ctx, swclk, swdio, opts)
 		if err != nil {
 			return nil, false, fmt.Errorf("flash: dap_start: %w", err)
 		}
