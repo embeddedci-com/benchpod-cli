@@ -294,7 +294,7 @@ when the pod is in another of your organizations, the `--org` that reaches it. A
 key belongs to the organization it was created in.
 
 Commands that stream data or need a direct link to the pod do not go through
-embeddedci.com: `capture`, `measure`, `test`, `flash --file`, `spi-flash`,
+embeddedci.com: `capture`, `measure`, `test`, `flash --file`, `spi-flash`, `usb-flash`,
 `cloud ca set`, `register`, the USB-only commands and `discover`. Over a cloud
 connection they refuse with a message pointing to the web app, the Python SDK or
 pytest plugin (which take `embeddedci:<name>` for those too), or a network/USB
@@ -399,6 +399,8 @@ benchpod usb-reattach                   # re-enumerate on USB (macOS: after unlo
 # Firmware:
 benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP; --build: an uploaded build)
 benchpod spi-flash ...    # read/erase/program an SPI NOR flash on four LA pins (network)
+benchpod usb-host [on|off]           # the pod hosts the board's USB port and shows the device (firmware 4.0.3+)
+benchpod usb-flash FILE              # flash a board over USB: UF2, DFU, drive, Teensy, Arduino, ESP32 (firmware 4.0.3+)
 benchpod bootsel          # reboot a (retired) RP2350 pod into its UF2 bootloader (USB console only)
 benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (USB console only)
 benchpod flash-self                  # fetch latest firmware + flash the POD over USB DFU (STM32)
@@ -671,6 +673,24 @@ pin) for the whole run, so its own controller stays off the SPI bus. At the end
 the CLI always releases the SPI pins and then the reset, also after an error or
 Ctrl-C. The pod does not clear block-protect bits; a part that ships protected
 fails the write with "write enable did not stick".
+
+#### Flashing over USB
+
+`usb-flash` flashes a board over the pod's USB host port (firmware 4.0.3 and later): UF2
+bootloaders (Pico, Adafruit), drag-and-drop drives (DAPLink: NUCLEO, nRF DK, micro:bit), USB DFU
+and STM32 DfuSe, Teensy, Arduino AVR and SAMD bootloaders, and ESP32. You never pick a mode: the
+CLI chooses it from the file and from the USB device that shows up (`--mode` overrides). Use the
+pod's network address, not `--connection usb`: while the pod hosts USB it is off the computer's USB.
+
+```bash
+benchpod usb-host on --port usb_a      # optional: host mode for 60 s, then show what enumerated
+benchpod usb-host                      # the device: IDs, strings, speed, interfaces
+benchpod usb-flash pico-app.uf2        # starts host mode itself when it is off
+benchpod usb-flash app.hex --port usb_c --timeout 3m
+```
+
+The board's own USB cable goes in the pod's USB-A host port (board v3r4 and later, `--port usb_a`,
+the default there). Older pods use their USB-C connector through a breakout (`--port usb_c`).
 
 #### Flashing the pod itself (STM32, USB DFU)
 
@@ -1799,6 +1819,73 @@ at the end the target is reset into the new image. EN may also be a wiring-profi
 `EN`. Needs the pod's network (its address, or `usb` with USB networking) and firmware with the
 `esp_flash` command. Over embeddedci.com use the Python SDK (`bp.flash(target="esp32", ...)`) or
 the MCP server.
+
+### `benchpod usb-host [on|off|status]`
+
+Turn the pod's USB host mode on or off, or show the USB device it sees (firmware 4.0.3 and
+later; default `status`). In host mode the pod hosts the board's USB port for a while and
+reports the device that enumerates: vendor and product ID, strings, speed, how long enumeration
+took, the line state and the interfaces. `usb-flash` flashes the board over it. When the time
+runs out the pod goes back to being a USB device by itself.
+
+While the pod hosts, it is off the computer's USB (no USB console, no USB network adapter), so
+start it over Ethernet, Wi-Fi or `--connection embeddedci:<name>`; over the pod's own USB link
+the pod refuses it. A pod without the feature gets "needs firmware 4.0.3".
+
+`on` keeps host mode for the global `--timeout` (default 60 seconds, 1 second to 1 hour).
+
+| Flag     | Default | Purpose                                                              |
+|----------|---------|----------------------------------------------------------------------|
+| `--port` | `usb_a` on a pod with the USB-A host port (board v3r4 or later), else `usb_c` | `usb_a`, the USB-A host port (the board's own cable), or `usb_c`, the pod's USB-C connector through a breakout (D+, D- and GND to the board, 5 V from a supply into the pod's VBUS). Only with `on`. |
+| `--json` | off     | Print the pod's reply as JSON.                                       |
+
+```bash
+benchpod usb-host on --port usb_a --timeout 2m
+benchpod usb-host                  # USB host mode on the pod at ...: on, port usb_a, 112 s left
+benchpod usb-host status --json
+benchpod usb-host off
+```
+
+### `benchpod usb-flash FILE`
+
+Flash the board on the pod's USB host port from a file (firmware 4.0.3 and later). The CLI
+chooses the mode from the file and the device, so there is nothing to pick:
+
+| The file and the device                          | Mode     | What happens                                                      |
+|--------------------------------------------------|----------|-------------------------------------------------------------------|
+| a `.uf2` file                                    | `uf2`    | Written to the drive of a UF2 bootloader (Pico, Adafruit, tinyuf2). |
+| the Teensy loader (16C0:0478)                    | `teensy` | Teensy 3.x, 4.0, 4.1.                                             |
+| a DFU interface (STM32 ROM loader, DFU boards)   | `dfu`    | USB DFU and STM32 DfuSe; `--address`, default `0x08000000` for a `.bin`. |
+| an Arduino AVR or SAMD bootloader                | `avr`, `samd` | Caterina, optiboot, Mega 2560; SAMD21 and SAMD51.             |
+| Espressif, or an ESP image (starts with `0xE9`) behind a USB-serial chip | `esp` | ESP32 over its ROM loader; `--address` is the flash offset (0 for a merged image). |
+| a mass-storage drive (DAPLink: NUCLEO, nRF DK, micro:bit) | `file` | The file is copied to the drive as an 8.3 name.        |
+
+A `.hex` or `.dfu` file is converted to a binary with its address for `dfu`, `teensy`, `avr`,
+`samd` and `esp`; `uf2` and `file` send the file as it is. When it cannot tell (a USB-serial chip
+with a plain binary, an unknown board) it stops and asks for `--mode`.
+
+If host mode is off, `usb-flash` starts it and says so, waits for a device, uploads the file into
+the pod, shows the progress (phase, done of total) and prints the result. It exits non-zero with
+the pod's reason when the flash fails, and aborts the flash on Ctrl-C or when the deadline runs
+out. Host mode stays on until its time runs out; `benchpod usb-host off` stops it. The global
+`--timeout` is the whole deadline (default 5 minutes). The file goes to the pod first, so this
+needs the pod's network address, not embeddedci.com.
+
+| Flag         | Default | Purpose                                                              |
+|--------------|---------|----------------------------------------------------------------------|
+| `--mode`     | chosen from the file and the device | Override: `uf2`, `file`, `dfu`, `teensy`, `avr`, `samd` or `esp`. |
+| `--address`  | from a `.hex` or `.dfu` file, else `0x08000000` (`dfu`), `0x2000` (`samd`), `0` | Flash address of the image for `dfu`, `teensy`, `avr`, `samd` and `esp`. A SAMD51 starts at `0x4000`; an ESP application at `0x10000`. |
+| `--name`     | the file's name as 8.3 | `file` mode: the file name on the drive, such as `FIRMWARE.BIN`. |
+| `--port`     | as `usb-host` | `usb_a` or `usb_c`, when host mode has to be started.            |
+| `--no-leave` | off     | Keep the board in its bootloader at the end instead of starting the new firmware (`dfu`, `teensy`, `avr`, `samd`, `esp`). |
+| `--json`     | off     | Print the pod's final flash report as JSON.                          |
+
+```bash
+benchpod usb-flash pico-app.uf2
+benchpod usb-flash firmware.bin --address 0x08000000     # STM32 in its ROM loader
+benchpod usb-flash app.hex --port usb_c --timeout 3m
+benchpod usb-flash firmware.bin --mode file --name APP.BIN
+```
 
 ### `benchpod spi-flash`
 
