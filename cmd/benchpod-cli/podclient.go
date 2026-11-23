@@ -183,14 +183,20 @@ type podWiring struct {
 	SwdSwdio  *int   `json:"swd_swdio"`
 	SwdNreset *bool  `json:"swd_nreset"`
 	SwdTarget string `json:"swd_target"`
-	I2cSda    *int   `json:"i2c_sda"`
-	I2cScl    *int   `json:"i2c_scl"`
-	SpiSclk   *int   `json:"spi_sclk"`
-	SpiMosi   *int   `json:"spi_mosi"`
-	SpiMiso   *int   `json:"spi_miso"`
-	SpiCs     *int   `json:"spi_cs"`
-	UartRx    *int   `json:"uart_rx"`
-	UartTx    *int   `json:"uart_tx"`
+	// JTAG pins (firmware feature jtag); JtagTrst is optional.
+	JtagTck  *int `json:"jtag_tck"`
+	JtagTms  *int `json:"jtag_tms"`
+	JtagTdi  *int `json:"jtag_tdi"`
+	JtagTdo  *int `json:"jtag_tdo"`
+	JtagTrst *int `json:"jtag_trst"`
+	I2cSda   *int `json:"i2c_sda"`
+	I2cScl   *int `json:"i2c_scl"`
+	SpiSclk  *int `json:"spi_sclk"`
+	SpiMosi  *int `json:"spi_mosi"`
+	SpiMiso  *int `json:"spi_miso"`
+	SpiCs    *int `json:"spi_cs"`
+	UartRx   *int `json:"uart_rx"`
+	UartTx   *int `json:"uart_tx"`
 	// Signals are the profile's named DUT signals ("DRDY" on LA7).
 	Signals []struct {
 		Name string `json:"name"`
@@ -206,6 +212,7 @@ func (w *podWiring) channel(name string) (int, bool) {
 	}
 	n := strings.ToLower(strings.TrimSpace(name))
 	for role, la := range map[string]*int{"swd_swclk": w.SwdSwclk, "swd_swdio": w.SwdSwdio,
+		"jtag_tck": w.JtagTck, "jtag_tms": w.JtagTms, "jtag_tdi": w.JtagTdi, "jtag_tdo": w.JtagTdo, "jtag_trst": w.JtagTrst,
 		"i2c_sda": w.I2cSda, "i2c_scl": w.I2cScl, "spi_sclk": w.SpiSclk, "spi_mosi": w.SpiMosi,
 		"spi_miso": w.SpiMiso, "spi_cs": w.SpiCs, "uart_rx": w.UartRx, "uart_tx": w.UartTx} {
 		if role == n && la != nil {
