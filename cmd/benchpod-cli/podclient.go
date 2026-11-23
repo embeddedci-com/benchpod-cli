@@ -183,6 +183,8 @@ type podWiring struct {
 	SwdSwdio  *int   `json:"swd_swdio"`
 	SwdNreset *bool  `json:"swd_nreset"`
 	SwdTarget string `json:"swd_target"`
+	// DebugPort is "swd" or "jtag" when the profile fixes the debug port; nil = automatic.
+	DebugPort *string `json:"debug_port"`
 	// JTAG pins (firmware feature jtag); JtagTrst is optional.
 	JtagTck  *int `json:"jtag_tck"`
 	JtagTms  *int `json:"jtag_tms"`

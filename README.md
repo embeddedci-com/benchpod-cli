@@ -313,6 +313,7 @@ leave out from the profile named by `--wiring-profile`, else the pod's default:
 | `flash`     | `--swclk`    | `swd_swclk`   |
 | `flash`     | `--swdio`    | `swd_swdio`   |
 | `flash`     | `--tck`, `--tms`, `--tdi`, `--tdo`, `--trst` | `jtag_tck`, `jtag_tms`, `jtag_tdi`, `jtag_tdo`, `jtag_trst` (optional) |
+| `flash`     | (none: no flag)  | `debug_port`: `"swd"` or `"jtag"`, optional (see JTAG targets) |
 | `flash`     | `--nreset`   | `swd_nreset`  |
 | `flash`     | `--target`   | `swd_target`  |
 | `spi-flash` | `--sck`, `--mosi`, `--miso`, `--cs` | `spi_sclk`, `spi_mosi`, `spi_miso`, `spi_cs` |
@@ -1819,12 +1820,24 @@ Pass `--target` (with `--file` or `--build`) or at least one `-c`/`--openocd-arg
 #### JTAG targets
 
 The pod's probe also speaks JTAG (firmware with the `jtag` feature, gateware 61 or newer; the
-emulation FPGA image has no JTAG). There is no transport flag: `flash` picks JTAG on its own
-when all four JTAG pins are known (`--tck`, `--tms`, `--tdi`, `--tdo`, or `jtag_tck`,
-`jtag_tms`, `jtag_tdi`, `jtag_tdo` in the wiring profile; `--trst` and `jtag_trst` are
-optional) and either no SWD pins are known or the target is JTAG-only: an OpenOCD target named
-`esp32`, `esp32s2`, `gd32vf103`, `fe310` or `k210`, or one starting with `riscv`. Otherwise it
-uses SWD, so a profile with both pin sets keeps flashing ARM parts over SWD. OpenOCD then runs
+emulation FPGA image has no JTAG). There is no transport flag. `flash` picks the port in this order:
+
+1. Pin flags win. At least one of `--tck`, `--tms`, `--tdi`, `--tdo`, `--trst` and no
+   `--swclk`/`--swdio` means JTAG (the missing JTAG pins come from the wiring profile; if the set
+   is still incomplete, `flash` stops with a usage error). `--swclk` or `--swdio` and no JTAG
+   flag means SWD. With both kinds of flags, or neither, go on to step 2.
+2. The wiring profile's optional `debug_port` field, `"swd"` or `"jtag"` (absent or null means
+   automatic). If that port's pins are incomplete, `flash` fails and names the missing profile
+   fields, for example `debug_port is jtag but jtag_tdo is not set`. `benchpod wiring save`
+   rejects any other value.
+3. Automatic: JTAG when all four JTAG pins are known (`jtag_tck`, `jtag_tms`, `jtag_tdi`,
+   `jtag_tdo` in the profile; `jtag_trst` is optional) and either no SWD pins are known or the
+   target is JTAG-only: an OpenOCD target named `esp32`, `esp32s2`, `gd32vf103`, `fe310` or
+   `k210`, or one starting with `riscv`. Otherwise SWD, so a profile with both pin sets and no
+   `debug_port` keeps flashing ARM parts over SWD.
+
+The log line `flash: JTAG (...)` or `flash: SWD (...)` says which step chose the port. Set
+`"debug_port": "jtag"` on a board with both pin sets to flash it over JTAG without flags. OpenOCD then runs
 with `transport select jtag`. TCK, TMS, TDI and TDO must reach the target's pins, with a common
 ground. A profile may share pins between the two sets only as `jtag_tck` = `swd_swclk` and
 `jtag_tms` = `swd_swdio`. A pod without the JTAG feature is refused before the probe is armed.

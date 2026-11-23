@@ -164,3 +164,124 @@ func TestCloudFlashRequestJTAGJSON(t *testing.T) {
 		t.Errorf("swd request: %s", b)
 	}
 }
+
+// withProfile makes loadPodWiring return w for the test.
+func withProfile(t *testing.T, w *podWiring) {
+	t.Helper()
+	old := loadPodWiring
+	t.Cleanup(func() { loadPodWiring = old })
+	loadPodWiring = func(*globalFlags, io.Writer) *podWiring { return w }
+}
+
+func bothPinsProfile(port string) *podWiring {
+	pin := func(n int) *int { return &n }
+	w := &podWiring{SwdSwclk: pin(11), SwdSwdio: pin(12), JtagTck: pin(11), JtagTms: pin(12), JtagTdi: pin(13), JtagTdo: pin(14)}
+	if port != "" {
+		w.DebugPort = &port
+	}
+	return w
+}
+
+// resolve fills the flags from the profile like runFlash does, then decides the port.
+func resolve(t *testing.T, f *flashFlags) (dapPins, error) {
+	t.Helper()
+	f.fillFromWiring(&globalFlags{})
+	return f.resolveDAPPins()
+}
+
+// Step 1: pin flags win over the profile's debug_port.
+func TestDebugPortFlagsWin(t *testing.T) {
+	withProfile(t, bothPinsProfile("swd"))
+	// JTAG flag, no SWD flag: JTAG although the profile says swd; the rest fills from the profile.
+	p, err := resolve(t, &flashFlags{tck: "1", target: "target/stm32f4x.cfg"})
+	if err != nil || !p.jtag || p.jtagPins.TCK != 1 || p.jtagPins.TMS != 12 || p.jtagPins.TDO != 14 || !strings.Contains(p.why, "flags") {
+		t.Errorf("jtag flag: %+v %v", p, err)
+	}
+	withProfile(t, bothPinsProfile("jtag"))
+	// SWD flags, no JTAG flag: SWD although the profile says jtag.
+	p, err = resolve(t, &flashFlags{swclk: "3", swdio: "4", target: "target/stm32f4x.cfg"})
+	if err != nil || p.jtag || p.swclk != 3 || p.swdio != 4 || !strings.Contains(p.why, "flags") {
+		t.Errorf("swd flags: %+v %v", p, err)
+	}
+	// A JTAG flag with an incomplete JTAG set (even though SWD pins are known) is the usage error.
+	pin := func(n int) *int { return &n }
+	withProfile(t, &podWiring{SwdSwclk: pin(11), SwdSwdio: pin(12)})
+	if _, err = resolve(t, &flashFlags{tck: "1"}); err == nil || !strings.Contains(err.Error(), "JTAG needs all four") {
+		t.Errorf("incomplete jtag flags: %v", err)
+	}
+	// Both kinds of flags: the profile's debug_port decides.
+	withProfile(t, bothPinsProfile("jtag"))
+	p, err = resolve(t, &flashFlags{tck: "1", swclk: "11", swdio: "12", target: "target/stm32f4x.cfg"})
+	if err != nil || !p.jtag || !strings.Contains(p.why, "debug_port") {
+		t.Errorf("both flag kinds: %+v %v", p, err)
+	}
+}
+
+// Step 2: the profile's debug_port.
+func TestDebugPortFromProfile(t *testing.T) {
+	arm := "target/stm32f4x.cfg"
+	withProfile(t, bothPinsProfile("jtag"))
+	p, err := resolve(t, &flashFlags{target: arm})
+	if err != nil || !p.jtag || p.jtagPins.TDO != 14 || p.why != "the wiring profile's debug_port" {
+		t.Errorf("debug_port jtag, ARM target: %+v %v", p, err)
+	}
+	withProfile(t, bothPinsProfile("swd"))
+	p, err = resolve(t, &flashFlags{target: "target/riscv.cfg"})
+	if err != nil || p.jtag || p.swclk != 11 {
+		t.Errorf("debug_port swd, JTAG-only target: %+v %v", p, err)
+	}
+	// Case and spaces do not matter.
+	withProfile(t, bothPinsProfile(" JTAG "))
+	if p, err = resolve(t, &flashFlags{target: arm}); err != nil || !p.jtag {
+		t.Errorf("JTAG upper case: %+v %v", p, err)
+	}
+	// Incomplete pins of the chosen port: an error naming the profile fields.
+	pin := func(n int) *int { return &n }
+	jt := "jtag"
+	withProfile(t, &podWiring{DebugPort: &jt, SwdSwclk: pin(11), SwdSwdio: pin(12), JtagTck: pin(11), JtagTms: pin(12), JtagTdi: pin(13)})
+	if _, err = resolve(t, &flashFlags{target: arm}); err == nil || err.Error() != "debug_port is jtag but jtag_tdo is not set" {
+		t.Errorf("missing tdo: %v", err)
+	}
+	withProfile(t, &podWiring{DebugPort: &jt, SwdSwclk: pin(11), SwdSwdio: pin(12)})
+	if _, err = resolve(t, &flashFlags{target: arm}); err == nil || !strings.Contains(err.Error(), "jtag_tck, jtag_tms, jtag_tdi, jtag_tdo are not set") {
+		t.Errorf("no jtag pins: %v", err)
+	}
+	sw := "swd"
+	withProfile(t, &podWiring{DebugPort: &sw, JtagTck: pin(1), JtagTms: pin(2), JtagTdi: pin(3), JtagTdo: pin(4), SwdSwclk: pin(5)})
+	if _, err = resolve(t, &flashFlags{target: arm}); err == nil || err.Error() != "debug_port is swd but swd_swdio is not set" {
+		t.Errorf("missing swdio: %v", err)
+	}
+	// An invalid value.
+	bad := "usb"
+	withProfile(t, bothPinsProfile(bad))
+	if _, err = resolve(t, &flashFlags{target: arm}); err == nil || !strings.Contains(err.Error(), "debug_port") {
+		t.Errorf("invalid debug_port: %v", err)
+	}
+}
+
+// Step 3: no flags, no debug_port: the automatic rule, unchanged (SWD for an ARM target with both sets).
+func TestDebugPortAutomatic(t *testing.T) {
+	withProfile(t, bothPinsProfile(""))
+	p, err := resolve(t, &flashFlags{target: "target/stm32f4x.cfg"})
+	if err != nil || p.jtag || p.why != "automatic" {
+		t.Errorf("automatic ARM: %+v %v", p, err)
+	}
+	p, err = resolve(t, &flashFlags{target: "target/riscv.cfg"})
+	if err != nil || !p.jtag || !strings.HasPrefix(p.why, "automatic") {
+		t.Errorf("automatic riscv: %+v %v", p, err)
+	}
+}
+
+func TestPodWiringDebugPort(t *testing.T) {
+	var w podWiring
+	if err := json.Unmarshal([]byte(`{"version":2,"debug_port":"jtag"}`), &w); err != nil || w.DebugPort == nil || *w.DebugPort != "jtag" {
+		t.Errorf("%+v %v", w, err)
+	}
+	w = podWiring{}
+	if err := json.Unmarshal([]byte(`{"version":2,"debug_port":null}`), &w); err != nil || w.DebugPort != nil {
+		t.Errorf("null: %+v %v", w, err)
+	}
+	if validDebugPort("swd") != nil || validDebugPort("jtag") != nil || validDebugPort("") == nil || validDebugPort("both") == nil {
+		t.Error("validDebugPort")
+	}
+}

@@ -320,6 +320,15 @@ func runWiringSave(g *globalFlags, path, name string, force bool, out, warn io.W
 	if upgraded {
 		fmt.Fprintf(warn, "Note: %s is a version 1 profile; the old default pins' values were written out for what it leaves out (`benchpod wiring upgrade %s` rewrites the file).\n", path, path)
 	}
+	if dp, ok := p["debug_port"]; ok && dp != nil {
+		s, isStr := dp.(string)
+		if !isStr {
+			return usageErrorf("wiring save: %s: debug_port must be a string, \"swd\" or \"jtag\"", path)
+		}
+		if err := validDebugPort(s); err != nil {
+			return usageErrorf("wiring save: %s: %v", path, err)
+		}
+	}
 	body, _ := json.Marshal(p)
 	ctx, cancel, t, err := wiringTarget(g)
 	if err != nil {
