@@ -312,6 +312,7 @@ leave out from the profile named by `--wiring-profile`, else the pod's default:
 |-------------|--------------|---------------|
 | `flash`     | `--swclk`    | `swd_swclk`   |
 | `flash`     | `--swdio`    | `swd_swdio`   |
+| `flash`     | `--tck`, `--tms`, `--tdi`, `--tdo`, `--trst` | `jtag_tck`, `jtag_tms`, `jtag_tdi`, `jtag_tdo`, `jtag_trst` (optional) |
 | `flash`     | `--nreset`   | `swd_nreset`  |
 | `flash`     | `--target`   | `swd_target`  |
 | `spi-flash` | `--sck`, `--mosi`, `--miso`, `--cs` | `spi_sclk`, `spi_mosi`, `spi_miso`, `spi_cs` |
@@ -1790,6 +1791,8 @@ embeddedci.com always verifies and resets: `--no-verify`, `--no-reset`,
 |----------------------------|---------|-------------------------------------------------------------------------|
 | `--swclk`                  | (profile `swd_swclk`, else required) | LA pin for SWCLK, 1-14 (`1` or `la1`).     |
 | `--swdio`                  | (profile `swd_swdio`, else required) | LA pin for SWDIO, 1-14.                    |
+| `--tck`, `--tms`, `--tdi`, `--tdo` | (profile `jtag_tck`, `jtag_tms`, `jtag_tdi`, `jtag_tdo`) | LA pins for JTAG, 1-14. When all four are known, flash can use JTAG (see JTAG targets below). |
+| `--trst`                   | (profile `jtag_trst`, else not wired) | LA pin for JTAG nTRST (optional).                          |
 | `--target`                 | (profile `swd_target`, else none) | OpenOCD target config, passed as `-f`, e.g. `target/stm32f1x.cfg`. |
 | `--file`                   | (none)  | Firmware image to flash, used with `--target`.                          |
 | `--build`                  | (none)  | Flash a build uploaded to embeddedci.com instead of `--file`: its build id (the upload's `build_id`), or `latest` for the newest one matching `--repo`/`--ref`. |
@@ -1812,6 +1815,23 @@ embeddedci.com always verifies and resets: `--no-verify`, `--no-reset`,
 | `--boot`                   | (profile signal `BOOT`, `IO0` or `IO9`) | ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain. |
 
 Pass `--target` (with `--file` or `--build`) or at least one `-c`/`--openocd-arg`.
+
+#### JTAG targets
+
+The pod's probe also speaks JTAG (firmware with the `jtag` feature, gateware 61 or newer; the
+emulation FPGA image has no JTAG). There is no transport flag: `flash` picks JTAG on its own
+when all four JTAG pins are known (`--tck`, `--tms`, `--tdi`, `--tdo`, or `jtag_tck`,
+`jtag_tms`, `jtag_tdi`, `jtag_tdo` in the wiring profile; `--trst` and `jtag_trst` are
+optional) and either no SWD pins are known or the target is JTAG-only: an OpenOCD target named
+`esp32`, `esp32s2`, `gd32vf103`, `fe310` or `k210`, or one starting with `riscv`. Otherwise it
+uses SWD, so a profile with both pin sets keeps flashing ARM parts over SWD. OpenOCD then runs
+with `transport select jtag`. TCK, TMS, TDI and TDO must reach the target's pins, with a common
+ground. A profile may share pins between the two sets only as `jtag_tck` = `swd_swclk` and
+`jtag_tms` = `swd_swdio`. A pod without the JTAG feature is refused before the probe is armed.
+
+```bash
+benchpod flash --tck 1 --tms 2 --tdi 3 --tdo 4 --target target/riscv.cfg --file app.elf
+```
 
 #### ESP32 targets
 

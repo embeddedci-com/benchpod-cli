@@ -40,6 +40,16 @@ type DAPOptions struct {
 	// WaitMS makes the pod wait, up to this long, for the target to answer SWD before it acks:
 	// for a target whose rail was just switched on (an STM32 NUCLEO needs ~2.1 s).
 	WaitMS int
+	// JTAG, when set, sends the JTAG pins (firmware feature jtag). With SWD pins too the pod arms
+	// SWD first, or JTAG when Port is "jtag"; with swclk and swdio 0 only JTAG is sent.
+	JTAG *JTAGPins
+	// Port is "jtag" or "swd" (the default); it only matters when both pin sets are sent.
+	Port string
+}
+
+// JTAGPins are the LA channels (1-14) of the JTAG signals for dap_start. TRST 0 means not wired.
+type JTAGPins struct {
+	TCK, TMS, TDI, TDO, TRST int
 }
 
 // DAPStartWith is DAPStart with the optional dap_start fields.
@@ -53,6 +63,15 @@ func (c *Client) DAPStartWith(ctx context.Context, swclk, swdio int, o DAPOption
 	}
 	if o.WaitMS > 0 {
 		extra["wait_ms"] = o.WaitMS
+	}
+	if o.JTAG != nil {
+		extra["tck"], extra["tms"], extra["tdi"], extra["tdo"] = o.JTAG.TCK, o.JTAG.TMS, o.JTAG.TDI, o.JTAG.TDO
+		if o.JTAG.TRST > 0 {
+			extra["trst"] = o.JTAG.TRST
+		}
+		if o.Port == "jtag" && swclk > 0 && swdio > 0 {
+			extra["port"] = "jtag"
+		}
 	}
 	return c.startRawMode(ctx, "dap_start", swclk, swdio, extra)
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -235,4 +236,16 @@ func TestBridgeDAPNonNetConn(t *testing.T) {
 		t.Fatal("BridgeDAP did not return in time")
 	}
 	testPod.Close()
+}
+
+func TestDAPStrategyTransport(t *testing.T) {
+	for transport, want := range map[string]string{"jtag": "transport select jtag", "swd": "transport select swd", "": "transport select swd", "bogus": "transport select swd"} {
+		got := strings.Join(dapStrategy(transport).adapterArgs(1234), " ")
+		if !strings.Contains(got, want) {
+			t.Errorf("%q: %s", transport, got)
+		}
+		if strings.Count(got, "transport select") != 1 {
+			t.Errorf("%q: transport selected more than once: %s", transport, got)
+		}
+	}
 }
