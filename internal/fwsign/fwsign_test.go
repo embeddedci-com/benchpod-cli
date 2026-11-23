@@ -159,6 +159,12 @@ func TestTargetNames(t *testing.T) {
 	if n, ok := TargetByName("xip"); !ok || TargetXIP != 9 || n != TargetXIP || TargetName(9) != "xip" {
 		t.Errorf("xip: TargetByName = %d, %v; TargetName(9) = %q", n, ok, TargetName(9))
 	}
+	if n, ok := TargetByName("xip_prog"); !ok || TargetXIPProg != 10 || n != TargetXIPProg || TargetName(10) != "xip_prog" {
+		t.Errorf("xip_prog: TargetByName = %d, %v; TargetName(10) = %q", n, ok, TargetName(10))
+	}
+	if TargetName(11) != "" {
+		t.Error("target 11 has a name")
+	}
 	if _, ok := TargetByName(""); ok {
 		t.Error("the unused target numbers have names")
 	}
