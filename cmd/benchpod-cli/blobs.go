@@ -21,7 +21,7 @@ import (
 // and, from gateware v54, gw2 sensor emulation) and the ESP32-C3 esp-hosted image. The pod keeps
 // them in slots of its W25Q flash rather than in the firmware image, so whoever installs firmware
 // installs these next to it. A release publishes them as blob-gw0.bin, blob-gw1.bin,
-// blob-gw2.bin, blob-esp.bin plus blobs-manifest.json; a local firmware build
+// blob-gw2.bin, blob-esp.bin, blob-xip.bin, blob-xip_prog.bin plus blobs-manifest.json; a local firmware build
 // leaves the same files in stm32h563/build/blobs/.
 
 const blobsManifestName = "blobs-manifest.json"
@@ -332,7 +332,7 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "take the blobs from this directory (holding blobs-manifest.json)")
 	cmd.Flags().StringVar(&release, "release", "", "take the blobs from this firmware release tag (default: the one the pod runs)")
-	cmd.Flags().StringVar(&only, "only", "", "comma-separated slots to install (gw0, gw1, gw2, esp; bridge on pods with Wi-Fi bridge support)")
+	cmd.Flags().StringVar(&only, "only", "", "comma-separated slots to install (gw0, gw1, gw2, esp, xip, xip_prog; bridge on pods with Wi-Fi bridge support)")
 	cmd.Flags().BoolVar(&force, "force", false, "install even blobs the pod already holds")
 	return cmd
 }

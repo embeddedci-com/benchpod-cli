@@ -2117,7 +2117,7 @@ does the same after it installs the blobs. When the reload fails, restarting the
 |-------------|-----------------|----------------------------------------------------------------|
 | `--release` | (the pod's)     | Take the blobs from this firmware release tag.                 |
 | `--dir`     | (none)          | Take the blobs from this directory (holding `blobs-manifest.json`), e.g. `stm32h563/build/blobs`. |
-| `--only`    | (all)           | Comma-separated slots to install: `gw0`, `gw1`, `gw2` (the sensor emulation image, gateware v54+), `esp` (pods with a built-in ESP32-C3). |
+| `--only`    | (all)           | Comma-separated slots to install: `gw0`, `gw1`, `gw2` (the sensor emulation image, gateware v54+), `esp` (pods with a built-in ESP32-C3), `xip` and `xip_prog` (code the pod runs from its W25Q; `xip_prog` holds the chip protocols of `prog_flash`). |
 | `--force`   | off             | Install even the blobs the pod already holds.                  |
 
 ### `benchpod dfu`
