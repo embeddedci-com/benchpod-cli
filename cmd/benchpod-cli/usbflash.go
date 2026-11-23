@@ -26,9 +26,8 @@ const (
 	usbHostExtra           = time.Minute // host mode outlives the command by this much
 )
 
-// usbFlashModes are the pod's usb_flash modes this CLI drives. More (picoboot, ...) come with
-// their firmware.
-var usbFlashModes = []string{"uf2", "file", "dfu", "teensy", "avr", "samd", "esp"}
+// usbFlashModes are the pod's usb_flash modes this CLI drives.
+var usbFlashModes = []string{"uf2", "file", "dfu", "teensy", "avr", "samd", "esp", "picoboot"}
 
 // usbFlashPod is the pod as usb-flash uses it: JSON commands and the PSRAM upload.
 type usbFlashPod interface {
@@ -45,6 +44,8 @@ type usbFlashOpts struct {
 	name       string // "" = the file's 8.3 name
 	port       string
 	noLeave    bool
+	verify     bool // uf2: compare the drive's CURRENT.UF2 with the file (read-back)
+	checkFail  bool // file: read FAIL.TXT after the copy (read-back)
 	asJSON     bool
 	hostSecs   int // timeout_s when this starts host mode
 	pollPeriod time.Duration
@@ -54,10 +55,13 @@ func newUSBFlashCmd(g *globalFlags) *cobra.Command {
 	var o usbFlashOpts
 	cmd := &cobra.Command{
 		Use:   "usb-flash <file>",
-		Short: "Flash a board over the pod's USB host port (UF2, DFU, drag-and-drop drives, Teensy, Arduino, ESP32)",
+		Short: "Flash a board over the pod's USB host port (UF2, PICOBOOT, DFU, drag-and-drop drives, Teensy, Arduino, ESP32)",
 		Long: "Flash the board on the pod's USB host port from a file (firmware 4.0.3 and later). The CLI chooses\n" +
 			"how from the file and the USB device that shows up; --mode overrides it.\n\n" +
 			"  .uf2 file                      uf2     UF2 bootloaders (Pico, Adafruit, tinyuf2): written to the drive\n" +
+			"  Pico or Pico 2 in BOOTSEL      picoboot  RP2040 and RP2350 (2E8A:0003, 2E8A:000F) with a .bin or .hex file:\n" +
+			"                                         erased, written and read back page by page; --address default\n" +
+			"                                         0x10000000, a multiple of 4096\n" +
 			"  Teensy loader (16C0:0478)      teensy  Teensy 3.x, 4.0, 4.1\n" +
 			"  a DFU interface                dfu     USB DFU and STM32 DfuSe (BOOT0 high); --address, default\n" +
 			"                                         0x08000000 for a .bin\n" +
@@ -65,9 +69,13 @@ func newUSBFlashCmd(g *globalFlags) *cobra.Command {
 			"  Espressif or an ESP image      esp     ESP32 behind a USB-serial chip or its own USB (image starts 0xE9)\n" +
 			"  a mass-storage drive           file    DAPLink (NUCLEO, nRF DK, micro:bit): the file is copied as an\n" +
 			"                                         8.3 name (--name, default the file name)\n\n" +
-			"A .hex or .dfu file is converted to a binary with its address for dfu, teensy, avr, samd and esp;\n" +
+			"A .hex or .dfu file is converted to a binary with its address for dfu, teensy, avr, samd, esp and picoboot;\n" +
 			"uf2 and file send it as it is. The flash starts the new firmware at the end (--no-leave keeps\n" +
-			"the board in its bootloader).\n\n" +
+			"the board in its bootloader; with picoboot, in BOOTSEL).\n\n" +
+			"Read-back: picoboot always reads every page back and fails on a difference. --verify (uf2) compares\n" +
+			"the file with the loader's CURRENT.UF2 when the board is still in its loader; --check-fail-txt (file)\n" +
+			"reads FAIL.TXT after the copy, so a DAPLink that rejected the file fails the flash. The pod's note\n" +
+			"(\"verified 12 blocks\") is printed. For a file copy the CLI sends the current time for the new file's dates.\n\n" +
 			"If USB host mode is off, usb-flash starts it (and says so) on --port: usb_a on a pod with the\n" +
 			"USB-A host port (board v3r4 and later), else usb_c. It then waits for a device, shows the\n" +
 			"progress and exits non-zero with the pod's reason when the flash fails. Host mode stays on until\n" +
@@ -79,7 +87,9 @@ func newUSBFlashCmd(g *globalFlags) *cobra.Command {
 		Example: "  benchpod usb-flash pico-app.uf2\n" +
 			"  benchpod usb-flash firmware.bin --address 0x08000000\n" +
 			"  benchpod usb-flash app.hex --port usb_c --timeout 3m\n" +
-			"  benchpod usb-flash firmware.bin --mode file --name APP.BIN",
+			"  benchpod usb-flash firmware.bin --mode file --name APP.BIN --check-fail-txt\n" +
+			"  benchpod usb-flash app.bin --mode picoboot --address 0x10000000\n" +
+			"  benchpod usb-flash pico-app.uf2 --verify",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.file = args[0]
@@ -121,11 +131,13 @@ func newUSBFlashCmd(g *globalFlags) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.mode, "mode", "", "override the automatic choice: uf2, file, dfu, teensy, avr, samd or esp")
-	f.StringVar(&o.address, "address", "", "flash address of the image for dfu, teensy, avr, samd and esp (default: from a .hex or .dfu file, else 0x08000000 for dfu, 0x2000 for samd, 0)")
+	f.StringVar(&o.mode, "mode", "", "override the automatic choice: uf2, file, dfu, teensy, avr, samd, esp or picoboot")
+	f.StringVar(&o.address, "address", "", "flash address of the image for dfu, teensy, avr, samd, esp and picoboot (default: from a .hex or .dfu file, else 0x08000000 for dfu, 0x2000 for samd, 0x10000000 for picoboot, 0)")
 	f.StringVar(&o.name, "name", "", "file mode: the file name on the drive, 8.3 (default: the file's name, shortened)")
 	f.StringVar(&o.port, "port", "", "usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host port, board v3r4 or later; else usb_c)")
 	f.BoolVar(&o.noLeave, "no-leave", false, "keep the board in its bootloader at the end instead of starting the new firmware")
+	f.BoolVar(&o.verify, "verify", false, "uf2: after the write, compare the file with the loader's CURRENT.UF2 (only when the board is still in its loader)")
+	f.BoolVar(&o.checkFail, "check-fail-txt", false, "file: after the copy, wait for the drive to come back and fail the flash when it holds a FAIL.TXT")
 	f.BoolVar(&o.asJSON, "json", false, "print the pod's final flash report as JSON")
 	return cmd
 }
@@ -151,6 +163,12 @@ func validateUSBFlashFlags(o *usbFlashOpts) error {
 		if !validFAT83(o.name) {
 			return usageErrorf("usb-flash: --name must be an 8.3 file name such as FIRMWARE.BIN (got %q)", o.name)
 		}
+	}
+	if o.verify && o.mode != "" && o.mode != "uf2" {
+		return usageErrorf("usb-flash: --verify is for uf2 mode (picoboot always reads back)")
+	}
+	if o.checkFail && o.mode != "" && o.mode != "file" {
+		return usageErrorf("usb-flash: --check-fail-txt is for file mode")
 	}
 	if p := strings.ToLower(strings.TrimSpace(o.port)); p != "" && p != "usb_a" && p != "usb_c" {
 		return usageErrorf("usb-flash: --port must be usb_a or usb_c (got %q)", o.port)
@@ -203,6 +221,9 @@ const (
 	teensyLoaderPID = 0x0478
 	stmDfuVID       = 0x0483
 	stmDfuPID       = 0xDF11
+	piVID           = 0x2E8A // Raspberry Pi
+	piBootRP2040    = 0x0003
+	piBootRP2350    = 0x000F
 )
 
 func looksLikeESPImage(data []byte) bool { return len(data) > 0 && data[0] == 0xE9 }
@@ -230,6 +251,8 @@ func chooseUSBFlashMode(file string, data []byte, d *usbDevice) (mode, why strin
 		return "esp", "an Espressif chip", nil
 	case usbSerialChipVIDs[d.VID] && looksLikeESPImage(data):
 		return "esp", "an ESP image behind a USB-serial chip", nil
+	case d.VID == piVID && (d.PID == piBootRP2040 || d.PID == piBootRP2350):
+		return "picoboot", "a Pico in BOOTSEL", nil
 	case d.hasInterface(usbClassMSC, -1):
 		return "file", "a mass-storage drive", nil
 	}
@@ -311,6 +334,9 @@ func planUSBFlash(o usbFlashOpts, data []byte, d *usbDevice) (*usbFlashPlan, err
 		p.HasAddr = false // a plain DFU loader has no addresses
 		p.Note = ""
 	}
+	if mode == "picoboot" && p.Address%4096 != 0 {
+		return nil, fmt.Errorf("picoboot: the address 0x%08x is not a multiple of 4096 (the flash sector size)", p.Address)
+	}
 	return p, nil
 }
 
@@ -335,11 +361,16 @@ func defaultUSBAddress(mode string, d *usbDevice) (uint32, string) {
 		return 0x08000000, ""
 	case "samd":
 		return 0x2000, "writing at 0x2000 (a SAMD21 sketch); a SAMD51 starts at 0x4000: pass --address 0x4000"
+	case "picoboot":
+		return 0x10000000, ""
 	case "esp":
 		return 0, "writing at flash offset 0 (a merged image); an application image goes at --address 0x10000"
 	}
 	return 0, ""
 }
+
+// usbFlashNow is the time sent as the new file's dates (tests replace it).
+var usbFlashNow = time.Now
 
 // ── the run ─────────────────────────────────────────────────────────────────
 
@@ -358,6 +389,7 @@ type usbFlashStatus struct {
 	Result     string `json:"result"`
 	OK         bool   `json:"ok"`
 	MS         int    `json:"ms"`
+	Note       string `json:"note"`
 }
 
 func usbFlashErr(what string, err error) error {
@@ -373,41 +405,22 @@ func runUSBFlash(ctx context.Context, pod usbFlashPod, o usbFlashOpts, data []by
 		poll = usbHostPoll
 	}
 	say := func(format string, a ...any) { fmt.Fprintf(progress, "usb-flash: "+format+"\n", a...) }
-	info, err := requireUSBFeatures(ctx, pod, what, "usb_host_mode", "usb_flash")
+	need := []string{"usb_host_mode", "usb_flash"}
+	if o.mode == "picoboot" {
+		need = append(need, "usb_flash_picoboot")
+	}
+	if o.verify || o.checkFail {
+		need = append(need, "usb_flash_readback")
+	}
+	info, err := requireUSBFeatures(ctx, pod, what, need...)
 	if err != nil {
 		return err
 	}
 
 	// Host mode.
-	host, _, err := usbHostRead(ctx, pod)
+	host, err := usbEnsureHost(ctx, pod, what, info, o.port, o.hostSecs, int(usbFlashDefaultTimeout/time.Second)+60, poll, say)
 	if err != nil {
-		return usbFlashErr(what, err)
-	}
-	switch host.Mode {
-	case "host":
-		if host.RemainingS < int(usbHostExtra/time.Second) && o.hostSecs > 0 {
-			// Renew so it does not run out under the flash.
-			if err := usbHostStart(ctx, pod, host.Port, o.hostSecs); err != nil {
-				return usbFlashErr(what, err)
-			}
-		}
-	case "starting":
-	default:
-		port, err := chooseUSBHostPort(o.port, info.BoardRev)
-		if err != nil {
-			return err
-		}
-		secs := o.hostSecs
-		if secs <= 0 {
-			secs = int(usbFlashDefaultTimeout/time.Second) + 60
-		}
-		say("USB host mode was off: starting it on %s (it stays on for %d s, or until `benchpod usb-host off`)", port, secs)
-		if err := usbHostStart(ctx, pod, port, secs); err != nil {
-			return usbFlashErr(what, err)
-		}
-	}
-	if host, _, err = usbHostWaitMode(ctx, pod, "host", poll); err != nil {
-		return usbFlashErr(what, err)
+		return err
 	}
 
 	// The device.
@@ -419,6 +432,14 @@ func runUSBFlash(ctx context.Context, pod usbFlashPod, o usbFlashOpts, data []by
 	plan, err := planUSBFlash(o, data, dev)
 	if err != nil {
 		return fmt.Errorf("%s: %w", what, err)
+	}
+	if plan.Mode == "picoboot" && o.mode != "picoboot" {
+		if _, err := requireUSBFeatures(ctx, pod, what, "usb_flash_picoboot"); err != nil {
+			return err
+		}
+	}
+	if (o.verify && plan.Mode != "uf2") || (o.checkFail && plan.Mode != "file") {
+		return usageErrorf("usb-flash: --verify is for uf2 mode and --check-fail-txt for file mode; this flash uses %s mode", plan.Mode)
 	}
 	say("%s %s: %s mode (%s), %d bytes%s", dev.ids(), usbNames(dev), plan.Mode, plan.Why, len(plan.Data), planAddr(plan))
 	if plan.Note != "" {
@@ -439,6 +460,16 @@ func runUSBFlash(ctx context.Context, pod usbFlashPod, o usbFlashOpts, data []by
 	}
 	if o.noLeave && plan.Mode != "uf2" && plan.Mode != "file" {
 		req["leave"] = false
+	}
+	if plan.Mode == "file" {
+		// The pod has no clock: the file's dates come from this computer.
+		req["time"] = usbFlashNow().Unix()
+		if o.checkFail {
+			req["check_fail_txt"] = true
+		}
+	}
+	if plan.Mode == "uf2" && o.verify {
+		req["verify"] = true
 	}
 	if _, err := pod.Command(ctx, req); err != nil {
 		return usbFlashErr(what, err)
@@ -469,6 +500,9 @@ func runUSBFlash(ctx context.Context, pod usbFlashPod, o usbFlashOpts, data []by
 	}
 	fmt.Fprintf(out, "Flashed %s to %s %s over USB, %s mode%s, in %.1f s: ok. %s\n",
 		filepath.Base(o.file), dev.ids(), usbNames(dev), plan.Mode, proto, time.Since(t0).Seconds(), end)
+	if n := strings.TrimSpace(st.Note); n != "" {
+		fmt.Fprintf(out, "Read-back: %s\n", n)
+	}
 	return nil
 }
 
@@ -567,6 +601,9 @@ func usbFlashFailure(what, file string, st *usbFlashStatus) string {
 	}
 	msg := fmt.Sprintf("%s: flashing %s failed in the %s phase (%s mode): %s", what, file, orDash(st.Phase), orDash(st.Mode), reason)
 	low := strings.ToLower(reason)
+	if n := strings.TrimSpace(st.Note); n != "" {
+		msg += " [" + n + "]"
+	}
 	hint := ""
 	switch {
 	case reason == "aborted":
@@ -585,6 +622,12 @@ func usbFlashFailure(what, file string, st *usbFlashStatus) string {
 		hint = "press the Teensy's button to start its loader"
 	case strings.Contains(low, "overwrite the bootloader"):
 		hint = "choose a start address above the bootloader with --address"
+	case strings.Contains(low, "read back different"):
+		hint = "a page did not stick: check the board's power and cable, then flash again"
+	case strings.Contains(low, "not an rp2040"):
+		hint = "hold BOOTSEL while plugging the Pico in (or double-tap reset on a board with a reset button)"
+	case strings.Contains(low, "loader reported a failure"):
+		hint = "the loader rejected the file (its FAIL.TXT is quoted above): check the file is built for this board"
 	case strings.Contains(low, "does not fit"):
 		hint = "check --address against the board's flash layout"
 	}

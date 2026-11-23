@@ -301,3 +301,47 @@ func TestSlug(t *testing.T) {
 		}
 	}
 }
+
+func TestParseUARTPortUSB(t *testing.T) {
+	cfg, err := Parse([]byte(`version: 1
+suite: s
+dut: d
+steps:
+  - uart_expect: {port: usb, dtr: false, rts: true, baud: 460800, until: "ok"}
+  - power_cycle: {port: usb, until: "boot"}
+  - uart_expect: {port: pins, until: "ok"}
+  - uart_expect: {until: "ok"}
+`), "f.yaml", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := cfg.Steps[0].UARTExpect.UART
+	if !u.IsUSB() || u.DTR == nil || *u.DTR || u.RTS == nil || !*u.RTS || u.Baud != 460800 {
+		t.Errorf("uart_expect %+v", u)
+	}
+	if pc := cfg.Steps[1].PowerCycle.UART; !pc.IsUSB() || pc.DTR != nil || pc.RTS != nil || pc.Baud != 0 {
+		t.Errorf("power_cycle %+v", pc)
+	}
+	for i := 2; i < 4; i++ {
+		if cfg.Steps[i].UARTExpect.UART.IsUSB() {
+			t.Errorf("step %d is the pins", i)
+		}
+	}
+}
+
+func TestParseUARTPortErrors(t *testing.T) {
+	for name, c := range map[string]struct{ step, want string }{
+		"bad port":          {"uart_expect: {port: i2c, until: x}", "port must be usb"},
+		"dtr without usb":   {"uart_expect: {dtr: true, until: x}", "dtr only applies with port: usb"},
+		"rts with pins":     {"uart_expect: {port: pins, rts: false, until: x}", "rts only applies with port: usb"},
+		"baud without usb":  {"uart_expect: {baud: 9600, until: x}", "baud only applies with port: usb"},
+		"baud range":        {"uart_expect: {port: usb, baud: 100, until: x}", "baud must be 300 to 3000000"},
+		"dtr not a bool":    {"uart_expect: {port: usb, dtr: maybe, until: x}", "must be true or false"},
+		"power cycle no re": {"power_cycle: {port: usb}", "need until"},
+	} {
+		_, err := Parse([]byte("version: 1\nsuite: s\ndut: d\nsteps:\n  - "+c.step+"\n"), "f.yaml", noEnv)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

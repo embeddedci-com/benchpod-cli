@@ -35,6 +35,7 @@ type fakeCIPod struct {
 	uptimes   []int64 // successive status uptime_ms values
 	refuse    map[string]error
 	profile   map[string]any
+	featRev   int // status features_rev (0: 4)
 }
 
 func newFakeCIPod() *fakeCIPod {
@@ -69,7 +70,7 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 		if p.statusErr != nil {
 			return nil, p.statusErr
 		}
-		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": 4, "la_vccio_mv": 3300, "api": 2, "min_client_api": 2}
+		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": max(p.featRev, 4), "la_vccio_mv": 3300, "api": 2, "min_client_api": 2}
 		p.mu.Lock()
 		if len(p.uptimes) > 0 {
 			st["uptime_ms"] = p.uptimes[0]

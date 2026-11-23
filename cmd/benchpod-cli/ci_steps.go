@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/ci"
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 )
 
 // ── native steps ────────────────────────────────────────────────────────────
@@ -252,7 +253,10 @@ func (r *ciRunner) railOn(ctx context.Context, rail int) bool {
 }
 
 // uartRequest is uart_proxy_start on the profile's UART.
-func (r *ciRunner) uartRequest() (map[string]any, error) {
+func (r *ciRunner) uartRequest(ctx context.Context, port ci.UARTPort) (map[string]any, error) {
+	if port.IsUSB() {
+		return r.usbUARTRequest(ctx, port)
+	}
 	p := r.wiring.Pins
 	if p.UartRx == nil {
 		name := firstNonEmptyStr(r.wiring.Name, "(none)")
@@ -273,6 +277,36 @@ func (r *ciRunner) uartRequest() (map[string]any, error) {
 	return req, nil
 }
 
+// usbUARTRequest is uart_proxy_start on the board's USB serial port ("port":"usb"): the pod hosts
+// the board (usb-host on), so no LA pin is involved. The baud rate is the step's, else the profile's.
+func (r *ciRunner) usbUARTRequest(ctx context.Context, port ci.UARTPort) (map[string]any, error) {
+	raw, err := r.pod.Command(ctx, features.StatusRequest())
+	if err != nil {
+		return nil, fmt.Errorf("status: %w", err)
+	}
+	if ok, err := features.Has(raw, "uart_usb"); err != nil || !ok {
+		return nil, fmt.Errorf("port: usb needs pod firmware 4.0.3 or later (update the pod with `benchpod flash-self`)")
+	}
+	baud := port.Baud
+	if baud == 0 {
+		baud = r.wiring.intKey("uart_baud", 115200)
+	}
+	req := map[string]any{"cmd": "uart_proxy_start", "port": "usb", "baud": baud}
+	if port.DTR != nil {
+		req["dtr"] = *port.DTR
+	}
+	if port.RTS != nil {
+		req["rts"] = *port.RTS
+	}
+	if parity := r.wiring.strKey("uart_parity"); parity != "" && parity != "none" {
+		req["parity"] = parity
+	}
+	if sb := r.wiring.intKey("uart_stop_bits", 1); sb == 2 {
+		req["stop_bits"] = 2
+	}
+	return req, nil
+}
+
 func (r *ciRunner) powerCycle(ctx context.Context, pc *ci.PowerCycle, w io.Writer) (map[string]float64, error) {
 	if err := r.powerOff(ctx, w); err != nil {
 		return nil, err
@@ -283,7 +317,7 @@ func (r *ciRunner) powerCycle(ctx context.Context, pc *ci.PowerCycle, w io.Write
 	if pc.Re == nil {
 		return nil, r.powerOn(ctx, w)
 	}
-	req, err := r.uartRequest()
+	req, err := r.uartRequest(ctx, pc.UART)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +342,7 @@ func (r *ciRunner) powerCycle(ctx context.Context, pc *ci.PowerCycle, w io.Write
 }
 
 func (r *ciRunner) uartExpect(ctx context.Context, u *ci.UARTExpect, w io.Writer) (map[string]float64, error) {
-	req, err := r.uartRequest()
+	req, err := r.uartRequest(ctx, u.UART)
 	if err != nil {
 		return nil, err
 	}

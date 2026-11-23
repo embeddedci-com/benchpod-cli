@@ -299,7 +299,7 @@ embeddedci.com: `capture`, `measure`, `test`, `flash --file`, `spi-flash`, `usb-
 connection they refuse with a message pointing to the web app, the Python SDK or
 pytest plugin (which take `embeddedci:<name>` for those too), or a network/USB
 connection. `flash --build` (a build uploaded to embeddedci.com) does work over a
-cloud connection: embeddedci.com runs OpenOCD. The CLI has no UART command; use the web app's Terminal or the SDK.
+cloud connection: embeddedci.com runs OpenOCD. The CLI has no UART command of its own: `benchpod ci` steps read the DUT's UART (the profile's pins, or the board's USB serial port with `port: usb`), and the web app's Terminal and the SDK open it interactively.
 
 ### One wiring profile
 
@@ -400,7 +400,9 @@ benchpod usb-reattach                   # re-enumerate on USB (macOS: after unlo
 benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP; --build: an uploaded build)
 benchpod spi-flash ...    # read/erase/program an SPI NOR flash on four LA pins (network)
 benchpod usb-host [on|off]           # the pod hosts the board's USB port and shows the device (firmware 4.0.3+)
-benchpod usb-flash FILE              # flash a board over USB: UF2, DFU, drive, Teensy, Arduino, ESP32 (firmware 4.0.3+)
+benchpod usb-flash FILE              # flash a board over USB: UF2, PICOBOOT, DFU, drive, Teensy, Arduino, ESP32 (firmware 4.0.3+)
+benchpod usb-check TEST              # check the board's USB firmware: enumeration time, current, suspend, resets, dropouts (firmware 4.0.3+)
+benchpod usb-hid [list|capture]      # the board's HID interfaces and input reports (firmware 4.0.3+)
 benchpod bootsel          # reboot a (retired) RP2350 pod into its UF2 bootloader (USB console only)
 benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (USB console only)
 benchpod flash-self                  # fetch latest firmware + flash the POD over USB DFU (STM32)
@@ -677,7 +679,7 @@ fails the write with "write enable did not stick".
 #### Flashing over USB
 
 `usb-flash` flashes a board over the pod's USB host port (firmware 4.0.3 and later): UF2
-bootloaders (Pico, Adafruit), drag-and-drop drives (DAPLink: NUCLEO, nRF DK, micro:bit), USB DFU
+bootloaders (Pico, Adafruit), PICOBOOT (Pico and Pico 2 with a `.bin` or `.hex`), drag-and-drop drives (DAPLink: NUCLEO, nRF DK, micro:bit), USB DFU
 and STM32 DfuSe, Teensy, Arduino AVR and SAMD bootloaders, and ESP32. You never pick a mode: the
 CLI chooses it from the file and from the USB device that shows up (`--mode` overrides). Use the
 pod's network address, not `--connection usb`: while the pod hosts USB it is off the computer's USB.
@@ -687,6 +689,8 @@ benchpod usb-host on --port usb_a      # optional: host mode for 60 s, then show
 benchpod usb-host                      # the device: IDs, strings, speed, interfaces
 benchpod usb-flash pico-app.uf2        # starts host mode itself when it is off
 benchpod usb-flash app.hex --port usb_c --timeout 3m
+benchpod usb-check enumerate           # then check the board's USB firmware: see "benchpod usb-check"
+benchpod usb-hid capture               # and the HID reports it sends
 ```
 
 The board's own USB cable goes in the pod's USB-A host port (board v3r4 and later, `--port usb_a`,
@@ -960,12 +964,22 @@ and `expect`:
 | `flash: {}` | Flashes the firmware. | |
 | `power_on: {}` | Sets the profile's I/O voltage (only while the rail is off), then turns on the profile's rail. | |
 | `power_off: {}` | Turns the profile's rail off. | |
-| `power_cycle: {until, timeout, off_ms}` | Power off, wait `off_ms` (default 500), power on; with `until` (a regex) it reads the DUT's UART (the profile's `uart_rx`/`uart_tx`/`uart_baud`) until it matches within `timeout` (default 10s). | `boot_ms`: power on to the match |
-| `uart_expect: {until, send, timeout}` | Sends `send` (optional) to the DUT's UART and waits up to `timeout` (default 5s) for `until`. | `match_ms` |
+| `power_cycle: {until, timeout, off_ms, port, dtr, rts, baud}` | Power off, wait `off_ms` (default 500), power on; with `until` (a regex) it reads the DUT's UART (the profile's `uart_rx`/`uart_tx`/`uart_baud`) until it matches within `timeout` (default 10s). `port: usb` reads the board's USB serial port instead (see below). | `boot_ms`: power on to the match |
+| `uart_expect: {until, send, timeout, port, dtr, rts, baud}` | Sends `send` (optional) to the DUT's UART and waits up to `timeout` (default 5s) for `until`. `port: usb` as above. | `match_ms` |
 | `measure_power: {duration}` | Records the profile's rail for `duration` (default 2s). | `mean_ma`, `peak_ma`, `min_ma`, `mean_v` |
 | `wait: 2s` | Waits. | |
 | `pytest: {path, args, python}` | Runs pytest (`pytest: tests` is short for `{path: tests}`). | the tests' `measure()` values |
 | `run: <command>` | Runs a shell command; `results: junit:<path>` or `results: gotest-json` reads its cases. | numeric JUnit properties |
+
+The two UART steps read the soft UART on the profile's LA pins by default. `port: usb` reads the
+serial port of the board the pod hosts over USB instead (firmware 4.0.3 and later): a CDC ACM port,
+or the FTDI, CP210x or CH34x chip of a dev kit. No LA pin or I/O voltage is involved, so the
+profile needs no `uart_rx`, but USB host mode must be on (`benchpod usb-host on`) with the board
+enumerated. `baud` (default: the profile's `uart_baud`, else 115200; 300 to 3000000) is real on a
+USB-serial chip; a board's own USB port ignores it. `dtr` and `rts` (default `true` on the pod)
+set the control lines, which many boards use to reset or enter their loader:
+`uart_expect: {port: usb, dtr: false, rts: false, until: "ready>"}`. `dtr`, `rts` and `baud` only
+apply with `port: usb`. While the port is open, `usb-flash` and `usb-check` are refused.
 
 `capture` steps are not supported yet: capture from a pytest step for now. The UART and
 power steps need a direct link to the pod (its address or `usb`); through embeddedci.com
@@ -1858,10 +1872,11 @@ chooses the mode from the file and the device, so there is nothing to pick:
 | a DFU interface (STM32 ROM loader, DFU boards)   | `dfu`    | USB DFU and STM32 DfuSe; `--address`, default `0x08000000` for a `.bin`. |
 | an Arduino AVR or SAMD bootloader                | `avr`, `samd` | Caterina, optiboot, Mega 2560; SAMD21 and SAMD51.             |
 | Espressif, or an ESP image (starts with `0xE9`) behind a USB-serial chip | `esp` | ESP32 over its ROM loader; `--address` is the flash offset (0 for a merged image). |
-| a mass-storage drive (DAPLink: NUCLEO, nRF DK, micro:bit) | `file` | The file is copied to the drive as an 8.3 name.        |
+| a Pico or Pico 2 in BOOTSEL (2E8A:0003, 2E8A:000F) with a `.bin` or `.hex` file | `picoboot` | Erased, written and read back page by page through the PICOBOOT interface; a page that did not stick fails the flash. `--address` default `0x10000000`. |
+| a mass-storage drive (DAPLink: NUCLEO, nRF DK, micro:bit) | `file` | The file is copied to the drive as an 8.3 name; the CLI sends this computer's time for the new file's dates. |
 
 A `.hex` or `.dfu` file is converted to a binary with its address for `dfu`, `teensy`, `avr`,
-`samd` and `esp`; `uf2` and `file` send the file as it is. When it cannot tell (a USB-serial chip
+`samd`, `esp` and `picoboot`; `uf2` and `file` send the file as it is. When it cannot tell (a USB-serial chip
 with a plain binary, an unknown board) it stops and asks for `--mode`.
 
 If host mode is off, `usb-flash` starts it and says so, waits for a device, uploads the file into
@@ -1873,18 +1888,96 @@ needs the pod's network address, not embeddedci.com.
 
 | Flag         | Default | Purpose                                                              |
 |--------------|---------|----------------------------------------------------------------------|
-| `--mode`     | chosen from the file and the device | Override: `uf2`, `file`, `dfu`, `teensy`, `avr`, `samd` or `esp`. |
-| `--address`  | from a `.hex` or `.dfu` file, else `0x08000000` (`dfu`), `0x2000` (`samd`), `0` | Flash address of the image for `dfu`, `teensy`, `avr`, `samd` and `esp`. A SAMD51 starts at `0x4000`; an ESP application at `0x10000`. |
+| `--mode`     | chosen from the file and the device | Override: `uf2`, `file`, `dfu`, `teensy`, `avr`, `samd`, `esp` or `picoboot`. |
+| `--address`  | from a `.hex` or `.dfu` file, else `0x08000000` (`dfu`), `0x2000` (`samd`), `0x10000000` (`picoboot`), `0` | Flash address of the image for `dfu`, `teensy`, `avr`, `samd`, `esp` and `picoboot` (a multiple of 4096). A SAMD51 starts at `0x4000`; an ESP application at `0x10000`. |
 | `--name`     | the file's name as 8.3 | `file` mode: the file name on the drive, such as `FIRMWARE.BIN`. |
 | `--port`     | as `usb-host` | `usb_a` or `usb_c`, when host mode has to be started.            |
-| `--no-leave` | off     | Keep the board in its bootloader at the end instead of starting the new firmware (`dfu`, `teensy`, `avr`, `samd`, `esp`). |
+| `--no-leave` | off     | Keep the board in its bootloader at the end instead of starting the new firmware (`dfu`, `teensy`, `avr`, `samd`, `esp`, `picoboot`: stays in BOOTSEL). |
+| `--verify`   | off     | `uf2`: after the write, compare the file with the loader's `CURRENT.UF2`. Only possible while the board is still in its loader (a UF2 file that keeps it in BOOTSEL); otherwise the note says the check was skipped. |
+| `--check-fail-txt` | off | `file`: after the copy, wait for the drive to come back and fail the flash when it holds a `FAIL.TXT` (DAPLink says why it rejected the file there). |
 | `--json`     | off     | Print the pod's final flash report as JSON.                          |
 
 ```bash
 benchpod usb-flash pico-app.uf2
 benchpod usb-flash firmware.bin --address 0x08000000     # STM32 in its ROM loader
 benchpod usb-flash app.hex --port usb_c --timeout 3m
-benchpod usb-flash firmware.bin --mode file --name APP.BIN
+benchpod usb-flash firmware.bin --mode file --name APP.BIN --check-fail-txt
+benchpod usb-flash app.bin --mode picoboot --address 0x10000000
+benchpod usb-flash pico-app.uf2 --verify
+```
+
+The pod's read-back note (`verified 12 blocks`, `verify skipped: ...`, or the first line of
+`FAIL.TXT`) is printed after a successful flash and quoted in brackets when the flash fails.
+
+### `benchpod usb-check TEST`
+
+Check the USB firmware of the board on the pod's USB host port: what a computer cannot measure
+(firmware 4.0.3 and later). `TEST` is one of:
+
+| Test        | What it does                                                                 |
+|-------------|------------------------------------------------------------------------------|
+| `enumerate` | Power-cycles the board through eFuse 1 and times power-on to its pull-up, to its device descriptor and to mounted (min, avg, max over the cycles). |
+| `power`     | Samples the board's current and compares the average with the `bMaxPower` it declares. |
+| `suspend`   | Suspends the bus, measures the current against the 2.5 mA a bus-powered device may draw, resumes the bus and checks that the board still answers. |
+| `reset`     | Resets the port repeatedly and times the board's re-enumeration; a board that comes back with another vendor or product ID fails. |
+| `replug`    | Drops VBUS for each length in `--off-ms`: the board re-enumerates, stays on the bus (its capacitance carried it) or fails. |
+| `status`    | Shows the running check or the last result. |
+| `abort`     | Stops a running check; the bus and eFuse 1 are put back. |
+
+`enumerate`, `power`, `suspend` and `replug` switch eFuse 1 or measure its current, so wire the
+board's USB VBUS to eFuse 1 (the internal 5 V rail) and switch it on first (the web app, the SDK's
+`bp.power_on`, or a `power_on` step of `benchpod ci`); the currents are the board's own draw. If USB host mode is off, `usb-check` starts it and
+says so, waits for the board, shows the progress and prints the result. It exits non-zero when the
+check fails or stops early, aborts the check on Ctrl-C or when the deadline runs out, and leaves
+host mode on until its time runs out (`benchpod usb-host off` stops it). While the pod hosts it
+is off the computer's USB, so use its network address (or embeddedci.com), not `--connection usb`.
+The global `--timeout` is the whole deadline (default 5 minutes).
+
+| Flag              | Default | Purpose                                                              |
+|-------------------|---------|----------------------------------------------------------------------|
+| `--count`         | `10` (`enumerate`, `replug`), `20` (`reset`) | Cycles, 1 to 200 (`replug`: per length, 1 to 100). |
+| `--off-ms`        | `500` (`enumerate`), `5,20,100,500` (`replug`) | `enumerate`: how long eFuse 1 stays off, 50 to 10000. `replug`: up to 6 dropout lengths in ms, 1 to 5000 each. |
+| `--cycle-timeout` | `5000`  | `enumerate`, `reset`, `replug`: milliseconds to wait for the board after each cycle, 500 to 30000. |
+| `--duration`      | `3s` (`power`), `1s` (`suspend`) | The measuring time, 200ms to 60s. |
+| `--settle`        | `200ms` | `suspend`: the wait after the bus is suspended before measuring, 20ms to 5s. |
+| `--port`          | as `usb-host` | `usb_a` or `usb_c`, when host mode has to be started.            |
+| `--json`          | off     | Print the pod's final reply as JSON.                                 |
+
+```bash
+benchpod usb-check enumerate --count 20
+benchpod usb-check power --duration 5s
+benchpod usb-check suspend
+benchpod usb-check replug --off-ms 5,20,100 --count 5 --json
+benchpod usb-check status
+```
+
+### `benchpod usb-hid [list|capture]`
+
+Show the HID interfaces of the board on the pod's USB host port and catch the input reports it
+sends: a keyboard's keys, a mouse, a gamepad, a custom HID device (firmware 4.0.3 and later;
+default `list`). The pod never sends anything to the device. If USB host mode is off, `usb-hid`
+starts it and says so.
+
+- `list`: the first two HID interfaces with their protocol (`keyboard`, `mouse` or `none`) and
+  report descriptor as hex. A long descriptor is read to its end.
+- `capture`: catches reports for `--duration` or until `--count` reports. Each line is the
+  milliseconds since the capture started, the interface (`hid0`, `hid1`) and the report as hex
+  (with several report IDs the first byte is the ID). Press a key or move the mouse meanwhile. The
+  capture stops with the command; it also ends early when the board detaches, and the command
+  says so. The pod refuses `usb-hid` while a `usb-flash` or `usb-check` runs.
+
+| Flag         | Default | Purpose                                                              |
+|--------------|---------|----------------------------------------------------------------------|
+| `--instance` | `-1` (all) | Only this HID interface, `0` or `1`.                                 |
+| `--count`    | `0`     | `capture`: stop after this many reports (0: run for `--duration`).   |
+| `--duration` | `10s`   | `capture`: how long to catch reports, 1s to 1h.                      |
+| `--port`     | as `usb-host` | `usb_a` or `usb_c`, when host mode has to be started.            |
+| `--json`     | off     | Print the interfaces (`list`) or the reports (`capture`) as JSON.    |
+
+```bash
+benchpod usb-hid
+benchpod usb-hid capture --duration 30s
+benchpod usb-hid capture --count 5 --instance 1 --json
 ```
 
 ### `benchpod spi-flash`

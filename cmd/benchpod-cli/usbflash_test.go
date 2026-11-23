@@ -381,7 +381,7 @@ func TestPlanUSBFlash(t *testing.T) {
 }
 
 func TestValidateUSBFlashFlags(t *testing.T) {
-	for _, o := range []usbFlashOpts{{mode: "picoboot"}, {address: "zz"}, {name: "toolongname.bin"}, {port: "usb_b"}} {
+	for _, o := range []usbFlashOpts{{mode: "bogus"}, {verify: true, mode: "dfu"}, {checkFail: true, mode: "uf2"}, {address: "zz"}, {name: "toolongname.bin"}, {port: "usb_b"}} {
 		o := o
 		if err := validateUSBFlashFlags(&o); err == nil || exitCode(err) != exitUsage {
 			t.Errorf("%+v: %v", o, err)
@@ -695,7 +695,7 @@ func (s *stuckPod) Command(ctx context.Context, req map[string]any) (json.RawMes
 
 func TestUSBCommandsAreRegistered(t *testing.T) {
 	root := newRootCmd()
-	for _, name := range []string{"usb-host", "usb-flash"} {
+	for _, name := range []string{"usb-host", "usb-flash", "usb-check", "usb-hid"} {
 		c, _, err := root.Find([]string{name})
 		if err != nil || c.Name() != name {
 			t.Errorf("%s not registered: %v", name, err)

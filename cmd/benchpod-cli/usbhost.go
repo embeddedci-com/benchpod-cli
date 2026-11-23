@@ -404,3 +404,41 @@ func orDash(s string) string {
 	}
 	return s
 }
+
+// usbEnsureHost makes sure USB host mode is on and returns its state: when it is off it starts it
+// on the port (flag, else by board; it stays on for hostSecs, or defSecs when that is 0) and says
+// so; when it runs with less than a minute left it renews it. Errors carry the command's name.
+func usbEnsureHost(ctx context.Context, pod podCommander, what string, info podInfo, portFlag string, hostSecs, defSecs int, poll time.Duration, say func(string, ...any)) (*usbHostReport, error) {
+	host, _, err := usbHostRead(ctx, pod)
+	if err != nil {
+		return nil, usbHostErr(what, err)
+	}
+	switch host.Mode {
+	case "host":
+		if host.RemainingS < int(usbHostExtra/time.Second) && hostSecs > 0 {
+			// Renew so it does not run out under the command.
+			if err := usbHostStart(ctx, pod, host.Port, hostSecs); err != nil {
+				return nil, usbHostErr(what, err)
+			}
+		}
+	case "starting":
+	default:
+		port, err := chooseUSBHostPort(portFlag, info.BoardRev)
+		if err != nil {
+			return nil, err
+		}
+		secs := hostSecs
+		if secs <= 0 {
+			secs = defSecs
+		}
+		say("USB host mode was off: starting it on %s (it stays on for %d s, or until `benchpod usb-host off`)", port, secs)
+		if err := usbHostStart(ctx, pod, port, secs); err != nil {
+			return nil, usbHostErr(what, err)
+		}
+	}
+	host, _, err = usbHostWaitMode(ctx, pod, "host", poll)
+	if err != nil {
+		return nil, usbHostErr(what, err)
+	}
+	return host, nil
+}
