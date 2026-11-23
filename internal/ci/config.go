@@ -170,7 +170,21 @@ type PowerCycle struct {
 	Re      *regexp.Regexp
 	Timeout time.Duration
 	OffMS   int
+	UART    UARTPort
 }
+
+// UARTPort says which serial port a UART step reads. The default is the soft UART on the
+// profile's LA pins; Port "usb" is the serial port of the board the pod hosts over USB
+// (firmware 4.0.3+, feature uart_usb), and then DTR, RTS and Baud apply.
+type UARTPort struct {
+	Port string // "" (the profile's LA pins) or "usb"
+	DTR  *bool  // usb: the DTR line (the pod's default is true)
+	RTS  *bool  // usb: the RTS line (the pod's default is true)
+	Baud int    // usb: overrides the profile's uart_baud (0 = the profile's)
+}
+
+// IsUSB says the step reads the board's USB serial port.
+func (u UARTPort) IsUSB() bool { return u.Port == "usb" }
 
 // UARTExpect is `uart_expect`: optionally send a string, then read until the regex matches.
 type UARTExpect struct {
@@ -178,6 +192,7 @@ type UARTExpect struct {
 	Re      *regexp.Regexp
 	Timeout time.Duration
 	Send    string
+	UART    UARTPort
 }
 
 // MeasurePower is `measure_power`.
@@ -488,6 +503,49 @@ func (p *parser) expandTree(n *yaml.Node, lookup func(string) (string, bool), to
 		}
 		n.Value = v
 	}
+}
+
+// parseUARTPort reads the optional port, dtr, rts and baud keys of a UART step. dtr, rts and baud
+// belong to the USB serial port.
+func (p *parser) parseUARTPort(v *yaml.Node, what string) UARTPort {
+	var u UARTPort
+	if n := mapValue(v, "port"); n != nil {
+		u.Port = strings.ToLower(strings.TrimSpace(p.str(n, what+".port")))
+		if u.Port != "" && u.Port != "usb" && u.Port != "pins" {
+			p.errf(n.Line, "%s.port must be usb (the board's USB serial port) or pins (the profile's LA pins, the default), got %q", what, u.Port)
+		}
+		if u.Port == "pins" {
+			u.Port = ""
+		}
+	}
+	for _, k := range []string{"dtr", "rts"} {
+		n := mapValue(v, k)
+		if n == nil {
+			continue
+		}
+		if !u.IsUSB() {
+			p.errf(n.Line, "%s.%s only applies with port: usb", what, k)
+			continue
+		}
+		if b, ok := p.boolValue(n, what+"."+k); ok {
+			if k == "dtr" {
+				u.DTR = &b
+			} else {
+				u.RTS = &b
+			}
+		}
+	}
+	if n := mapValue(v, "baud"); n != nil {
+		if !u.IsUSB() {
+			p.errf(n.Line, "%s.baud only applies with port: usb (the pins use the profile's uart_baud)", what)
+		} else if b, ok := p.intValue(n, what+".baud"); ok {
+			if b < 300 || b > 3000000 {
+				p.errf(n.Line, "%s.baud must be 300 to 3000000", what)
+			}
+			u.Baud = b
+		}
+	}
+	return u
 }
 
 func (p *parser) str(n *yaml.Node, what string) string {
@@ -873,7 +931,11 @@ func (p *parser) parseStepBody(s *Step, v *yaml.Node, label string) {
 			p.errf(v.Line, "%s must be a mapping {until: <regex>, timeout: 10s, off_ms: 500}", what)
 			return
 		}
-		p.checkKeys(v, what, "until", "timeout", "off_ms")
+		p.checkKeys(v, what, "until", "timeout", "off_ms", "port", "dtr", "rts", "baud")
+		pc.UART = p.parseUARTPort(v, what)
+		if pc.UART.Port != "" && mapValue(v, "until") == nil {
+			p.errf(v.Line, "%s: port, dtr, rts and baud need until (they say which serial port to read)", what)
+		}
 		if u := mapValue(v, "until"); u != nil {
 			pc.Until = p.str(u, what+".until")
 			pc.Re = p.regex(u, pc.Until, what+".until")
@@ -898,7 +960,8 @@ func (p *parser) parseStepBody(s *Step, v *yaml.Node, label string) {
 			p.errf(v.Line, "%s must be a mapping {until: <regex>, timeout: 5s, send: <string>}", what)
 			return
 		}
-		p.checkKeys(v, what, "until", "timeout", "send")
+		p.checkKeys(v, what, "until", "timeout", "send", "port", "dtr", "rts", "baud")
+		u.UART = p.parseUARTPort(v, what)
 		if un := mapValue(v, "until"); un != nil {
 			u.Until = p.str(un, what+".until")
 			u.Re = p.regex(un, u.Until, what+".until")

@@ -144,6 +144,12 @@ var codeKinds = map[string]RefusalKind{
 	"BP0080": Refused,        // dac_pinout_mismatch
 	"BP0081": Locked,         // lan_not_paired
 	"BP0082": Refused,        // lan_clients_full
+	"BP0083": Refused,        // xip_unavailable
+	"BP0084": Refused,        // usb_flash_refused
+	"BP0085": Refused,        // usb_serial_no_port
+	"BP0086": Busy,           // usb_serial_busy
+	"BP0087": Refused,        // usb_check_refused
+	"BP0088": Refused,        // usb_check_no_efuse_power
 }
 
 // CodeKind is the kind of a refusal code; ok is false for a code the table does not have.

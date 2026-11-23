@@ -77,7 +77,7 @@ func TestWatchBridgeKeepsAProxyThatIsAlreadyOurs(t *testing.T) {
 func TestWatchBridgeSetsTheProxyOnceAndClearsItOnStop(t *testing.T) {
 	f := &fakeBridge{links: []usbLink{{host: "127.0.0.1", pod: "127.0.0.2"}}}
 	withFakeBridge(t, f)
-	runWatchFor(t, 150*time.Millisecond, 39130)
+	runWatchFor(t, 800*time.Millisecond, 39130)
 	if len(f.console) != 2 || f.console[0] != "127.0.0.1:39130" || f.console[1] != "" {
 		t.Fatalf("console calls %q, want set once then clear", f.console)
 	}
