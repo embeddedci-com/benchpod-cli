@@ -1,0 +1,10 @@
+{
+  "_note": "STUB: one chip per family. TODO: replace with prog_devices.json from the embeddedci-python PR that adds it (scripts/sync-prog-devices.sh).",
+  "devices": [
+    {"name": "attiny1614", "proto": "updi", "id": "1e9422", "flash_size": 16384, "page": 64},
+    {"name": "pic16f18856", "proto": "pic", "id": "30e0", "flash_size": 28672, "page": 64, "flags": 1},
+    {"name": "efm8bb10f8g", "proto": "c2", "id": "30", "flash_size": 8192, "page": 512},
+    {"name": "attiny10", "proto": "tpi", "id": "1e9003", "flash_size": 1024, "page": 16, "flags": 1},
+    {"name": "atxmega32a4u", "proto": "pdi", "id": "1e9541", "flash_size": 36864, "page": 256}
+  ]
+}

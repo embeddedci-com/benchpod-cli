@@ -1814,6 +1814,16 @@ embeddedci.com always verifies and resets: `--no-verify`, `--no-reset`,
 | `--rx`                     | (profile `uart_rx`) | ESP32: LA pin on the target's TXD0.                         |
 | `--tx`                     | (profile `uart_tx`) | ESP32: LA pin on the target's RXD0.                         |
 | `--boot`                   | (profile signal `BOOT`, `IO0` or `IO9`) | ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain. |
+| `--device`                 | (found from the chip's ID) | `avr-updi`, `pic`, `efm8`, `attiny-tpi`, `xmega`: the chip, for example `attiny1614`. |
+| `--clk`                    | (profile signal `ICSPCLK`, `C2CK`, `TPICLK`, `PDI_CLK` or `CLK`) | Those targets: LA pin on the chip's clock line. |
+| `--data`                   | (profile signal `UPDI`, `ICSPDAT`, `C2D`, `TPIDATA`, `PDI_DATA` or `DATA`) | Those targets: LA pin on the chip's data line. |
+| `--reset`                  | `nrst` (profile signal `MCLR` or `RESET`) | `pic` and `attiny-tpi`: `nrst` (the pod's reset pin) or the LA pin on the chip's MCLR or RESET. |
+| `--mem`                    | `flash` | Those targets: `flash`, `eeprom`, `config` (AVR fuses, PIC configuration words, C2 lock byte) or `user` (AVR user row, PIC user ID). |
+| `--erase`                  | `page` (`chip` for `attiny-tpi`) | Those targets: `chip` (also unlocks a locked chip), `page` (only the pages written) or `none`. |
+| `--expect-id`              | (from `--device`) | Those targets: hex bytes the chip's ID must start with; the pod stops before erasing when it does not. |
+| `--no-expect-id`           | off     | Those targets: do not check the chip's ID before erasing.               |
+| `--prog-baud`              | `115200` | `avr-updi`: link rate in baud after entry.                              |
+| `--info`                   | off     | Those targets: only enter programming mode and read the chip ID; nothing is written. |
 
 Pass `--target` (with `--file` or `--build`) or at least one `-c`/`--openocd-arg`.
 
@@ -1866,6 +1876,39 @@ at the end the target is reset into the new image. EN may also be a wiring-profi
 `EN`. Needs the pod's network (its address, or `usb` with USB networking) and firmware with the
 `esp_flash` command. Over embeddedci.com use the Python SDK (`bp.flash(target="esp32", ...)`) or
 the MCP server.
+
+#### Chips without SWD or a bootloader (AVR, PIC, EFM8, ATtiny TPI, XMEGA)
+
+These targets are programmed over the chip's own programming protocol, run by the pod on its LA
+pins (firmware with the `prog_flash` feature; the protocols live in the `xip_prog` blob, so run
+`benchpod install-blobs` after a firmware update):
+
+| `--target` (aliases)        | Chips                                          | Pins                                   |
+|-----------------------------|------------------------------------------------|----------------------------------------|
+| `avr-updi` (`updi`)         | tinyAVR 0/1/2, megaAVR 0, AVR DA/DB/DD         | UPDI on `--data`                       |
+| `pic`                       | PIC16F1xxx, PIC16F18xxx, PIC18F Q (low-voltage entry) | ICSPCLK `--clk`, ICSPDAT `--data`, MCLR on `--reset` |
+| `efm8` (`c2`)               | Silicon Labs EFM8, C8051F                      | C2CK `--clk`, C2D `--data`             |
+| `attiny-tpi` (`tpi`)        | ATtiny4/5/9/10/20/40/102/104                   | TPICLK `--clk`, TPIDATA `--data`, RESET on `--reset` |
+| `xmega` (`pdi`)             | AVR XMEGA                                      | PDI_CLK `--clk`, PDI_DATA `--data`     |
+
+`--file` is an Intel HEX file (`.hex`, gaps filled with 0xFF) or a raw `.bin` written at
+`--load-address` (default 0); convert an ELF with `objcopy -O ihex`. One `flash` call writes one
+memory (`--mem`). The chip's write page and options come from the device table (`--device`); without
+`--device` the pod reads the chip's ID first and the CLI looks it up, and it stops when the ID is
+unknown or fits several chips. The ID is also checked before anything is erased (`--no-expect-id`
+turns that off). Every page is read back and compared. Pins come from the flags or from wiring-profile
+signals with the chip's pin names (for example `UPDI`, `C2CK`, `MCLR`).
+
+```bash
+benchpod flash --target avr-updi --info --data 5                 # read the chip ID only
+benchpod flash --target avr-updi --device attiny1614 --data 5 --file build/app.hex
+benchpod flash --target efm8 --clk 3 --data 4 --file app.hex --erase chip
+```
+
+The ATtiny4/5/9/10/20/40 can be programmed at 5 V only; the pod's 1.8 and 3.3 V I/O cannot do it
+(use the board's own 5 V with a level shifter). A PIC chip erase needs VDD above the chip's brown-out
+level (about 2.7 V on most parts). Needs the pod's network (its address, or `usb` with USB networking);
+over embeddedci.com use the Python SDK or the MCP server.
 
 ### `benchpod usb-host [on|off|status]`
 
