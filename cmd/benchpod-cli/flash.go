@@ -56,6 +56,7 @@ const (
 
 // flashFlags holds the flash-specific (non-global) flags.
 type flashFlags struct {
+	origin              *flagOrigin // which pin flags the user gave, and the profile's debug_port
 	swclk, swdio        string
 	tck, tms, tdi, tdo  string
 	trst                string
@@ -213,6 +214,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if err != nil {
 		return err
 	}
+	log.Printf("flash: %s (%s)", strings.ToUpper(pins.transport()), pins.why)
 	if strings.TrimSpace(f.file) != "" && strings.TrimSpace(f.target) == "" {
 		if fromBuild {
 			return usageErrorf("--target is required: the build recorded none and the wiring profile has no swd_target")
@@ -308,7 +310,9 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 // fillFromWiring takes the SWD settings left out of the flags from the pod's wiring profile on
 // embeddedci.com, and logs where each one came from.
 func (f *flashFlags) fillFromWiring(g *globalFlags) {
-	needed := f.swclk == "" || f.swdio == "" || f.tck == "" || f.tms == "" || f.tdi == "" || f.tdo == "" || f.trst == "" || !f.nresetSet || f.target == ""
+	f.snapshotOrigin()
+	// The profile is also read when the flags do not pick the port: its debug_port may.
+	needed := !f.flagsDecidePort() || f.swclk == "" || f.swdio == "" || f.tck == "" || f.tms == "" || f.tdi == "" || f.tdo == "" || f.trst == "" || !f.nresetSet || f.target == ""
 	var w *podWiring
 	if needed {
 		w = loadPodWiring(g, os.Stderr)
@@ -316,6 +320,9 @@ func (f *flashFlags) fillFromWiring(g *globalFlags) {
 	if w == nil {
 		log.Printf("flash: settings from the flags")
 		return
+	}
+	if w.DebugPort != nil {
+		f.origin.debugPort, f.origin.debugSet = *w.DebugPort, true
 	}
 	var from []string
 	for _, jp := range []struct {
