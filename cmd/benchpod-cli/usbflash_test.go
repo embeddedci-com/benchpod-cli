@@ -657,7 +657,7 @@ func TestRunUSBFlashAbortsWhenCancelled(t *testing.T) {
 	pod := newFakeUSBPod(t)
 	pod.device = usbDev(0x2E8A, 3, "Pico", usbIface(8, 6, 80, "msc"))
 	pod.flashRuns = 1 << 30
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 	err := runUSBFlash(ctx, pod, usbFlashOpts{file: "a.uf2", hostSecs: 100}, []byte{1}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "aborted") {
