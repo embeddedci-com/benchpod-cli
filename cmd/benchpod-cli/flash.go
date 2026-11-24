@@ -82,6 +82,9 @@ type flashFlags struct {
 	// ESP32-family targets (--target esp32...): flash_esp.go.
 	espRx, espTx, espBoot string
 
+	// prog_flash targets (--target avr-updi, pic, efm8, attiny-tpi, xmega): flash_prog.go.
+	prog progFlashFlags
+
 	// hasNRST is filled in from the pod during runFlash (not a flag): whether
 	// this pod has the dedicated target-reset pin. Used by the failure hint.
 	hasNRST bool
@@ -120,7 +123,10 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 			"--tdo (default: jtag_tck, jtag_tms, jtag_tdi, jtag_tdo in the wiring profile; --trst\n" +
 			"is optional) are all known and either no SWD pins are or the target is JTAG-only\n" +
 			"(esp32, esp32s2, gd32vf103, fe310, k210, riscv*), flash uses JTAG; otherwise SWD.\n" +
-			"JTAG needs a pod with the jtag feature (gateware 61 or newer).",
+			"JTAG needs a pod with the jtag feature (gateware 61 or newer).\n\n" +
+			"--target avr-updi, pic, efm8, attiny-tpi or xmega (aliases updi, c2, tpi, pdi) programs the chip\n" +
+			"over its own protocol on --clk/--data (--reset), with --file a .hex, .elf or .bin; --info only reads\n" +
+			"the chip ID. Needs firmware with prog_flash and the xip_prog blob (`benchpod install-blobs`).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			f.nresetSet = cmd.Flags().Changed("nreset")
@@ -156,6 +162,13 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	fl.StringVar(&f.espRx, "rx", "", "ESP32 (--target esp32...): LA pin on the target's TXD0 (default: uart_rx from the pod's wiring profile)")
 	fl.StringVar(&f.espTx, "tx", "", "ESP32: LA pin on the target's RXD0 (default: uart_tx from the pod's wiring profile)")
 	fl.StringVar(&f.espBoot, "boot", "", "ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain (default: a wiring-profile signal named BOOT, IO0 or IO9)")
+	pf := &f.prog
+	fl.StringVar(&pf.device, "device", "", "chip for the avr-updi, pic, efm8, attiny-tpi and xmega targets, e.g. ATtiny1616 (default: found from the chip's ID)")
+	fl.StringVar(&pf.clk, "clk", "", "those targets: LA pin on the chip's clock line (default: a profile signal ICSPCLK, C2CK, TPICLK or PDI_CLK, else swd_swclk)")
+	fl.StringVar(&pf.data, "data", "", "those targets: LA pin on the chip's data line (default: a profile signal UPDI, ICSPDAT, C2D, TPIDATA or PDI_DATA, else swd_swdio)")
+	fl.StringVar(&pf.reset, "reset", "", "pic and attiny-tpi: nrst (the pod's reset pin) or the LA pin on the chip's MCLR/RESET (default: a profile signal MCLR or RESET, else the pod's reset pin)")
+	fl.StringVar(&pf.erase, "erase", "", "those targets: chip (default; before the first write, also unlocks a locked chip), page (only the pages written) or none")
+	fl.BoolVar(&pf.info, "info", false, "those targets: only enter programming mode and read the chip's ID (a wiring test); nothing is written")
 	return cmd
 }
 
@@ -176,7 +189,7 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if f.serverSideSet {
 		serverSide = f.serverSide
 	}
-	if spec.IsCloud() && !fromBuild && !isESPTarget(f.target) {
+	if spec.IsCloud() && !fromBuild && !isESPTarget(f.target) && !isProgTarget(f.target) {
 		return fmt.Errorf("flash over embeddedci.com (--connection %s%s) flashes a build uploaded there: pass --build, --repo or --ref. "+
 			"A local --file needs a direct link to the pod: pass its network address (`benchpod discover` finds it) or `usb`",
 			cloudConnPrefix, spec.Name)
@@ -184,8 +197,14 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 	if spec.IsCloud() && !serverSide {
 		return usageErrorf("--server-side=false needs a direct link to the pod: pass its network address or `usb` as --connection")
 	}
-	if !isESPTarget(f.target) && (spec.IsNetwork() || spec.IsCloud()) {
+	if !isESPTarget(f.target) && !isProgTarget(f.target) && (spec.IsNetwork() || spec.IsCloud()) {
 		f.fillFromWiring(g) // an ESP32 target uses no SWD settings
+	}
+	if isProgTarget(f.target) {
+		if fromBuild {
+			return fmt.Errorf("this target is flashed from --file, not an uploaded build")
+		}
+		return runFlashProg(g, f, spec)
 	}
 	if isESPTarget(f.target) {
 		if fromBuild {
