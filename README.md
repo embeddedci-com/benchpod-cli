@@ -1415,7 +1415,10 @@ sensor and 2 analog sensors (one per analog output) run at once, each an instanc
 name (1 to 16 characters of `a-z`, `0-9` and `_`; the definition's `name` by default, so
 a longer definition name needs `--instance`). I2C, SPI and UART sensors run on the pod's
 emulation FPGA image, which the first one loads (about 2 s); it stays loaded after
-`benchpod sensor stop` until `benchpod sensor image` switches it. The pod's limits: UART
+`benchpod sensor stop` until `benchpod sensor image` switches it. From gateware v65 that image has
+no SWD, JTAG, SPI master or I2C master, so `flash`, `spi-flash`, `i2c start` and `expansion`
+switch the pod to the loop image first (about 3 s), or stop with an error while sensors run:
+run `benchpod sensor stop` first, or flash before `benchpod sensor start`. The pod's limits: UART
 8N1 only, no data-ready pin on the SPI target, one FIFO sensor at a time, conversion and
 command times of at most 65.535 ms (4 distinct ones per I2C sensor), no `excitation: adc`
 yet, `bus_stuck` of at most 1 s. A sensor keeps running after the command that started it, until
@@ -1569,7 +1572,10 @@ Without an argument, show the FPGA image the pod runs; with one, switch to it (2
 `loop` (the closed-loop DAC), `deep` (deep DAC replay) or `emulation` (the I2C, SPI and
 UART sensors, gateware v54+). The pod never switches back by itself, so after
 `benchpod sensor stop`, `benchpod sensor image loop` brings the control loop back; it
-refuses to leave the emulation image while I2C, SPI or UART sensors run. No flags.
+refuses to leave the emulation image while I2C, SPI or UART sensors run. From gateware v65 the
+emulation image has no SWD, JTAG, SPI master or I2C master (see
+[`benchpod sensor`](#benchpod-sensor)); the commands that need one switch to the loop image
+by themselves. No flags.
 
 ```bash
 benchpod sensor image          # The pod on ... runs the emulation FPGA image (image 2, gateware v54)
@@ -1688,7 +1694,9 @@ benchpod i2c stop
 
 ### `benchpod i2c start`
 
-Claim two LA pins as an I2C master. Pins are `1`-`14` (or `la1`) or names from the
+Claim two LA pins as an I2C master. From gateware v65 the emulation FPGA image has no I2C
+master: with no digital sensor running the pod is switched to the loop image first (about 3 s);
+with one running the command fails, so run `benchpod sensor stop` first. Pins are `1`-`14` (or `la1`) or names from the
 pod's wiring profile; the ones you leave out are its `i2c_sda` and `i2c_scl`. The bus
 needs pull-ups: with `--pullups pod` both pins must be LA1-LA6 with their pull-up on
 (`benchpod la pull 1 up`; at a 1.8 V LA bank that needs firmware newer than 3.10.12). The pod never switches a
@@ -1744,7 +1752,9 @@ pin of it through the pod's I2C master and prints its direction and live level, 
 SDK names them. It only reads; nothing on the chip changes. An MCP23017 is read with the
 register layout it has after power-up.
 
-An open `benchpod i2c start` session is used as it is. Otherwise the command opens one on
+An open `benchpod i2c start` session is used as it is. Otherwise the command (on gateware v65
+and later, after switching the pod from the emulation image to the loop image, or failing
+while sensors run) opens one on
 `--sda` and `--scl` (default: the wiring profile's `i2c_sda` and `i2c_scl`) and closes it
 afterwards; with `--pullups pod` the pull-ups must be on (`benchpod la pull 1 up`). SPI
 expanders (MCP23S17, 74HC595, 74HC165) are not read by the CLI: use the SDK or the MCP server.
@@ -1767,7 +1777,9 @@ benchpod expansion mcp23017 --addr 0x20,0x21 --pullups external --json
 ### `benchpod flash`
 
 Flash an SWD target wired to the pod, through host-side OpenOCD and the pod's
-CMSIS-DAP backend (network or USB). See
+CMSIS-DAP backend (network or USB). From gateware v65 SWD and JTAG are not in the emulation
+FPGA image: on a pod running sensors `flash` switches it to the loop image (about 3 s), or fails
+while sensors run (`benchpod sensor stop` first, or flash before `benchpod sensor start`). See
 [Flashing: CMSIS-DAP](#flashing-cmsis-dap). Over the network and embeddedci.com,
 `--swclk`, `--swdio`, `--nreset` and `--target` default to the pod's wiring profile (see
 [One wiring profile](#one-wiring-profile)).
@@ -1826,7 +1838,8 @@ Pass `--target` (with `--file` or `--build`) or at least one `-c`/`--openocd-arg
 #### JTAG targets
 
 The pod's probe also speaks JTAG (firmware with the `jtag` feature, gateware 61 or newer; the
-emulation FPGA image has no JTAG). There is no transport flag. `flash` picks the port in this order:
+emulation FPGA image has no JTAG before gateware 65; from 65 `flash` switches the pod to the loop image
+itself, or stops with an error while sensors run). There is no transport flag. `flash` picks the port in this order:
 
 1. Pin flags win. At least one of `--tck`, `--tms`, `--tdi`, `--tdo`, `--trst` and no
    `--swclk`/`--swdio` means JTAG (the missing JTAG pins come from the wiring profile; if the set
@@ -2065,7 +2078,9 @@ benchpod usb-hid capture --count 5 --instance 1 --json
 
 ### `benchpod spi-flash`
 
-Read, erase and program a 25-series SPI NOR flash on four LA pins (network only). See
+Read, erase and program a 25-series SPI NOR flash on four LA pins (network only). From
+gateware v65 the emulation FPGA image has no SPI master: the command switches the pod to the
+loop image first (about 3 s), or fails while sensors run (`benchpod sensor stop` first). See
 [SPI flash](#spi-flash). These flags apply to every subcommand; the pins you leave out
 come from the pod's wiring profile (see [One wiring profile](#one-wiring-profile)).
 
