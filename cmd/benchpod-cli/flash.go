@@ -125,7 +125,7 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 			"(esp32, esp32s2, gd32vf103, fe310, k210, riscv*), flash uses JTAG; otherwise SWD.\n" +
 			"JTAG needs a pod with the jtag feature (gateware 61 or newer).\n\n" +
 			"--target avr-updi, pic, efm8, attiny-tpi or xmega (aliases updi, c2, tpi, pdi) programs the chip\n" +
-			"over its own protocol on --clk/--data (--reset), with --file a .hex or .bin; --info only reads\n" +
+			"over its own protocol on --clk/--data (--reset), with --file a .hex, .elf or .bin; --info only reads\n" +
 			"the chip ID. Needs firmware with prog_flash and the xip_prog blob (`benchpod install-blobs`).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -163,16 +163,12 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	fl.StringVar(&f.espTx, "tx", "", "ESP32: LA pin on the target's RXD0 (default: uart_tx from the pod's wiring profile)")
 	fl.StringVar(&f.espBoot, "boot", "", "ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain (default: a wiring-profile signal named BOOT, IO0 or IO9)")
 	pf := &f.prog
-	fl.StringVar(&pf.device, "device", "", "chip for the avr-updi, pic, efm8, attiny-tpi and xmega targets, e.g. attiny1614 (default: found from the chip's ID)")
-	fl.StringVar(&pf.clk, "clk", "", "those targets: LA pin on the chip's clock line (ICSPCLK, C2CK, TPICLK, PDI_CLK; default: a wiring-profile signal of that name)")
-	fl.StringVar(&pf.data, "data", "", "those targets: LA pin on the chip's data line (UPDI, ICSPDAT, C2D, TPIDATA, PDI_DATA; default: a wiring-profile signal of that name)")
-	fl.StringVar(&pf.reset, "reset", "", "pic and attiny-tpi: nrst (the pod's reset pin, default) or the LA pin on the chip's MCLR/RESET")
-	fl.StringVar(&pf.mem, "mem", "", "those targets: memory to write: flash (default), eeprom, config (fuses, PIC configuration words, C2 lock byte) or user (AVR user row, PIC user ID)")
-	fl.StringVar(&pf.erase, "erase", "", "those targets: chip (also unlocks a locked chip), page (only the pages written) or none (default: page; chip for attiny-tpi)")
-	fl.StringVar(&pf.expectID, "expect-id", "", "those targets: hex bytes the chip's ID must start with (default: from --device)")
-	fl.BoolVar(&pf.noExpectID, "no-expect-id", false, "those targets: do not check the chip's ID before erasing")
-	fl.IntVar(&pf.baud, "prog-baud", 0, "avr-updi: link rate in baud after entry (default 115200)")
-	fl.BoolVar(&pf.info, "info", false, "those targets: only enter programming mode and read the chip ID; nothing is written")
+	fl.StringVar(&pf.device, "device", "", "chip for the avr-updi, pic, efm8, attiny-tpi and xmega targets, e.g. ATtiny1616 (default: found from the chip's ID)")
+	fl.StringVar(&pf.clk, "clk", "", "those targets: LA pin on the chip's clock line (default: a profile signal ICSPCLK, C2CK, TPICLK or PDI_CLK, else swd_swclk)")
+	fl.StringVar(&pf.data, "data", "", "those targets: LA pin on the chip's data line (default: a profile signal UPDI, ICSPDAT, C2D, TPIDATA or PDI_DATA, else swd_swdio)")
+	fl.StringVar(&pf.reset, "reset", "", "pic and attiny-tpi: nrst (the pod's reset pin) or the LA pin on the chip's MCLR/RESET (default: a profile signal MCLR or RESET, else the pod's reset pin)")
+	fl.StringVar(&pf.erase, "erase", "", "those targets: chip (default; before the first write, also unlocks a locked chip), page (only the pages written) or none")
+	fl.BoolVar(&pf.info, "info", false, "those targets: only enter programming mode and read the chip's ID (a wiring test); nothing is written")
 	return cmd
 }
 

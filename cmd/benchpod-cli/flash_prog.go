@@ -14,78 +14,54 @@ import (
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
-// Chips without SWD or a bootloader: `flash --target avr-updi|pic|efm8|attiny-tpi|xmega` has the
-// pod run the chip's own programming protocol on its LA pins (the firmware's prog_flash command,
-// feature prog_flash). Each region of the image is uploaded into the pod's PSRAM (load_bin), the
-// pod writes it in the background and this polls its status. --info only reads the chip ID.
+// Chips without SWD, JTAG or a bootloader: `flash --target avr-updi|pic|efm8|attiny-tpi|xmega`
+// has the pod run the chip's own programming protocol on its LA pins (the firmware's prog_flash
+// command, feature prog_flash). The pod holds no device tables: it reads the chip's ID and the CLI
+// passes the geometry from internal/progdev (the SDK's table), the same way the SDK's
+// embeddedci/benchpod/prog.py does. Each region of the image is staged in the pod's PSRAM
+// (load_bin), written and read back by the pod in the background, and this polls its status.
 
-const progPollInterval = 200 * time.Millisecond
+const (
+	progPollInterval = 200 * time.Millisecond
+	progInfoTimeout  = 10 * time.Second
+)
 
-// Wiring-profile signal names tried for each pin when the flag is not given (case-insensitive).
-var progSignals = map[string]map[string][]string{
-	"updi": {"data": {"UPDI", "DATA"}},
-	"pic":  {"clk": {"ICSPCLK", "PGC", "CLK"}, "data": {"ICSPDAT", "PGD", "DATA"}, "reset": {"MCLR", "RESET", "NRST"}},
-	"c2":   {"clk": {"C2CK", "CLK"}, "data": {"C2D", "DATA"}},
-	"tpi":  {"clk": {"TPICLK", "CLK"}, "data": {"TPIDATA", "DATA"}, "reset": {"RESET", "NRST"}},
-	"pdi":  {"clk": {"PDI_CLK", "PDICLK", "CLK"}, "data": {"PDI_DATA", "PDIDATA", "DATA"}},
-}
+// Wiring-profile signal names looked up when a pin flag is not given (case-insensitive), as in
+// the SDK; the profile's swd_swclk and swd_swdio are the last fallback.
+var (
+	progClkSignals = map[string][]string{
+		"pic": {"ICSPCLK", "ICSP_CLK", "PGC"}, "c2": {"C2CK"}, "tpi": {"TPICLK", "TPI_CLK"}, "pdi": {"PDI_CLK"},
+	}
+	progDataSignals = map[string][]string{
+		"updi": {"UPDI"}, "pic": {"ICSPDAT", "ICSP_DAT", "PGD"}, "c2": {"C2D"},
+		"tpi": {"TPIDATA", "TPI_DATA"}, "pdi": {"PDI_DATA"},
+	}
+	progResetSignals = []string{"MCLR", "RESET", "NRST", "PROG_RESET"}
+)
 
 // progFlashFlags are the flags of the prog_flash targets (the rest are shared with flash).
 type progFlashFlags struct {
-	device, mem, erase  string
-	clk, data, reset    string
-	info                bool
-	baud                int
-	expectID            string
-	noExpectID, noReset bool
+	device, erase string
+	clk, data     string
+	reset         string // nrst or an LA pin
+	info          bool
 }
 
 func isProgTarget(t string) bool { return progdev.Proto(t) != "" }
 
-type progRegion struct {
-	addr int
-	data []byte
+func (p *progFlashFlags) signal(w *podWiring, names []string) int {
+	for _, s := range names {
+		if n, ok := w.channel(s); ok {
+			return n
+		}
+	}
+	return 0
 }
 
-// progImages reads --file: Intel HEX (.hex, .ihex; one region from its lowest address, gaps filled with 0xFF)
-// or a raw .bin written at --load-address (default 0).
-func progImages(file, loadAddr string) ([]progRegion, error) {
-	f := strings.TrimSpace(file)
-	if f == "" {
-		return nil, fmt.Errorf("this target needs --file: an Intel HEX file (.hex) or a raw .bin written at --load-address (default 0)")
-	}
-	raw, err := os.ReadFile(f)
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("%s is empty", f)
-	}
-	low := strings.ToLower(f)
-	if strings.HasSuffix(low, ".hex") || strings.HasSuffix(low, ".ihex") {
-		bin, base, err := parseIntelHex(raw) // gaps are filled with 0xFF, the erased state
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", f, err)
-		}
-		return []progRegion{{addr: int(base), data: bin}}, nil
-	}
-	if strings.HasSuffix(low, ".elf") {
-		return nil, fmt.Errorf("%s: ELF files are not read here; convert with `objcopy -O ihex` (or -O binary)", f)
-	}
-	addr := 0
-	if s := strings.TrimSpace(loadAddr); s != "" {
-		v, err := strconv.ParseInt(s, 0, 32)
-		if err != nil || v < 0 {
-			return nil, usageErrorf("bad --load-address %q", s)
-		}
-		addr = int(v)
-	}
-	return []progRegion{{addr: addr, data: raw}}, nil
-}
-
-// progPins resolves --clk/--data/--reset, falling back to wiring-profile signals.
-func (p *progFlashFlags) progPins(proto string, w *podWiring) (map[string]any, error) {
-	pin := func(flag, val string) (int, error) {
+// progPins resolves the pins (a flag beats a profile signal named for the protocol, which beats
+// the profile's SWD pins) and the same in words for messages. nreset/nresetSet are --nreset.
+func (p *progFlashFlags) progPins(proto string, w *podWiring, nreset, nresetSet bool) (map[string]any, string, error) {
+	pick := func(flag, val string, names []string, role string) (int, error) {
 		if strings.TrimSpace(val) != "" {
 			n, err := parseLAPin(val)
 			if err != nil {
@@ -93,115 +69,173 @@ func (p *progFlashFlags) progPins(proto string, w *podWiring) (map[string]any, e
 			}
 			return n, nil
 		}
-		for _, s := range progSignals[proto][flag] {
-			if n, ok := w.channel(s); ok {
-				return n, nil
-			}
+		if n := p.signal(w, names); n != 0 {
+			return n, nil
 		}
-		return 0, nil
+		if n, ok := w.channel(role); ok {
+			return n, nil
+		}
+		return 0, usageErrorf("--%s is required: the LA pin on the chip's %s line, or a wiring-profile signal named %s",
+			flag, flag, strings.Join(names, ", "))
 	}
 	pins := map[string]any{}
-	data, err := pin("data", p.data)
+	data, err := pick("data", p.data, progDataSignals[proto], "swd_swdio")
 	if err != nil {
-		return nil, err
-	}
-	if data == 0 {
-		return nil, usageErrorf("--data is required: the LA pin on the chip's data line (%s), or a wiring-profile signal named %s",
-			progLines[proto], strings.Join(progSignals[proto]["data"], ", "))
+		return nil, "", err
 	}
 	pins["data"] = data
-	if proto != "updi" {
-		clk, err := pin("clk", p.clk)
-		if err != nil {
-			return nil, err
+	text := []string{fmt.Sprintf("data on LA%d", data)}
+	if proto == "updi" {
+		if strings.TrimSpace(p.clk) != "" {
+			return nil, "", usageErrorf("avr-updi uses one pin: pass --data, not --clk")
 		}
-		if clk == 0 {
-			return nil, usageErrorf("--clk is required: the LA pin on the chip's clock line (%s), or a wiring-profile signal named %s",
-				progLines[proto], strings.Join(progSignals[proto]["clk"], ", "))
+	} else {
+		clk, err := pick("clk", p.clk, progClkSignals[proto], "swd_swclk")
+		if err != nil {
+			return nil, "", err
+		}
+		if clk == data {
+			return nil, "", usageErrorf("--clk and --data must be different LA pins")
 		}
 		pins["clk"] = clk
-		if clk == data {
-			return nil, usageErrorf("--clk and --data are the same pin")
-		}
+		text = append([]string{fmt.Sprintf("clk on LA%d", clk)}, text...)
 	}
 	if proto == "pic" || proto == "tpi" {
-		if r := strings.ToLower(strings.TrimSpace(p.reset)); r == "" || r == "nrst" {
-			// A profile signal named MCLR or RESET puts reset on an LA pin; else the pod's reset pin.
-			if r == "" {
-				if n, _ := pin("reset", ""); n != 0 && n != data && n != pins["clk"] {
-					pins["reset"] = n
-				}
-			}
-			if _, ok := pins["reset"]; !ok {
-				pins["reset"] = "nrst"
-			}
-		} else {
+		r := strings.ToLower(strings.TrimSpace(p.reset))
+		sig := p.signal(w, progResetSignals)
+		switch {
+		case r != "" && r != "nrst":
 			n, err := parseLAPin(r)
 			if err != nil {
-				return nil, usageErrorf("--reset: use nrst or an LA pin: %w", err)
+				return nil, "", usageErrorf("--reset: use nrst or an LA pin: %w", err)
 			}
 			pins["reset"] = n
+		case r == "nrst" || (nresetSet && nreset):
+			pins["reset"] = "nrst"
+		case (nresetSet && !nreset) || sig != 0:
+			if sig == 0 {
+				return nil, "", usageErrorf("the chip's reset needs the pod's reset pin (--nreset) or an LA pin (--reset, or a wiring-profile signal named MCLR or RESET)")
+			}
+			pins["reset"] = sig
+		default:
+			pins["reset"] = "nrst"
+		}
+		if pins["reset"] == pins["data"] || pins["reset"] == pins["clk"] {
+			return nil, "", usageErrorf("--reset must be another pin than --clk and --data")
+		}
+		if pins["reset"] == "nrst" {
+			text = append(text, "reset on the pod's reset pin")
+		} else {
+			text = append(text, fmt.Sprintf("reset on LA%d", pins["reset"]))
 		}
 	} else if strings.TrimSpace(p.reset) != "" {
-		return nil, usageErrorf("--reset applies to --target pic and attiny-tpi only")
+		return nil, "", usageErrorf("--reset applies to --target pic and attiny-tpi only")
 	}
-	return pins, nil
-}
-
-var progLines = map[string]string{
-	"updi": "UPDI", "pic": "ICSPCLK / ICSPDAT", "c2": "C2CK / C2D", "tpi": "TPICLK / TPIDATA", "pdi": "PDI_CLK / PDI_DATA",
+	return pins, strings.Join(text, ", "), nil
 }
 
 type progStatus struct {
-	Running bool     `json:"running"`
-	Phase   string   `json:"phase"`
-	Done    int      `json:"done"`
-	Total   int      `json:"total"`
-	ID      string   `json:"id"`
-	AtAddr  *int     `json:"at_addr"`
-	Protos  []string `json:"protos"`
-	Result  *string  `json:"result"`
+	Running bool    `json:"running"`
+	Phase   string  `json:"phase"`
+	Done    int     `json:"done"`
+	Total   int     `json:"total"`
+	ID      string  `json:"id"`
+	AtAddr  *int    `json:"at_addr"`
+	Result  *string `json:"result"`
 }
 
-// progFix is the advice shown after a failed job.
-func progFix(res string, proto string) string {
-	switch {
-	case strings.HasPrefix(res, "no answer"):
-		return "check the wiring (" + progLines[proto] + "), that the chip is powered, and that the pod's I/O voltage (the wiring profile's la_mv) is the chip's supply"
-	case strings.HasPrefix(res, "wrong chip"):
-		return "the chip is not the one --device names; run with --info to read its ID, or fix --device / --expect-id"
-	case strings.HasPrefix(res, "locked"):
-		return "pass --erase chip to erase the chip and unlock it"
-	case strings.HasPrefix(res, "verify failed"):
-		return "the read-back differs: try --erase chip, and check the supply voltage and wiring"
-	case strings.HasPrefix(res, "timeout"):
-		return "the chip stayed busy: check its supply voltage (a PIC erase needs VDD above its brown-out level)"
-	case strings.HasPrefix(res, "not supported"):
-		return "this chip, memory or protocol is not supported by the pod's firmware: update it with `benchpod flash-self`"
-	case strings.HasPrefix(res, "memory, address"):
-		return "check --mem, --load-address and the device's page size"
+func (s *progStatus) result() string {
+	if s.Result == nil {
+		return ""
 	}
-	return ""
+	return *s.Result
 }
 
-func progCommand(ctx context.Context, c *tcpclient.Client, req map[string]any) (json.RawMessage, error) {
+// progFixes is what each result of the pod's status means for the user, by the start of the pod's
+// text (the SDK's _FIXES).
+var progFixes = []struct{ prefix, fix string }{
+	{"no answer", "the chip did not answer. Check the wiring ({pins}), the chip's power with a common ground, that the pod's I/O voltage ({volts}) is the chip's, and that the chip's programming pin is not disabled by its fuses or program"},
+	{"wrong chip", "a different chip than the one expected answered (ID {id}); check the board, or pass --device for the chip that is there"},
+	{"locked", "the chip is locked: it refuses reads and writes until its memory is erased. Flash with --erase chip (that erases the chip, including the lock) or erase it with the vendor's tool"},
+	{"verify failed", "a page read back different from what was written (at {at}). Check the supply voltage and the wiring, lower the load on the pins, and try again; a worn or write-protected region fails like this too"},
+	{"timeout", "the chip stayed busy: its supply is too low for erase and write (see the chip's minimum VDD), or the chip is damaged"},
+	{"protocol error", "the chip's answer broke the protocol: check the wiring, long wires or a pull-up that is too weak (keep the lines short), the I/O voltage and the chip's supply"},
+	{"memory, address", "the pod refused this memory, address, length or page size for the chip: the device table and the image disagree with the chip's firmware options; pass --device for the exact chip"},
+	{"could not read the staged", "the pod could not read the image it was given: try again, and report it if it repeats"},
+	{"not supported", "this chip, memory or protocol is not supported by the pod's firmware; update the pod (`benchpod flash-self`), or check that the chip is one the table lists"},
+	{"aborted", "the write was aborted"},
+}
+
+// progResultError is the error for a failed result of the pod's status; what is "" for an info.
+func progResultError(proto, what string, st *progStatus, pins, volts, id string) error {
+	res := st.result()
+	fix := ""
+	for _, f := range progFixes {
+		if strings.HasPrefix(res, f.prefix) {
+			fix = f.fix
+			break
+		}
+	}
+	at := "an unknown address"
+	if st.AtAddr != nil {
+		at = fmt.Sprintf("0x%x", *st.AtAddr)
+	}
+	if id == "" {
+		id = "unknown"
+	}
+	fix = strings.NewReplacer("{pins}", pins, "{volts}", volts, "{id}", id, "{at}", at).Replace(fix)
+	msg := fmt.Sprintf("%s flash failed%s: %s", proto, what, res)
+	if st.Phase != "" {
+		msg += " (phase " + st.Phase + ")"
+	}
+	if fix != "" {
+		msg += "\n" + fix
+	}
+	return fmt.Errorf("%s", msg)
+}
+
+// progDirectionError turns BP0034 (the pod refuses to drive a pin the wiring marks as a DUT
+// output) into words that say what to do.
+func progDirectionError(err error, pins string) error {
+	pe, ok := tcpclient.AsPodError(err)
+	if !ok || pe.Code != "BP0034" {
+		return err
+	}
+	la := "?"
+	switch v := pe.Args["la"].(type) {
+	case float64:
+		la = strconv.Itoa(int(v))
+	case string:
+		la = v
+	}
+	return fmt.Errorf("flash: the pod refused to drive LA%s: the wiring profile marks it as an output of the chip (%s), and a programming pin is driven by the pod. "+
+		"If the pin is wired to the chip's programming pin, mark it bidirectional (`benchpod la dir ... bidir`, or the profile's dut_dirs); otherwise fix the wiring (--clk, --data, --reset). "+
+		"The CLI does not override pin directions", la, pins)
+}
+
+// progCommand runs one prog_flash command, with the refusals worth explaining in words.
+func progCommand(ctx context.Context, c *tcpclient.Client, req map[string]any, pins string) (json.RawMessage, error) {
 	raw, err := c.Command(ctx, req)
-	if err != nil {
-		if isUnknownCommand(err) {
-			return nil, fmt.Errorf("flash: this pod's firmware has no prog_flash command: update it with `benchpod flash-self`")
-		}
-		msg := err.Error()
-		if strings.Contains(msg, "xip_prog") || strings.Contains(msg, "install the blobs") || strings.Contains(msg, "install-blobs") {
-			return nil, fmt.Errorf("flash: %w (the chip protocols live in the xip_prog blob: run `benchpod install-blobs`)", err)
-		}
-		return nil, fmt.Errorf("flash: %w", err)
+	if err == nil {
+		return raw, nil
 	}
-	return raw, nil
+	if isUnknownCommand(err) {
+		return nil, fmt.Errorf("flash: this pod's firmware has no prog_flash command: update it with `benchpod flash-self`, then `benchpod install-blobs`")
+	}
+	if e := progDirectionError(err, pins); e != err {
+		return nil, e
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "xip_prog") || strings.Contains(msg, "install-blobs") || strings.Contains(msg, "install the blobs") {
+		return nil, fmt.Errorf("flash: %w (the chip protocols live in the xip_prog blob: run `benchpod install-blobs`)", err)
+	}
+	return nil, fmt.Errorf("flash: %w", err)
 }
 
-// progWait polls prog_flash status until the job ends, logging progress every 10%.
-func progWait(ctx context.Context, c *tcpclient.Client, what string) (*progStatus, error) {
+// progWait polls prog_flash status until the job ends or timeout passes (then aborts it).
+func progWait(ctx context.Context, c *tcpclient.Client, what string, timeout time.Duration, pins string) (*progStatus, error) {
 	lastPct := -1
+	deadline := time.Now().Add(timeout)
 	for {
 		select {
 		case <-ctx.Done():
@@ -209,9 +243,9 @@ func progWait(ctx context.Context, c *tcpclient.Client, what string) (*progStatu
 			return nil, fmt.Errorf("flash: %s: %w (the job was aborted)", what, ctx.Err())
 		case <-time.After(progPollInterval):
 		}
-		raw, err := c.Command(ctx, map[string]any{"cmd": "prog_flash", "op": "status"})
+		raw, err := progCommand(ctx, c, map[string]any{"cmd": "prog_flash", "op": "status"}, pins)
 		if err != nil {
-			return nil, fmt.Errorf("flash: status: %w", err)
+			return nil, err
 		}
 		var st progStatus
 		if err := json.Unmarshal(raw, &st); err != nil {
@@ -219,6 +253,10 @@ func progWait(ctx context.Context, c *tcpclient.Client, what string) (*progStatu
 		}
 		if !st.Running {
 			return &st, nil
+		}
+		if time.Now().After(deadline) {
+			_, _ = c.Command(context.Background(), map[string]any{"cmd": "prog_flash", "op": "abort"})
+			return nil, fmt.Errorf("flash: %s did not finish in time (stopped in phase %s): check the chip's supply and the wiring", what, st.Phase)
 		}
 		if st.Total > 0 {
 			if pct := st.Done * 100 / st.Total / 10 * 10; pct != lastPct {
@@ -229,196 +267,192 @@ func progWait(ctx context.Context, c *tcpclient.Client, what string) (*progStatu
 	}
 }
 
+// progLAmV is the pod's LA I/O voltage in millivolts, 0 when it is not set or unknown.
+func progLAmV(ctx context.Context, c *tcpclient.Client) int {
+	raw, err := c.Command(ctx, map[string]any{"cmd": "la_voltage"})
+	if err != nil {
+		return 0
+	}
+	var r laVoltageReply
+	if json.Unmarshal(raw, &r) != nil {
+		return 0
+	}
+	return r.MV
+}
+
+// progEnsureDeepImage: the image is staged in PSRAM, which only the deep-replay gateware image
+// writes (as for ESP32 flashing): a pod left on another image is switched first (~3 s).
+func progEnsureDeepImage(ctx context.Context, c *tcpclient.Client) {
+	raw, err := c.Command(ctx, map[string]any{"cmd": "fpga_image"})
+	if err != nil {
+		return // an older pod without fpga_image: nothing to switch
+	}
+	var cur struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(raw, &cur) != nil || cur.Name == "" || cur.Name == "deep" {
+		return
+	}
+	log.Printf("flash: switching the FPGA image from %s to deep (about 3 s)", cur.Name)
+	_, _ = c.Command(ctx, map[string]any{"cmd": "fpga_image", "image": "deep"})
+}
+
 func runFlashProg(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 	p := &f.prog
 	proto := progdev.Proto(f.target)
+	fam := progdev.Fam(proto)
 	if spec.IsCloud() {
 		return fmt.Errorf("flashing %s from the CLI needs a direct link to the pod (its network address or `usb`); over embeddedci.com use the Python SDK or the MCP server", f.target)
 	}
 	if !spec.IsNetwork() {
 		return fmt.Errorf("flashing %s needs the pod's network: pass its address, or `usb` on firmware 3.9.0+ with USB networking", f.target)
 	}
-	var dev *progdev.Device
-	if s := strings.TrimSpace(p.device); s != "" {
-		d, err := progdev.Find(proto, s)
-		if err != nil {
-			return usageErrorf("--device: %w", err)
-		}
-		dev = &d
-	}
-	pins, err := p.progPins(proto, loadPodWiring(g, os.Stderr))
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(flashTimeout))
-	defer cancel()
-	defer installSignalHandler(ctx, cancel)()
-	c := &tcpclient.Client{Addr: spec.Addr}
-
-	base := func(op string) map[string]any {
-		req := map[string]any{"cmd": "prog_flash", "op": op, "proto": proto}
-		for k, v := range pins {
-			req[k] = v
-		}
-		if p.baud > 0 {
-			req["baud"] = p.baud
-		}
-		return req
-	}
-
-	// info: enter programming mode, read the ID, write nothing.
-	runInfo := func() (*progStatus, error) {
-		if _, err := progCommand(ctx, c, base("info")); err != nil {
-			return nil, err
-		}
-		st, err := progWait(ctx, c, "reading the chip ID")
-		if err != nil {
-			return nil, err
-		}
-		if st.Result == nil || *st.Result != "ok" {
-			res := ""
-			if st.Result != nil {
-				res = *st.Result
-			}
-			return st, progFailure("reading the chip ID", st, res, proto)
-		}
-		return st, nil
-	}
-	if p.info {
-		st, err := runInfo()
-		if err != nil {
-			return err
-		}
-		line := fmt.Sprintf("%s chip ID: %s", proto, st.ID)
-		if names := progdev.ByID(proto, st.ID); len(names) > 0 {
-			var n []string
-			for _, d := range names {
-				n = append(n, d.Name)
-			}
-			line += " (" + strings.Join(n, ", ") + ")"
-		} else {
-			line += " (not in the device table)"
-		}
-		fmt.Println(line)
-		return nil
-	}
-
-	regions, err := progImages(f.file, f.loadAddr)
-	if err != nil {
-		return err
-	}
-	mem := strings.ToLower(strings.TrimSpace(p.mem))
-	if mem == "" {
-		mem = "flash"
-	}
-	switch mem {
-	case "flash", "eeprom", "config", "user":
-	default:
-		return usageErrorf("--mem must be flash, eeprom, config or user, got %q", p.mem)
-	}
 	erase := strings.ToLower(strings.TrimSpace(p.erase))
 	if erase == "" {
-		erase = "page"
-		if proto == "tpi" {
-			erase = "chip" // the chips erase flash only as a whole code section
-		}
+		erase = "chip"
 	}
 	if erase != "chip" && erase != "page" && erase != "none" {
 		return usageErrorf("--erase must be chip, page or none, got %q", p.erase)
 	}
-	expect := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(p.expectID), "0x"))
-	page := 0
-	flags := 0
-	if dev != nil {
-		page, flags = dev.Page, dev.Flags
-		if expect == "" && !p.noExpectID {
-			expect = dev.ID
+	if !p.info && strings.TrimSpace(f.file) == "" {
+		return usageErrorf("%s needs --file: a .hex, .elf or .bin (or pass --info to only read the chip's ID)", f.target)
+	}
+	if strings.TrimSpace(f.loadAddr) != "" {
+		if _, err := strconv.ParseInt(strings.TrimSpace(f.loadAddr), 0, 64); err != nil {
+			return usageErrorf("bad --load-address %q", f.loadAddr)
 		}
-		if mem == "flash" && dev.FlashSize > 0 {
-			for _, r := range regions {
-				if r.addr+len(r.data) > dev.FlashSize {
-					return fmt.Errorf("flash: the image ends at 0x%x, past the %d bytes of flash of %s", r.addr+len(r.data), dev.FlashSize, dev.Name)
-				}
-			}
+	}
+	var segs []progdev.Segment
+	if !p.info {
+		la := 0
+		if s := strings.TrimSpace(f.loadAddr); s != "" {
+			v, _ := strconv.ParseInt(s, 0, 64)
+			la = int(v)
 		}
-	} else if mem != "flash" || proto != "c2" {
-		// Without --device the write page is unknown; the pod needs it.
-		st, err := runInfo()
+		data, err := os.ReadFile(strings.TrimSpace(f.file))
 		if err != nil {
 			return err
 		}
-		m := progdev.ByID(proto, st.ID)
-		if len(m) == 0 {
-			return usageErrorf("the chip answered ID %s, which is not in the device table: pass --device (known: %s)", st.ID, strings.Join(progdev.Names(proto), ", "))
+		if segs, err = progdev.LoadImage(f.file, data, la); err != nil {
+			return err
 		}
-		if len(m) > 1 {
-			var n []string
-			for _, d := range m {
-				n = append(n, d.Name)
-			}
-			return usageErrorf("the chip answered ID %s, which fits several devices: pass --device (%s)", st.ID, strings.Join(n, ", "))
+	}
+	pins, pinText, err := p.progPins(proto, loadPodWiring(g, os.Stderr), f.nreset, f.nresetSet)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(flashTimeout))
+	defer cancel()
+	defer installSignalHandler(ctx, cancel)()
+	c := &tcpclient.Client{Addr: spec.Addr}
+	req := func(op string) map[string]any {
+		r := map[string]any{"cmd": "prog_flash", "op": op, "proto": proto}
+		for k, v := range pins {
+			r[k] = v
 		}
-		dev = &m[0]
-		page, flags = dev.Page, dev.Flags
-		log.Printf("flash: chip ID %s is a %s", st.ID, dev.Name)
-		if expect == "" && !p.noExpectID {
-			expect = dev.ID
+		return r
+	}
+
+	progEnsureDeepImage(ctx, c)
+	mv := progLAmV(ctx, c)
+	volts := "not set"
+	if mv > 0 {
+		volts = fmt.Sprintf("%g V", float64(mv)/1000)
+	}
+
+	// Enter programming mode and read the chip's ID (nothing is written).
+	if _, err := progCommand(ctx, c, req("info"), pinText); err != nil {
+		return err
+	}
+	st, err := progWait(ctx, c, "reading the chip ID", progInfoTimeout, pinText)
+	if err != nil {
+		return err
+	}
+	if st.result() != "ok" {
+		return progResultError(proto, "", st, pinText, volts, st.ID)
+	}
+	chipID := st.ID
+	dev, err := progdev.FindDevice(proto, chipID, strings.TrimSpace(p.device))
+	if err != nil {
+		return usageErrorf("%w", err)
+	}
+	fmt.Printf("%s (%s), ID %s\n", dev.Name, fam.Title, chipID)
+	checkErase := erase
+	if p.info {
+		checkErase = "none"
+	}
+	if err := progdev.CheckVoltage(dev, mv, checkErase); err != nil {
+		return fmt.Errorf("flash: %w", err)
+	}
+	if !p.info {
+		if err := progdev.CheckErase(dev, erase); err != nil {
+			return fmt.Errorf("flash: %w", err)
 		}
-	} else {
-		return usageErrorf("--device is required for this target (the chip's write page comes from the device table)")
+	}
+	if p.info {
+		fmt.Println("info only: nothing was written")
+		return nil
+	}
+
+	regions, notes, err := progdev.SplitRegions(segs, dev, fam.Ignore)
+	if err != nil {
+		return fmt.Errorf("flash: %w", err)
+	}
+	hasFlash := false
+	for _, r := range regions {
+		hasFlash = hasFlash || r.Mem == "flash"
+	}
+	if erase == "chip" && !hasFlash {
+		erase = "page" // an image without flash must not wipe the chip's program
+		notes = append(notes, "the image has no flash: no chip erase, only the pages written are erased")
 	}
 
 	t0 := time.Now()
-	total := 0
+	chipErased := false
 	for i, r := range regions {
-		if _, err := c.StagePSRAM(ctx, r.data); err != nil {
+		rt := time.Now()
+		if _, err := c.StagePSRAM(ctx, r.Data); err != nil {
 			return fmt.Errorf("flash: uploading the image: %w", err)
 		}
-		req := base("start")
-		req["mem"], req["addr"], req["len"] = mem, r.addr, len(r.data)
-		req["erase"] = erase
-		if i > 0 && erase == "chip" {
-			req["erase"] = "none" // the first region already erased the chip
+		mode := erase
+		if erase == "chip" && chipErased {
+			mode = "none"
 		}
-		if page > 0 {
-			req["page"] = page
+		start := req("start")
+		start["mem"], start["addr"], start["len"] = r.Mem, r.Addr, len(r.Data)
+		start["page"], start["erase"] = r.Page, mode
+		start["run"] = !f.noReset && i == len(regions)-1
+		if e := dev.ExpectID(); e != "" {
+			start["expect_id"] = e
 		}
-		if flags != 0 {
-			req["flags"] = flags
+		if dev.Flags != 0 {
+			start["flags"] = dev.Flags
 		}
-		if expect != "" {
-			req["expect_id"] = expect
+		if dev.CPAddr != 0 {
+			start["cp_addr"] = dev.CPAddr
 		}
-		req["run"] = !p.noReset && i == len(regions)-1
-		if _, err := progCommand(ctx, c, req); err != nil {
+		if _, err := progCommand(ctx, c, start, pinText); err != nil {
 			return err
 		}
-		what := fmt.Sprintf("%s 0x%x", mem, r.addr)
-		st, err := progWait(ctx, c, what)
+		chipErased = chipErased || mode == "chip"
+		what := fmt.Sprintf("%s at 0x%x", r.Mem, r.Addr)
+		st, err := progWait(ctx, c, what, 60*time.Second+time.Duration(len(r.Data))*5*time.Millisecond, pinText)
 		if err != nil {
 			return err
 		}
-		res := ""
-		if st.Result != nil {
-			res = *st.Result
+		if st.result() != "ok" {
+			return progResultError(proto, fmt.Sprintf(" writing %s (%d bytes)", what, len(r.Data)), st, pinText, volts, st.ID)
 		}
-		if res != "ok" {
-			return progFailure(what, st, res, proto)
-		}
-		total += len(r.data)
-		fmt.Printf("%-8s 0x%06x %8d bytes  verified  chip ID %s\n", mem, r.addr, len(r.data), st.ID)
+		fmt.Printf("%s: %d bytes written and verified in %.1f s\n", what, len(r.Data), time.Since(rt).Seconds())
 	}
-	fmt.Printf("%s: %d bytes in %d region(s) written in %.1f s\n", proto, total, len(regions), time.Since(t0).Seconds())
+	for _, n := range notes {
+		fmt.Println(n)
+	}
+	tail := "; the chip runs its program"
+	if f.noReset {
+		tail = "; the chip is held in reset"
+	}
+	fmt.Printf("%d region(s) in %.1f s%s\n", len(regions), time.Since(t0).Seconds(), tail)
 	return nil
-}
-
-func progFailure(what string, st *progStatus, res, proto string) error {
-	msg := fmt.Sprintf("flash: %s failed in %s: %s", what, st.Phase, res)
-	if st.AtAddr != nil {
-		msg += fmt.Sprintf(" (at 0x%x)", *st.AtAddr)
-	}
-	if fix := progFix(res, proto); fix != "" {
-		msg += ": " + fix
-	}
-	return fmt.Errorf("%s", msg)
 }

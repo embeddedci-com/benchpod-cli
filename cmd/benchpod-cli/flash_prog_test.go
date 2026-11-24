@@ -31,28 +31,6 @@ func TestIsProgTarget(t *testing.T) {
 	}
 }
 
-func TestProgImages(t *testing.T) {
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "a.bin")
-	_ = os.WriteFile(bin, []byte{1, 2, 3}, 0o644)
-	hexf := filepath.Join(dir, "a.hex")
-	_ = os.WriteFile(hexf, []byte(":0400100001020304E2\n:00000001FF\n"), 0o644)
-	r, err := progImages(bin, "0x100")
-	if err != nil || len(r) != 1 || r[0].addr != 0x100 || len(r[0].data) != 3 {
-		t.Fatalf("bin: %v %+v", err, r)
-	}
-	r, err = progImages(hexf, "")
-	if err != nil || len(r) != 1 || r[0].addr != 0x10 || len(r[0].data) != 4 {
-		t.Fatalf("hex: %v %+v", err, r)
-	}
-	if _, err := progImages("", ""); err == nil || !strings.Contains(err.Error(), "--file") {
-		t.Errorf("want the --file error, got %v", err)
-	}
-	if _, err := progImages(filepath.Join(dir, "x.elf"), ""); err == nil {
-		t.Error("an .elf must be refused")
-	}
-}
-
 func TestProgPins(t *testing.T) {
 	sig := func(w *podWiring, name string, la int) {
 		w.Signals = append(w.Signals, struct {
@@ -62,36 +40,49 @@ func TestProgPins(t *testing.T) {
 	}
 	w := &podWiring{}
 	sig(w, "UPDI", 7)
-	p := &progFlashFlags{}
-	pins, err := p.progPins("updi", w)
-	if err != nil || pins["data"] != 7 || len(pins) != 1 {
-		t.Fatalf("updi from the profile: %v %v", pins, err)
+	pins, text, err := (&progFlashFlags{}).progPins("updi", w, false, false)
+	if err != nil || pins["data"] != 7 || len(pins) != 1 || !strings.Contains(text, "LA7") {
+		t.Fatalf("updi from the profile: %v %q %v", pins, text, err)
 	}
-	if _, err := (&progFlashFlags{}).progPins("c2", nil); err == nil || !strings.Contains(err.Error(), "--data") {
+	if _, _, err := (&progFlashFlags{clk: "2"}).progPins("updi", w, false, false); err == nil {
+		t.Fatal("--clk on updi must be refused")
+	}
+	if _, _, err := (&progFlashFlags{}).progPins("c2", nil, false, false); err == nil || !strings.Contains(err.Error(), "--data") {
 		t.Fatalf("want --data error, got %v", err)
 	}
-	if _, err := (&progFlashFlags{data: "3"}).progPins("c2", nil); err == nil || !strings.Contains(err.Error(), "--clk") {
-		t.Fatalf("want --clk error, got %v", err)
+	// the profile's SWD pins are the last fallback, as in the SDK
+	one, two := 1, 2
+	pins, _, err = (&progFlashFlags{}).progPins("c2", &podWiring{SwdSwclk: &one, SwdSwdio: &two}, false, false)
+	if err != nil || pins["clk"] != 1 || pins["data"] != 2 {
+		t.Fatalf("swd fallback: %v %v", pins, err)
 	}
-	pins, err = (&progFlashFlags{clk: "la3", data: "4"}).progPins("pic", nil)
+	pins, _, err = (&progFlashFlags{clk: "la3", data: "4"}).progPins("pic", nil, false, false)
 	if err != nil || pins["clk"] != 3 || pins["data"] != 4 || pins["reset"] != "nrst" {
 		t.Fatalf("pic flags: %v %v", pins, err)
 	}
-	pins, _ = (&progFlashFlags{clk: "3", data: "4", reset: "9"}).progPins("tpi", nil)
+	pins, _, _ = (&progFlashFlags{clk: "3", data: "4", reset: "9"}).progPins("tpi", nil, false, false)
 	if pins["reset"] != 9 {
 		t.Fatalf("tpi reset pin: %v", pins)
 	}
 	w = &podWiring{}
 	sig(w, "MCLR", 8)
-	pins, _ = (&progFlashFlags{clk: "3", data: "4"}).progPins("pic", w)
-	if pins["reset"] != 8 {
+	if pins, _, _ = (&progFlashFlags{clk: "3", data: "4"}).progPins("pic", w, false, false); pins["reset"] != 8 {
 		t.Fatalf("MCLR signal: %v", pins)
 	}
-	if _, err := (&progFlashFlags{clk: "3", data: "4", reset: "5"}).progPins("c2", nil); err == nil {
+	if pins, _, _ = (&progFlashFlags{clk: "3", data: "4"}).progPins("pic", w, true, true); pins["reset"] != "nrst" {
+		t.Fatalf("--nreset wins over the MCLR signal: %v", pins)
+	}
+	if _, _, err := (&progFlashFlags{clk: "3", data: "4"}).progPins("pic", nil, false, true); err == nil {
+		t.Fatal("--nreset=false with no MCLR signal must be refused")
+	}
+	if _, _, err := (&progFlashFlags{clk: "3", data: "4", reset: "5"}).progPins("c2", nil, false, false); err == nil {
 		t.Fatal("--reset on c2 must be refused")
 	}
-	if _, err := (&progFlashFlags{clk: "3", data: "3"}).progPins("c2", nil); err == nil {
+	if _, _, err := (&progFlashFlags{clk: "3", data: "3"}).progPins("c2", nil, false, false); err == nil {
 		t.Fatal("clk == data must be refused")
+	}
+	if _, _, err := (&progFlashFlags{clk: "3", data: "4", reset: "4"}).progPins("pic", nil, false, false); err == nil {
+		t.Fatal("reset == data must be refused")
 	}
 }
 
@@ -105,6 +96,8 @@ type progPod struct {
 	polls  int
 	left   int
 	phase  string
+	mv     int  // la_voltage
+	dirErr bool // BP0034 on info and start
 }
 
 func (p *progPod) start(t *testing.T) string {
@@ -150,11 +143,20 @@ func (p *progPod) handle(req map[string]any) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.reqs = append(p.reqs, req)
-	if req["cmd"] != "prog_flash" {
+	switch req["cmd"] {
+	case "la_voltage":
+		return okReply(map[string]any{"mv": p.mv})
+	case "fpga_image":
+		return okReply(map[string]any{"image": 1, "name": "deep"})
+	case "prog_flash":
+	default:
 		return errReply("unknown cmd")
 	}
 	switch req["op"] {
 	case "info", "start":
+		if p.dirErr {
+			return codeReply("BP0034", map[string]any{"la": 5, "function": "prog_flash"})
+		}
 		p.left = p.polls
 		p.phase = "write"
 		return okReply(map[string]any{"started": true})
@@ -181,6 +183,12 @@ func (p *progPod) ops() []string {
 		out = append(out, c)
 	}
 	return out
+}
+
+func (p *progPod) allReqs() []map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]map[string]any(nil), p.reqs...)
 }
 
 func (p *progPod) req(op string) map[string]any {
@@ -213,35 +221,84 @@ func runProg(t *testing.T, g *globalFlags, f *flashFlags) (string, error) {
 	return out, runErr
 }
 
-func TestFlashProgStart(t *testing.T) {
-	dir := t.TempDir()
-	img := filepath.Join(dir, "fw.bin")
-	_ = os.WriteFile(img, make([]byte, 100), 0o644)
-	pod := &progPod{id: "1e9422", result: "ok", polls: 2}
+func tmpImage(t *testing.T, name string, data []byte) string {
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func progFlags(target, file string, p progFlashFlags) *flashFlags {
+	return &flashFlags{target: target, file: file, prog: p}
+}
+
+func TestFlashProgUPDI(t *testing.T) {
+	img := tmpImage(t, "fw.bin", make([]byte, 100))
+	pod := &progPod{id: "1e9422", result: "ok", polls: 1, mv: 3300}
 	g := progTestSetup(t, pod)
-	f := &flashFlags{target: "updi", file: img, prog: progFlashFlags{device: "attiny1614", data: "5"}}
-	out, err := runProg(t, g, f)
+	out, err := runProg(t, g, progFlags("updi", img, progFlashFlags{data: "5"}))
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if got := strings.Join(pod.ops(), ","); !strings.HasPrefix(got, "load_bin,prog_flash:start,prog_flash:status") {
+	if got := strings.Join(pod.ops(), ","); !strings.Contains(got, "prog_flash:info") || !strings.Contains(got, "load_bin,prog_flash:start") {
 		t.Fatalf("calls: %s", got)
 	}
 	r := pod.req("start")
-	if r["proto"] != "updi" || r["data"] != 5.0 || r["len"] != 100.0 || r["page"] != 64.0 ||
-		r["expect_id"] != "1e9422" || r["erase"] != "page" || r["mem"] != "flash" || r["run"] != true {
+	// 100 bytes pad to a 64-byte page boundary: 128 bytes; chip erase, ID from the table, no baud
+	if r["proto"] != "updi" || r["data"] != 5.0 || r["len"] != 128.0 || r["page"] != 64.0 || r["flags"] != 32768.0 ||
+		r["expect_id"] != "1e9422" || r["erase"] != "chip" || r["mem"] != "flash" || r["addr"] != 0.0 || r["run"] != true {
 		t.Fatalf("start request: %v", r)
 	}
-	if !strings.Contains(out, "verified") || !strings.Contains(out, "100 bytes") {
+	if _, has := r["baud"]; has {
+		t.Fatal("baud must not be sent")
+	}
+	if !strings.Contains(out, "ATtiny1614") || !strings.Contains(out, "verified") {
 		t.Errorf("output: %s", out)
 	}
 }
 
-func TestFlashProgInfo(t *testing.T) {
-	pod := &progPod{id: "1e9422", result: "ok"}
+func TestFlashProgHexRegions(t *testing.T) {
+	// flash byte at 0 and a fuse byte at 0x820000 (avr-gcc layout): two regions, chip erase once
+	img := tmpImage(t, "a.hex", []byte(hexRec(0, 0, 1)+hexRec(4, 0, 0x00, 0x82)+hexRec(0, 0, 5)+hexRec(1, 0)))
+	pod := &progPod{id: "1e9422", result: "ok", mv: 3300}
 	g := progTestSetup(t, pod)
-	out, err := runProg(t, g, &flashFlags{target: "avr-updi", prog: progFlashFlags{info: true, data: "5"}})
-	if err != nil || !strings.Contains(out, "1e9422") || !strings.Contains(out, "attiny1614") {
+	if out, err := runProg(t, g, progFlags("avr-updi", img, progFlashFlags{data: "5"})); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var starts []map[string]any
+	for _, r := range pod.allReqs() {
+		if r["op"] == "start" {
+			starts = append(starts, r)
+		}
+	}
+	if len(starts) != 2 || starts[0]["mem"] != "flash" || starts[0]["erase"] != "chip" || starts[0]["run"] != false ||
+		starts[1]["mem"] != "config" || starts[1]["erase"] != "none" || starts[1]["run"] != true || starts[1]["len"] != 1.0 {
+		t.Fatalf("starts: %v", starts)
+	}
+}
+
+func TestFlashProgPICSendsCPAddr(t *testing.T) {
+	img := tmpImage(t, "fw.bin", make([]byte, 64))
+	pod := &progPod{id: "7030", result: "ok", mv: 3300}
+	g := progTestSetup(t, pod)
+	if out, err := runProg(t, g, progFlags("pic", img, progFlashFlags{clk: "3", data: "4"})); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	r := pod.req("start")
+	if r["cp_addr"] != 65558.0 || r["flags"] != 1.0 || r["reset"] != "nrst" || r["clk"] != 3.0 {
+		t.Fatalf("start request: %v", r)
+	}
+	if _, has := r["baud"]; has {
+		t.Fatal("baud must not be sent")
+	}
+}
+
+func TestFlashProgInfo(t *testing.T) {
+	pod := &progPod{id: "1e9422", result: "ok", mv: 3300}
+	g := progTestSetup(t, pod)
+	out, err := runProg(t, g, progFlags("avr-updi", "", progFlashFlags{info: true, data: "5"}))
+	if err != nil || !strings.Contains(out, "1e9422") || !strings.Contains(out, "ATtiny1614") || !strings.Contains(out, "nothing was written") {
 		t.Fatalf("%v: %s", err, out)
 	}
 	for _, o := range pod.ops() {
@@ -251,53 +308,92 @@ func TestFlashProgInfo(t *testing.T) {
 	}
 }
 
-func TestFlashProgFindsDevice(t *testing.T) {
-	img := filepath.Join(t.TempDir(), "fw.bin")
-	_ = os.WriteFile(img, make([]byte, 64), 0o644)
-	pod := &progPod{id: "1e9422", result: "ok"}
+func TestFlashProgDeviceChecks(t *testing.T) {
+	img := tmpImage(t, "fw.bin", make([]byte, 64))
+	// an ID that is not in the table
+	pod := &progPod{id: "ffffff", result: "ok", mv: 3300}
 	g := progTestSetup(t, pod)
-	_, err := runProg(t, g, &flashFlags{target: "updi", file: img, prog: progFlashFlags{data: "5"}})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := runProg(t, g, progFlags("updi", img, progFlashFlags{data: "5"})); err == nil || !strings.Contains(err.Error(), "not in the") {
+		t.Fatalf("unknown ID: %v", err)
 	}
-	if got := strings.Join(pod.ops(), ","); !strings.HasPrefix(got, "prog_flash:info") {
-		t.Fatalf("expected an info first: %s", got)
+	// --device that is another chip than the one answering
+	pod = &progPod{id: "1e9422", result: "ok", mv: 3300}
+	g = progTestSetup(t, pod)
+	if _, err := runProg(t, g, progFlags("updi", img, progFlashFlags{data: "5", device: "AVR64DA28"})); err == nil || !strings.Contains(err.Error(), "which is not a") {
+		t.Fatalf("wrong --device: %v", err)
 	}
-	if r := pod.req("start"); r["page"] != 64.0 {
-		t.Fatalf("page from the device found by ID: %v", r)
+	if _, err := runProg(t, g, progFlags("updi", img, progFlashFlags{data: "5", device: "nonesuch"})); err == nil || !strings.Contains(err.Error(), "not in the") {
+		t.Fatalf("unknown --device: %v", err)
 	}
-	pod2 := &progPod{id: "ffff", result: "ok"}
-	g = progTestSetup(t, pod2)
-	if _, err = runProg(t, g, &flashFlags{target: "updi", file: img, prog: progFlashFlags{data: "5"}}); err == nil || !strings.Contains(err.Error(), "--device") {
-		t.Fatalf("an unknown ID must ask for --device, got %v", err)
+	// an image past the chip's memories is refused before anything is staged
+	big := tmpImage(t, "big.bin", make([]byte, 1<<20))
+	pod = &progPod{id: "1e9422", result: "ok", mv: 3300}
+	g = progTestSetup(t, pod)
+	if _, err := runProg(t, g, progFlags("updi", big, progFlashFlags{data: "5"})); err == nil || !strings.Contains(err.Error(), "not in any memory") {
+		t.Fatalf("too big: %v", err)
+	}
+	for _, o := range pod.ops() {
+		if o == "load_bin" {
+			t.Fatal("staged an image that does not fit")
+		}
 	}
 }
 
-func TestFlashProgErrors(t *testing.T) {
-	img := filepath.Join(t.TempDir(), "fw.bin")
-	_ = os.WriteFile(img, make([]byte, 64), 0o644)
-	for res, fix := range map[string]string{
-		"no answer (wiring, power or I/O voltage)": "check the wiring",
-		"locked (erase the chip to unlock it)":     "--erase chip",
-		"wrong chip (the ID is not expect_id)":     "--info",
-	} {
-		pod := &progPod{id: "1e9422", result: res}
+// The 5 V only TPI chips are refused at the pod's 1.8 and 3.3 V, before anything is written.
+func TestFlashProgTPI5V(t *testing.T) {
+	img := tmpImage(t, "fw.bin", make([]byte, 32))
+	for _, mv := range []int{1800, 3300} {
+		pod := &progPod{id: "1e9003", result: "ok", mv: mv}
 		g := progTestSetup(t, pod)
-		_, err := runProg(t, g, &flashFlags{target: "updi", file: img, prog: progFlashFlags{device: "attiny1614", data: "5"}})
-		if err == nil || !strings.Contains(err.Error(), res) || !strings.Contains(err.Error(), fix) {
+		_, err := runProg(t, g, progFlags("tpi", img, progFlashFlags{clk: "3", data: "4"}))
+		if err == nil || !strings.Contains(err.Error(), "ATtiny10") || !strings.Contains(err.Error(), "5 V") || !strings.Contains(err.Error(), "level shifter") {
+			t.Fatalf("%d mV: %v", mv, err)
+		}
+		for _, o := range pod.ops() {
+			if o == "load_bin" || o == "prog_flash:start" {
+				t.Fatalf("wrote at %d mV: %v", mv, pod.ops())
+			}
+		}
+	}
+	// the ATtiny102 (1.8-5.5 V) is allowed
+	pod := &progPod{id: "1e900c", result: "ok", mv: 3300}
+	g := progTestSetup(t, pod)
+	if out, err := runProg(t, g, progFlags("tpi", img, progFlashFlags{clk: "3", data: "4"})); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+func TestFlashProgDirectionRefusal(t *testing.T) {
+	pod := &progPod{id: "1e9422", result: "ok", mv: 3300, dirErr: true}
+	g := progTestSetup(t, pod)
+	_, err := runProg(t, g, progFlags("updi", "", progFlashFlags{info: true, data: "5"}))
+	if err == nil || !strings.Contains(err.Error(), "LA5") || !strings.Contains(err.Error(), "bidirectional") || !strings.Contains(err.Error(), "fix the wiring") {
+		t.Fatalf("BP0034: %v", err)
+	}
+}
+
+func TestFlashProgFailures(t *testing.T) {
+	img := tmpImage(t, "fw.bin", make([]byte, 64))
+	for res, fix := range map[string]string{
+		"no answer (wiring, power or I/O voltage)": "Check the wiring (data on LA5)",
+		"locked (erase the chip to unlock it)":     "--erase chip",
+		"wrong chip (the ID is not expect_id)":     "--device",
+		"verify failed":                            "read back different",
+	} {
+		pod := &progPod{id: "1e9422", result: res, mv: 3300}
+		g := progTestSetup(t, pod)
+		_, err := runProg(t, g, progFlags("updi", img, progFlashFlags{data: "5"}))
+		if err == nil || !strings.Contains(err.Error(), res) || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(fix)) {
 			t.Errorf("%q: got %v", res, err)
 		}
 	}
-	// An image larger than the chip's flash is refused before anything is staged.
-	big := filepath.Join(t.TempDir(), "big.bin")
-	_ = os.WriteFile(big, make([]byte, 1<<20), 0o644)
-	pod := &progPod{id: "1e9422", result: "ok"}
+	pod := &progPod{id: "1e9422", result: "ok", mv: 3300}
 	g := progTestSetup(t, pod)
-	if _, err := runProg(t, g, &flashFlags{target: "updi", file: big, prog: progFlashFlags{device: "attiny1614", data: "5"}}); err == nil || !strings.Contains(err.Error(), "past the") {
-		t.Errorf("want too-big error, got %v", err)
+	if _, err := runProg(t, g, progFlags("updi", img, progFlashFlags{data: "5", erase: "sometimes"})); err == nil {
+		t.Error("a bad --erase must be refused")
 	}
-	if len(pod.ops()) != 0 {
-		t.Errorf("the pod was touched: %v", pod.ops())
+	if _, err := runProg(t, g, progFlags("updi", "", progFlashFlags{data: "5"})); err == nil || !strings.Contains(err.Error(), "--file") {
+		t.Errorf("want the --file error, got %v", err)
 	}
 }
 
