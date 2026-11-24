@@ -258,7 +258,7 @@ func requireJTAGFeature(ctx context.Context, c podCommander) error {
 		return fmt.Errorf("flash: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("flash: this target needs JTAG, but this pod has no JTAG: it needs firmware with the jtag feature (gateware 61 or newer, and not the emulation FPGA image). Update the pod with `benchpod flash-self`, or wire the target's SWD pins and pass --swclk and --swdio")
+		return fmt.Errorf("flash: this target needs JTAG, but this pod has no JTAG: it needs firmware with the jtag feature (gateware 61 or newer; before gateware 65 the emulation FPGA image has none, so stop the sensors and run `benchpod sensor image loop`). Update the pod with `benchpod flash-self`, or wire the target's SWD pins and pass --swclk and --swdio")
 	}
 	return nil
 }

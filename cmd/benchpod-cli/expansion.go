@@ -182,6 +182,9 @@ func startExpansionBus(ctx context.Context, g *globalFlags, t *podTarget, sda, s
 	if sdaPin == sclPin {
 		return i2cSession{}, usageErrorf("--sda and --scl are both LA%d; each needs its own pin", sdaPin)
 	}
+	if err := ensureBusMasterImage(ctx, t.client, "the I2C master"); err != nil {
+		return i2cSession{}, fmt.Errorf("expansion: %w", err)
+	}
 	var s i2cSession
 	req := map[string]any{"cmd": "i2c_start", "sda": sdaPin, "scl": sclPin, "clock_hz": hz, "pullups": pullups}
 	if err := busCommand(ctx, t, "expansion", "I2C master", req, &s); err != nil {

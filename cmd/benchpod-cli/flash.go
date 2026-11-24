@@ -421,6 +421,13 @@ func openDAP(ctx context.Context, g *globalFlags, pins dapPins, powerEfuse int) 
 		// probe — once the connection is in DAP mode it no longer speaks JSON.
 		// A probe failure is not fatal: assume the pin is there (every current
 		// board has it) and let the real failure surface at dap_start.
+		port := "SWD"
+		if pins.jtag {
+			port = "JTAG"
+		}
+		if err := ensureBusMasterImage(ctx, client, port); err != nil {
+			return nil, false, fmt.Errorf("flash: %w", err)
+		}
 		if pins.jtag {
 			if err := requireJTAGFeature(ctx, client); err != nil {
 				return nil, false, err

@@ -161,6 +161,10 @@ func runSPIWith(ctx context.Context, client *tcpclient.Client, cfg spiflash.Conf
 		return fmt.Errorf("spi-flash: this pod has no SPI master (capability %q); it needs gateware v45 or newer", spiflash.Cap)
 	}
 
+	if err := ensureBusMasterImage(ctx, sess, "the SPI master"); err != nil {
+		return fmt.Errorf("spi-flash %s: %w", name, err)
+	}
+
 	err = spiflash.Session(ctx, sess, cleanupCommander{sess, client}, cfg, nreset, func(ctx context.Context, p *spiflash.Pod, s spiflash.Started) error {
 		msg := fmt.Sprintf("spi-flash: SCK LA%d, MOSI LA%d, MISO LA%d, CS LA%d at %s, mode %d", s.SCK, s.MOSI, s.MISO, s.CS, formatHz(s.Hz), s.Mode)
 		if nreset {
