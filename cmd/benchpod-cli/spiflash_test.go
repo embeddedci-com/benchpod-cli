@@ -42,7 +42,7 @@ func TestSPIWriteOverTCP(t *testing.T) {
 	if !bytes.Equal(f.Mem[0x2000:0x2000+len(data)], data) {
 		t.Fatal("flash content differs")
 	}
-	want := []string{"status", "nrst", "spi_start", "id", "erase", "write", "write", "write", "write", "write", "write", "write", "spi_stop", "nrst"}
+	want := []string{"status", "fpga_image", "nrst", "spi_start", "id", "erase", "write", "write", "write", "write", "write", "write", "write", "spi_stop", "nrst"}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops\n got %v\nwant %v", got, want)
 	}

@@ -57,7 +57,9 @@ func newSensorImageCmd(g *globalFlags) *cobra.Command {
 			"`benchpod sensor start` loads the emulation image by itself, and the pod never switches\n" +
 			"back on its own: after `benchpod sensor stop`, `benchpod sensor image loop` brings the\n" +
 			"control loop back. The pod refuses to leave the emulation image while I2C, SPI or UART\n" +
-			"sensors run. No flags.",
+			"sensors run. From gateware v65 the emulation image has no SWD, JTAG, SPI master or I2C\n" +
+			"master: flash, spi-flash, i2c start and expansion switch to the loop image by themselves,\n" +
+			"or fail while sensors run (stop them first). No flags.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := map[string]any{"cmd": "fpga_image"}

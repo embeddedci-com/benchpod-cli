@@ -272,6 +272,9 @@ func newI2CStartCmd(g *globalFlags) *cobra.Command {
 				return err
 			}
 			defer cancel()
+			if err := ensureBusMasterImage(ctx, t.client, "the I2C master"); err != nil {
+				return fmt.Errorf("i2c start: %w", err)
+			}
 			var s i2cSession
 			req := map[string]any{"cmd": "i2c_start", "sda": sdaPin, "scl": sclPin, "clock_hz": hz, "pullups": pullups}
 			if err := busCommand(ctx, t, "i2c start", "I2C master", req, &s); err != nil {
