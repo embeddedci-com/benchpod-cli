@@ -168,6 +168,27 @@ func init() {
 // Fam is the table family of a protocol.
 func Fam(proto string) *Family { return families[proto] }
 
+// PICEntryMask is the bits of a PIC's flags that change how the chip is entered and its ID read:
+// SET8 (0), BYTEPC (1), Q10 (4), ID_SPLIT (5) and KEY_FLIP (6) of the firmware's prog_pic.h.
+const PICEntryMask = 0x73
+
+// PICEntryStyles are the distinct entry styles of the PIC table (flags & PICEntryMask), the plain
+// 6-bit command set (0) first: a PIC answers only the style it was built for, so a chip whose
+// name is not given is found by trying each (the SDK's prog.pic_entry_styles).
+func PICEntryStyles() []int {
+	seen := map[int]bool{0: true}
+	out := []int{0}
+	for _, d := range families["pic"].Devices {
+		st := d.Flags & PICEntryMask
+		if !seen[st] {
+			seen[st] = true
+			out = append(out, st)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
 func norm(s string) string {
 	var b strings.Builder
 	for _, c := range strings.ToLower(s) {
