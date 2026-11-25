@@ -10,7 +10,7 @@ import (
 func TestFindPodPortBySerialAcrossUSBIDs(t *testing.T) {
 	withLister(t, func() ([]*enumerator.PortDetails, error) {
 		return []*enumerator.PortDetails{
-			{Name: "/dev/cu.usbmodem3464395E34351", IsUSB: true, VID: "0483", PID: "5740", SerialNumber: "3464395E3435"},
+			{Name: "/dev/cu.usbmodem3464395E34351", IsUSB: true, VID: "0483", PID: "5740", Manufacturer: "EmbeddedCI", Product: "BenchPod", SerialNumber: "3464395E3435"},
 		}, nil
 	})
 	sn := PortSerialNumber("/dev/tty.usbmodem3464395E34351")
@@ -20,7 +20,7 @@ func TestFindPodPortBySerialAcrossUSBIDs(t *testing.T) {
 	withLister(t, func() ([]*enumerator.PortDetails, error) {
 		return []*enumerator.PortDetails{
 			{Name: "COM3", IsUSB: true, VID: "0483", PID: "374B", SerialNumber: "066DFF"}, // an ST-Link
-			{Name: "COM7", IsUSB: true, VID: "1209", PID: "0001", SerialNumber: "3464395e3435"},
+			{Name: "COM7", IsUSB: true, VID: "1209", PID: "0001", Manufacturer: "EmbeddedCI", Product: "BenchPod", SerialNumber: "3464395e3435"},
 		}, nil
 	})
 	if got := FindPodPortBySerial(sn); got != "COM7" {
@@ -35,7 +35,7 @@ func TestFindPodPortBySerialAcrossUSBIDs(t *testing.T) {
 func TestFindPodPortBySerialToOwnID(t *testing.T) {
 	withLister(t, func() ([]*enumerator.PortDetails, error) {
 		return []*enumerator.PortDetails{
-			{Name: "/dev/cu.usbmodemAAA1", IsUSB: true, VID: "0483", PID: "5740", SerialNumber: "3464395E3435"},
+			{Name: "/dev/cu.usbmodemAAA1", IsUSB: true, VID: "0483", PID: "5740", Manufacturer: "EmbeddedCI", Product: "BenchPod", SerialNumber: "3464395E3435"},
 		}, nil
 	})
 	sn := PortSerialNumber("/dev/cu.usbmodemAAA1")

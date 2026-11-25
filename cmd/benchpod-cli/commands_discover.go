@@ -808,9 +808,9 @@ func describeHealth(p discoveredPod) string {
 
 func probedSummary(skipped []string) string {
 	if len(skipped) == 0 {
-		return "no USB ports to probe"
+		return "no USB port with USB ID 1209:EC10 or an EmbeddedCI/BenchPod device; pass --connection <device> to use another port"
 	}
-	return fmt.Sprintf("probed %s: %s", plural(len(skipped), "port", "ports"), strings.Join(skipped, ", "))
+	return fmt.Sprintf("probed %s: %s; other USB serial devices are never probed", plural(len(skipped), "port", "ports"), strings.Join(skipped, ", "))
 }
 
 func shortID(id string) string {

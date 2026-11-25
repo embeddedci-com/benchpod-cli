@@ -26,7 +26,7 @@ func TestSavedConnectionHint(t *testing.T) {
 		t.Errorf("no saved default used: %v", got)
 	}
 	// The default was read, but what failed was another path (flash-self's USB console): no hint.
-	usb := fmt.Errorf("no USB ports found: %w", tcpclient.ErrUnreachable)
+	usb := fmt.Errorf("no pod USB port found: %w", tcpclient.ErrUnreachable)
 	if got := withSavedConnectionHint(usb, "10.237.8.85:8080"); got != usb {
 		t.Errorf("another path failed: %v", got)
 	}

@@ -27,7 +27,7 @@ func PortSerialNumber(path string) string {
 }
 
 // FindPodPortBySerial is the console port of the pod with USB serial number sn, under any pod
-// USB ID, or "" when it is not (yet) enumerated.
+// USB ID (as isPodPort allows), or "" when it is not (yet) enumerated.
 func FindPodPortBySerial(sn string) string {
 	sn = strings.TrimSpace(sn)
 	if sn == "" {
@@ -38,7 +38,7 @@ func FindPodPortBySerial(sn string) string {
 		return ""
 	}
 	for _, p := range ports {
-		if p != nil && p.IsUSB && isBenchPodVID(p.VID) && strings.EqualFold(strings.TrimSpace(p.SerialNumber), sn) {
+		if p != nil && isPodPort(p) && strings.EqualFold(strings.TrimSpace(p.SerialNumber), sn) {
 			return p.Name
 		}
 	}

@@ -43,7 +43,7 @@ var openPort = func(name string) (*Console, error) {
 // name ("baea06", "benchpod-baea06") it opens the pod with that identity; without, the only pod,
 // and it errors listing them when there are several (one pod's console shows up twice on macOS,
 // as /dev/cu.* and /dev/tty.*; the identity tells those apart from a second pod). The cached
-// hint is probed first. explicit != "" opens that device as OpenBenchpod does.
+// hint is probed first. Only ports isPodPort allows are opened. explicit != "" opens that device as OpenBenchpod does.
 func OpenBenchpodSelect(explicit, preferred, name string, probeTimeout time.Duration) (*Console, string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return OpenBenchpod(explicit, preferred, probeTimeout)
@@ -55,7 +55,7 @@ func OpenBenchpodSelect(explicit, preferred, name string, probeTimeout time.Dura
 	}
 	cands = preferFirst(strings.TrimSpace(preferred), cands)
 	if len(cands) == 0 {
-		return nil, "", noPod(errors.New("no USB ports found; plug in the pod or pass --connection <device>"))
+		return nil, "", noPod(errors.New("no pod USB port found; plug in the pod (" + noPodRule + ")"))
 	}
 	var found []foundPod
 	var denied []string
@@ -114,7 +114,7 @@ func OpenBenchpodSelect(explicit, preferred, name string, probeTimeout time.Dura
 	}
 	switch len(found) {
 	case 0:
-		return nil, "", noPod(fmt.Errorf("no bench-pod console found on USB%s; pass --connection <device> to force one", deniedHint(denied)))
+		return nil, "", noPod(fmt.Errorf("no bench-pod console found on USB%s; %s", deniedHint(denied), noPodRule))
 	case 1:
 		return found[0].c, found[0].port, nil
 	}
