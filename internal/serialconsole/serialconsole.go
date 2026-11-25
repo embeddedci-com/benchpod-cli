@@ -31,17 +31,20 @@ import (
 // under, matched case-insensitively against enumerator VID strings:
 //
 //	2E8A — Raspberry Pi, the RP2350 pod's native USB port.
-//	0483 — STMicroelectronics, the STM32H563 pod up to firmware 3.8 (ST's
-//	       stock CDC VID/PID 0483:5740, so the host binds its in-box CDC driver).
-//	1209 — pid.codes, pre-release builds of firmware 3.9.0 (test ID 1209:0001). Released
-//	       3.9.0 keeps 0483:5740 (a composite device with the console and a USB network
-//	       adapter); the pod's own pid.codes ID 1209:EC10 is for a later release.
+//	0483 — STMicroelectronics, the STM32H563 pod up to firmware 4.0.x (ST's
+//	       stock CDC VID/PID 0483:5740, so the host binds its in-box CDC driver;
+//	       3.9.0 and later make it a composite device with the console and a USB
+//	       network adapter).
+//	1209 — pid.codes. Pre-release builds of firmware 3.9.0 used the test ID 1209:0001.
+//	       The pod's own ID 1209:EC10 (granted 2026-11-25, https://pid.codes/1209/EC10/)
+//	       is used by the firmware releases after 4.0.4.
 //
 // None of the IDs is exclusive to a bench pod — 2E8A is shared with the CMSIS-DAP
 // probe's CDC, 0483:5740 with every ST Virtual COM Port on the bench and 1209
 // with every pid.codes device — so
-// these only ORDER the ports to probe (see portPrio). Identification is always
-// by probing for benchpodMarker, never by VID alone.
+// these only ORDER the ports to probe (see portPrio): an exact 1209:EC10 match
+// first, then the vendor-only matches. Identification is always
+// by probing for benchpodMarker, never by an ID alone.
 var benchPodVIDs = []string{"2E8A", "0483", "1209"}
 
 // isBenchPodVID reports whether vid is one of benchPodVIDs.
@@ -52,6 +55,17 @@ func isBenchPodVID(vid string) bool {
 		}
 	}
 	return false
+}
+
+// podVID and podPID are the pod's own pid.codes USB ID, 1209:EC10.
+const (
+	podVID = "1209"
+	podPID = "EC10"
+)
+
+// isPodOwnID reports whether vid:pid is exactly the pod's own USB ID.
+func isPodOwnID(vid, pid string) bool {
+	return strings.EqualFold(strings.TrimSpace(vid), podVID) && strings.EqualFold(strings.TrimSpace(pid), podPID)
 }
 
 // baudRate is nominal: CDC-ACM ignores the on-wire rate, but terminal tools
@@ -343,12 +357,20 @@ func candidatePorts() ([]string, error) {
 // candidatePortsVID is candidatePorts plus each port's USB VID ("" when the enumerator did not
 // list it, as for the /dev/tty.* dial-in twins).
 func candidatePortsVID() ([]string, map[string]string, error) {
-	// VID by port name, from the enumerator (cross-platform), for ordering.
+	names, vid, _, err := candidatePortsIDs()
+	return names, vid, err
+}
+
+// candidatePortsIDs is candidatePortsVID plus each port's USB PID.
+func candidatePortsIDs() ([]string, map[string]string, map[string]string, error) {
+	// VID and PID by port name, from the enumerator (cross-platform), for ordering.
 	vid := map[string]string{}
+	pid := map[string]string{}
 	if ports, err := portLister(); err == nil {
 		for _, p := range ports {
 			if p != nil && p.IsUSB && strings.TrimSpace(p.Name) != "" {
 				vid[p.Name] = p.VID
+				pid[p.Name] = p.PID
 			}
 		}
 	}
@@ -370,20 +392,25 @@ func candidatePortsVID() ([]string, map[string]string, error) {
 	// An empty list is a finding, not a failure: `discover` reports "nothing to
 	// probe" while OpenBenchpod turns it into its own actionable error.
 	sort.SliceStable(names, func(i, j int) bool {
-		pi, pj := portPrio(vid[names[i]]), portPrio(vid[names[j]])
+		pi, pj := portPrio(vid[names[i]], pid[names[i]]), portPrio(vid[names[j]], pid[names[j]])
 		if pi != pj {
 			return pi < pj
 		}
 		return names[i] < names[j]
 	})
-	return names, vid, nil
+	return names, vid, pid, nil
 }
 
-func portPrio(vid string) int {
-	if isBenchPodVID(vid) {
+// portPrio orders the ports to probe: 0 the pod's own ID (1209:EC10), 1 any other
+// pod-capable VID, 2 everything else.
+func portPrio(vid, pid string) int {
+	switch {
+	case isPodOwnID(vid, pid):
 		return 0
+	case isBenchPodVID(vid):
+		return 1
 	}
-	return 1
+	return 2
 }
 
 // preferFirst moves want to the front of names (when present), so a cached

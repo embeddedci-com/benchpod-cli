@@ -30,3 +30,22 @@ func TestFindPodPortBySerialAcrossUSBIDs(t *testing.T) {
 		t.Fatalf("an absent pod was found on %q", got)
 	}
 }
+
+// Firmware 4.0.x (0483:5740) to the release that switches to 1209:EC10: found again by serial.
+func TestFindPodPortBySerialToOwnID(t *testing.T) {
+	withLister(t, func() ([]*enumerator.PortDetails, error) {
+		return []*enumerator.PortDetails{
+			{Name: "/dev/cu.usbmodemAAA1", IsUSB: true, VID: "0483", PID: "5740", SerialNumber: "3464395E3435"},
+		}, nil
+	})
+	sn := PortSerialNumber("/dev/cu.usbmodemAAA1")
+	withLister(t, func() ([]*enumerator.PortDetails, error) {
+		return []*enumerator.PortDetails{
+			{Name: "/dev/cu.usbmodemBBB1", IsUSB: true, VID: "1209", PID: "EC10", SerialNumber: "3464395E3435"},
+			{Name: "/dev/cu.usbmodemCCC1", IsUSB: true, VID: "1209", PID: "EC10", SerialNumber: "111111111111"},
+		}, nil
+	})
+	if got := FindPodPortBySerial(sn); got != "/dev/cu.usbmodemBBB1" {
+		t.Fatalf("found %q, want the pod under 1209:EC10", got)
+	}
+}
