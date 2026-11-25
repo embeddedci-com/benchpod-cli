@@ -276,3 +276,95 @@ func (g *globalFlags) localBlobTarget(ctx context.Context) (blobTarget, func()) 
 	}
 	return lanBlobs{lan: lan, addr: addr}, func() { lan.s.Close() }
 }
+
+// blobConn is the pod install-blobs was told to use: a network address (Addr set; a pod name
+// found on the LAN comes back as its address) or USB (Device or Pod set, or neither for
+// auto-detect). want is the pod's short id when the connection named the pod ("" for a bare
+// address or plain usb), which the pod reached must then match.
+type blobConn struct {
+	spec ConnSpec
+	want string
+}
+
+// blobConnection resolves install-blobs' connection. A network address or a pod name found on the
+// LAN goes to that pod over the network, never to whatever pod is on USB. An explicit
+// embeddedci: target is refused; a saved one (like no connection at all) means the pod on USB.
+func (g *globalFlags) blobConnection() (blobConn, error) {
+	if _, err := g.usbDevice("install-blobs"); err != nil {
+		return blobConn{}, err
+	}
+	raw, err := g.rawConnection()
+	if err != nil {
+		return blobConn{}, err
+	}
+	if strings.TrimSpace(raw) == "" {
+		return blobConn{spec: ConnSpec{Kind: connSerial}}, nil
+	}
+	spec, err := parseTarget(raw)
+	if err != nil {
+		return blobConn{}, err
+	}
+	if spec.IsCloud() {
+		return blobConn{spec: ConnSpec{Kind: connSerial}}, nil
+	}
+	want := spec.Pod
+	if want == "" {
+		want = podShortName(strings.TrimSpace(raw))
+	}
+	return blobConn{spec: spec, want: want}, nil
+}
+
+// openBlobTarget opens the way to the pod conn names. Over the network that is the address
+// itself. Over USB it is this computer's end of the pod's USB network link when there is one, else
+// the pod's console, which names its USB network or network address. The returned context
+// replaces ctx (the console path has its own timeout and signal handling); the caller calls the
+// closer when done.
+func openBlobTarget(ctx context.Context, g *globalFlags, conn blobConn) (blobTarget, string, context.Context, func(), error) {
+	if conn.spec.IsNetwork() {
+		lan, err := openLAN(ctx, conn.spec.Addr)
+		if err != nil {
+			return nil, "", ctx, nil, fmt.Errorf("install-blobs: connect to the pod at %s: %w", conn.spec.Addr, err)
+		}
+		return lanBlobs{lan: lan, addr: conn.spec.Addr}, "the network", ctx, func() { lan.s.Close() }, nil
+	}
+	if target, closeTarget := g.localBlobTarget(ctx); target != nil {
+		return target, "the USB network", ctx, closeTarget, nil
+	}
+	return openBlobConsole(g, conn.spec.Device)
+}
+
+// openBlobConsole opens the pod's USB console and the blob target it names. A variable so tests
+// can tell whether install-blobs went to USB at all.
+var openBlobConsole = func(g *globalFlags, device string) (blobTarget, string, context.Context, func(), error) {
+	console, path, ctx, cancel, err := g.openSerialConsole(device, g.effectiveTimeout(blobsInstallTimeout))
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+	target, closeTarget, err := blobTargetFor(ctx, console, path)
+	if err != nil {
+		console.Close()
+		cancel()
+		return nil, "", nil, nil, err
+	}
+	return target, path, ctx, func() {
+		closeTarget()
+		console.Close()
+		cancel()
+	}, nil
+}
+
+// checkSamePod refuses a pod other than the one the connection named (want, a short id): blobs
+// built for one pod's firmware must not go to another one that happens to be on USB. A pod that
+// does not tell its identity (older firmware) is let through.
+func checkSamePod(ctx context.Context, target blobTarget, want string) error {
+	if want == "" {
+		return nil
+	}
+	_, got := target.Identity(ctx)
+	if got == "" || got == want {
+		return nil
+	}
+	return fmt.Errorf("install-blobs: the connection names benchpod-%s, but the pod reached through %s is benchpod-%s, "+
+		"so nothing was installed. Pass that pod's network address (`benchpod discover` lists them) "+
+		"or --connection usb:benchpod-%s when it is on this computer's USB", want, target.Via(), got, want)
+}
