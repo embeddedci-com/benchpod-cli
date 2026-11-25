@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/progdev"
 )
@@ -458,4 +459,75 @@ func captureStdout(t *testing.T, fn func()) string {
 	os.Stdout = orig
 	_ = w.Close()
 	return <-done
+}
+
+// ── MSP430 Spy-Bi-Wire ──────────────────────────────────────────────────────
+
+func TestSBWTargetsAndPins(t *testing.T) {
+	for _, s := range []string{"msp430", "SBW"} {
+		if !isProgTarget(s) || progdev.Proto(s) != "sbw" {
+			t.Errorf("%q should map to sbw", s)
+		}
+	}
+	w := &podWiring{}
+	for _, s := range []struct {
+		n  string
+		la int
+	}{{"TEST", 9}, {"RST", 8}} {
+		w.Signals = append(w.Signals, struct {
+			Name string `json:"name"`
+			LA   int    `json:"la"`
+		}{s.n, s.la})
+	}
+	pins, text, err := (&progFlashFlags{}).progPins("sbw", w, false, false)
+	if err != nil || pins["clk"] != 9 || pins["data"] != 8 || len(pins) != 2 || !strings.Contains(text, "LA9") {
+		t.Fatalf("sbw pins from TEST and RST: %v %q %v", pins, text, err)
+	}
+	if _, ok := pins["reset"]; ok {
+		t.Fatal("sbw has no reset pin")
+	}
+	if _, _, err := (&progFlashFlags{reset: "5", clk: "3", data: "4"}).progPins("sbw", nil, false, false); err == nil {
+		t.Fatal("--reset on sbw must be refused")
+	}
+	if progPerByte("sbw") <= progPerByte("updi") || 60*time.Second+15360*progPerByte("sbw") < 300*time.Second {
+		t.Fatal("sbw needs a longer per-byte allowance")
+	}
+}
+
+func TestFlashProgSBW(t *testing.T) {
+	img := tmpImage(t, "fw.bin", make([]byte, 32))
+	pod := &progPod{id: "984082", result: "ok", polls: 1, mv: 3300}
+	g := progTestSetup(t, pod)
+	out, err := runProg(t, g, progFlags("msp430", img, progFlashFlags{clk: "4", data: "3"}))
+	if err != nil || !strings.Contains(out, "MSP430FR2433") {
+		t.Fatalf("%v: %s", err, out)
+	}
+	info, start := pod.req("info"), pod.req("start")
+	if info["proto"] != "sbw" || info["clk"] != 4.0 || info["data"] != 3.0 {
+		t.Fatalf("info: %v", info)
+	}
+	if start["proto"] != "sbw" || start["mem"] != "flash" || start["addr"] != 51200.0 || start["expect_id"] != "984082" {
+		t.Fatalf("start: %v", start)
+	}
+	if _, ok := start["reset"]; ok {
+		t.Fatalf("sbw start has a reset pin: %v", start)
+	}
+}
+
+func TestFlashProgSBWLockedChip(t *testing.T) {
+	img := tmpImage(t, "fw.bin", make([]byte, 32))
+	pod := &progPod{id: "98", result: "ok", mv: 3300}
+	g := progTestSetup(t, pod)
+	_, err := runProg(t, g, progFlags("msp430", img, progFlashFlags{clk: "4", data: "3"}))
+	if err == nil || !strings.Contains(err.Error(), "JTAG-locked") {
+		t.Fatalf("locked chip without --device: %v", err)
+	}
+	pod = &progPod{id: "98", result: "ok", mv: 3300}
+	g = progTestSetup(t, pod)
+	if _, err := runProg(t, g, progFlags("msp430", img, progFlashFlags{clk: "4", data: "3", device: "MSP430FR2433"})); err != nil {
+		t.Fatalf("locked chip with --device: %v", err)
+	}
+	if pod.req("start")["erase"] != "chip" {
+		t.Fatalf("erase: %v", pod.req("start"))
+	}
 }

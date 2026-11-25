@@ -29,7 +29,7 @@ const (
 )
 
 // detectMethods are the probes in the order they run.
-var detectMethods = []string{"swd", "jtag", "updi", "pic", "c2", "tpi", "pdi", "esp32", "usb"}
+var detectMethods = []string{"swd", "jtag", "updi", "pic", "c2", "tpi", "pdi", "sbw", "esp32", "usb"}
 
 func detectInvasive(method string) bool {
 	switch method {
@@ -64,8 +64,8 @@ func newDetectCmd(g *globalFlags) *cobra.Command {
 			"  swd    SWD pins swd_swclk and swd_swdio: debug port, core and the vendor's ID register (firmware with dap_id)\n" +
 			"  jtag   JTAG pins jtag_tck, jtag_tms, jtag_tdi and jtag_tdo: the IDCODEs of the chain (firmware with dap_id)\n" +
 			"  usb    the device on the pod's USB host port, when host mode is already on (detect never turns it on)\n" +
-			"  updi, pic, c2, tpi, pdi   a pin programmer: only when the profile has a signal named for the protocol\n" +
-			"         (UPDI; ICSPCLK and ICSPDAT; C2CK and C2D; TPICLK and TPIDATA; PDI_CLK and PDI_DATA)\n" +
+			"  updi, pic, c2, tpi, pdi, sbw   a pin programmer: only when the profile has a signal named for the protocol\n" +
+			"         (UPDI; ICSPCLK and ICSPDAT; C2CK and C2D; TPICLK and TPIDATA; PDI_CLK and PDI_DATA; SBWTCK or TEST and SBWTDIO or RST)\n" +
 			"  esp32  an ESP32 over its UART ROM loader: needs uart_rx, uart_tx and a BOOT, IO0 or IO9 signal\n\n" +
 			"swd, jtag and usb only read. The programmer and ESP32 probes put the chip into programming mode\n" +
 			"and reset it; --no-invasive leaves them out. Nothing is probed while target power is off (the\n" +
@@ -478,7 +478,7 @@ func (d *detector) usb() {
 
 var progVendor = map[string][2]string{
 	"updi": {"Microchip", "AVR"}, "tpi": {"Microchip", "AVR"}, "pdi": {"Microchip", "AVR"},
-	"pic": {"Microchip", "PIC"}, "c2": {"Silicon Labs", "8051"},
+	"pic": {"Microchip", "PIC"}, "c2": {"Silicon Labs", "8051"}, "sbw": {"Texas Instruments", "MSP430"},
 }
 
 func (d *detector) prog(proto string) {

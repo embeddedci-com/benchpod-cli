@@ -24,6 +24,7 @@ var raw []byte
 var Targets = map[string]string{
 	"avr-updi": "updi", "updi": "updi", "pic": "pic", "efm8": "c2", "c2": "c2",
 	"attiny-tpi": "tpi", "tpi": "tpi", "xmega": "pdi", "pdi": "pdi",
+	"msp430": "sbw", "sbw": "sbw",
 }
 
 // MemOrder is the order memories are written: flash first, the configuration (fuses, lock) last
@@ -295,6 +296,11 @@ func (f *Family) Find(name string) *Device {
 // name the ID picks the chip, and chips sharing an ID must have the same memories.
 func FindDevice(proto, chipID, name string) (*Device, error) {
 	fam := families[proto]
+	// A JTAG-locked MSP430 answers with its 1-byte JTAG ID only: the device ID cannot be read.
+	locked := proto == "sbw" && len(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(chipID)), "0x")) == 2
+	if locked && name == "" {
+		return nil, fmt.Errorf("the chip answered with JTAG ID %s only: it is JTAG-locked (the device ID cannot be read). Pass --device (for example --device MSP430FR2433) and --erase chip to erase it (that erases the chip, including the lock) and flash it", chipID)
+	}
 	if name != "" {
 		d := fam.Find(name)
 		if d == nil {
@@ -307,6 +313,9 @@ func FindDevice(proto, chipID, name string) (*Device, error) {
 			}
 			return nil, fmt.Errorf("device %q is not in the %s table (it has %d chips, for example %s); check the spelling, or leave --device out to identify the chip by its ID",
 				name, fam.Title, len(fam.Devices), strings.Join(ex, ", "))
+		}
+		if locked && strings.HasPrefix(d.ID, strings.TrimPrefix(strings.ToLower(strings.TrimSpace(chipID)), "0x")) {
+			return d, nil
 		}
 		if chipID != "" && !d.MatchesID(chipID) {
 			return nil, fmt.Errorf("the chip answers with ID %s, which is not a %s (ID %s); check the board, or leave --device out to identify the chip by its ID", chipID, d.Name, d.ID)

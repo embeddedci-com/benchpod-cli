@@ -1,7 +1,7 @@
 # prog_devices.json
 
 The device table of the pin programmers (`BenchPod.flash(target="avr-updi" | "pic" | "efm8" |
-"attiny-tpi" | "xmega")`, the pod's `prog_flash` command). The pod holds no device tables: it reads
+"attiny-tpi" | "xmega" | "msp430")`, the pod's `prog_flash` command). The pod holds no device tables: it reads
 the chip's ID bytes and the host passes the geometry. This file is that table, plain JSON, one chip
 per line, so other clients (the CLI) can copy it unchanged. The SDK reads it in
 `embeddedci/benchpod/prog.py`.
@@ -23,8 +23,8 @@ app's detect table; CI fails when any of them differs from the source. Do not ed
 each `{"prog": {...}, "flags": n}`: what a host tries, in turn, when no chip is named (a PIC answers
 only to its own command set).
 
-`<proto>` is the pod's `proto`: `updi`, `pic`, `c2`, `tpi`, `pdi`. `target` is the
-`flash(target=...)` name of the family (`avr-updi`, `pic`, `efm8`, `attiny-tpi`, `xmega`); the
+`<proto>` is the pod's `proto`: `updi`, `pic`, `c2`, `tpi`, `pdi`, `sbw`. `target` is the
+`flash(target=...)` name of the family (`avr-updi`, `pic`, `efm8`, `attiny-tpi`, `xmega`, `msp430`); the
 protocol names are accepted as aliases too.
 
 `ignore` lists image regions to leave out without an error: `{"hex": address, "size": bytes,
@@ -151,6 +151,23 @@ Known gaps, so that nothing is written wrongly:
   review flagged the same, and it is the first thing to check on a first 6-bit chip.
 * `erase_vmin_mv`: bulk erase needs the supply above the chip's brown-out level (2.7 V on the 6-bit
   chips and the F18 specs, about 1.9 V on Q10 and Q40, 2.85 V on Q43/Q83/Q84).
+
+### MSP430 Spy-Bi-Wire (`sbw`): FRAM parts
+
+* MSP430FR2433 datasheet SLASE59F, Table 6-23 (memory organization): main FRAM 0xC400-0xFFFF (15 KB,
+  interrupt vectors and signatures 0xFF80-0xFFFF included), information FRAM 0x1800-0x19FF (512 B),
+  supply 1.8-3.6 V (recommended operating conditions). `hex` equals `addr` (TI toolchains' images use the
+  chip's addresses); `config` is the information FRAM, `page` is only what the pod needs (FRAM has no
+  pages, the pod writes 16-bit words, so every region starts and ends on an even address, `align` 2).
+* `id` is the pod's 3 bytes: JTAG ID 0x98 (FR2xx/FR4xx), then the device ID at TLV 0x1A04 (low) and
+  0x1A05 (high) = 0x40, 0x82 (SLAU320 Table 2-16, docs/design/spy-bi-wire.md in benchpod-firmware).
+  A JTAG-locked chip reports the JTAG ID only (1 byte).
+* The JTAG signature words 0xFF80 and 0xFF82 sit inside the main FRAM range: an image that puts values
+  other than 0x0000/0xFFFF in both locks the chip (SLAU445 1.11.1).
+* Only the FR2433 is listed. The FR2xx/FR4xx/FR5xxx/FR6xxx parts differ in memory map, write protection
+  and device ID; each needs its datasheet read before it joins. Flash parts (MSP430F/G, JTAG ID 0x89)
+  are not supported.
+* Not run on hardware yet.
 
 ### Silicon Labs C2 (`c2`)
 
