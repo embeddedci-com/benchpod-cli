@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -42,9 +43,13 @@ type Memory struct {
 
 // Device is one chip of the table.
 type Device struct {
-	Name, Family, Proto, ID     string
-	Mem                         map[string]Memory
-	Flags, CPAddr               int
+	Name, Family, Proto, ID string
+	Mem                     map[string]Memory
+	// Prog are the chip's protocol options as named fields (the pod's descriptor of firmware 4.0.6
+	// and later: feature prog_named); Legacy the same as the packed flags / cp_addr older firmware
+	// reads. Both come from the generated table; see Fields.
+	Prog                        map[string]any
+	Legacy                      map[string]int
 	VMinMV, VMaxMV, EraseVMinMV int
 	VNote, Notes                string
 	Aliases                     []string
@@ -82,6 +87,7 @@ type Family struct {
 	Proto, Target, Title string
 	Devices              []Device
 	Ignore               []Ignore
+	EntryStyles          []EntryStyle // pic only
 }
 
 type rawMem struct {
@@ -99,7 +105,8 @@ type rawDev struct {
 	ID            string            `json:"id"`
 	Family        string            `json:"family"`
 	Mem           map[string]rawMem `json:"mem"`
-	Opts          map[string]int    `json:"opts"`
+	Prog          map[string]any    `json:"prog"`
+	Legacy        map[string]int    `json:"legacy"`
 	VMin          int               `json:"vmin_mv"`
 	VMax          int               `json:"vmax_mv"`
 	EraseVMin     int               `json:"erase_vmin_mv"`
@@ -121,13 +128,17 @@ func init() {
 				Size int    `json:"size"`
 				Name string `json:"name"`
 			} `json:"ignore"`
-			Devices []rawDev `json:"devices"`
+			Devices     []rawDev `json:"devices"`
+			EntryStyles []struct {
+				Prog  map[string]any `json:"prog"`
+				Flags int            `json:"flags"`
+			} `json:"entry_styles"`
 		} `json:"families"`
 	}
 	if err := json.Unmarshal(raw, &t); err != nil {
 		panic("progdev: prog_devices.json: " + err.Error())
 	}
-	if t.Schema != 1 {
+	if t.Schema != 2 {
 		panic(fmt.Sprintf("progdev: prog_devices.json: unknown schema %d", t.Schema))
 	}
 	families = map[string]*Family{}
@@ -138,7 +149,7 @@ func init() {
 		}
 		for _, r := range f.Devices {
 			d := Device{Name: r.Name, Family: r.Family, Proto: proto, ID: strings.ToLower(r.ID),
-				Mem: map[string]Memory{}, Flags: r.Opts["flags"], CPAddr: r.Opts["cp_addr"],
+				Mem: map[string]Memory{}, Prog: normProg(r.Prog), Legacy: r.Legacy,
 				VMinMV: r.VMin, VMaxMV: r.VMax, EraseVMinMV: r.EraseVMin, VNote: r.VNote,
 				Notes: r.Notes, Aliases: r.Aliases, ChipEraseOnly: r.ChipEraseOnly}
 			for name, m := range r.Mem {
@@ -161,32 +172,95 @@ func init() {
 			}
 			fam.Devices = append(fam.Devices, d)
 		}
+		for _, e := range f.EntryStyles {
+			fam.EntryStyles = append(fam.EntryStyles, EntryStyle{Prog: normProg(e.Prog), Flags: e.Flags})
+		}
 		families[proto] = fam
 	}
+}
+
+// normProg makes the JSON numbers of a prog object ints (they decode as float64).
+func normProg(p map[string]any) map[string]any {
+	for k, v := range p {
+		if f, ok := v.(float64); ok {
+			p[k] = int(f)
+		}
+	}
+	return p
+}
+
+// Fields are the chip fields of a prog_flash request: the named fields (pods with the prog_named
+// feature, firmware 4.0.6 and later) or, with named false, the packed flags and cp_addr older
+// firmware reads. Empty when the chip needs none. The caller may add to the returned map.
+func (d Device) Fields(named bool) map[string]any {
+	out := map[string]any{}
+	if named {
+		for k, v := range d.Prog {
+			out[k] = v
+		}
+		return out
+	}
+	for k, v := range d.Legacy {
+		out[k] = v
+	}
+	return out
+}
+
+// EntryStyle is one way a PIC is entered: the named fields that decide it and the same as flags.
+type EntryStyle struct {
+	Prog  map[string]any
+	Flags int
+}
+
+// Fields is the style as request fields (see Device.Fields).
+func (e EntryStyle) Fields(named bool) map[string]any {
+	out := map[string]any{}
+	if named {
+		for k, v := range e.Prog {
+			out[k] = v
+		}
+	} else if e.Flags != 0 {
+		out["flags"] = e.Flags
+	}
+	return out
+}
+
+// picEntryFields decide how a PIC is entered and its ID read (the generator's PIC_ENTRY_FIELDS).
+var picEntryFields = []string{"cmd_set", "pc", "q10", "id_split", "key_flip"}
+
+// EntryOf is the entry style of a PIC of the table: its prog fields that decide the entry.
+func (d Device) EntryOf() map[string]any {
+	out := map[string]any{}
+	for _, k := range picEntryFields {
+		if v, ok := d.Prog[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// SameEntry reports whether the chip is entered in this style.
+func (e EntryStyle) SameEntry(d Device) bool {
+	a, b := e.Prog, d.EntryOf()
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // Fam is the table family of a protocol.
 func Fam(proto string) *Family { return families[proto] }
 
-// PICEntryMask is the bits of a PIC's flags that change how the chip is entered and its ID read:
-// SET8 (0), BYTEPC (1), Q10 (4), ID_SPLIT (5) and KEY_FLIP (6) of the firmware's prog_pic.h.
-const PICEntryMask = 0x73
-
-// PICEntryStyles are the distinct entry styles of the PIC table (flags & PICEntryMask), the plain
-// 6-bit command set (0) first: a PIC answers only the style it was built for, so a chip whose
-// name is not given is found by trying each (the SDK's prog.pic_entry_styles).
-func PICEntryStyles() []int {
-	seen := map[int]bool{0: true}
-	out := []int{0}
-	for _, d := range families["pic"].Devices {
-		st := d.Flags & PICEntryMask
-		if !seen[st] {
-			seen[st] = true
-			out = append(out, st)
-		}
-	}
-	sort.Ints(out)
-	return out
+// PICEntryStyles are the distinct entry styles of the PIC table, the plain 6-bit command set
+// first: a PIC answers only the style it was built for, so a chip whose name is not given is found
+// by trying each (the SDK's prog.pic_entry_styles). The generator writes them.
+func PICEntryStyles() []EntryStyle {
+	return append([]EntryStyle(nil), families["pic"].EntryStyles...)
 }
 
 func norm(s string) string {
@@ -265,7 +339,7 @@ func FindDevice(proto, chipID, name string) (*Device, error) {
 }
 
 func sameLayout(a, b Device) bool {
-	if a.Flags != b.Flags || a.CPAddr != b.CPAddr || len(a.Mem) != len(b.Mem) {
+	if !reflect.DeepEqual(a.Prog, b.Prog) || !reflect.DeepEqual(a.Legacy, b.Legacy) || len(a.Mem) != len(b.Mem) {
 		return false
 	}
 	for k, m := range a.Mem {

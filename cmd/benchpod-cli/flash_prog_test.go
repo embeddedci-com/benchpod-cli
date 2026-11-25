@@ -98,6 +98,7 @@ type progPod struct {
 	phase  string
 	mv     int  // la_voltage
 	dirErr bool // BP0034 on info and start
+	rev    int  // features_rev in status (0: the pod has no features table, so no prog_named)
 }
 
 func (p *progPod) start(t *testing.T) string {
@@ -146,6 +147,11 @@ func (p *progPod) handle(req map[string]any) string {
 	switch req["cmd"] {
 	case "la_voltage":
 		return okReply(map[string]any{"mv": p.mv})
+	case "status":
+		if p.rev == 0 {
+			return errReply("unknown cmd")
+		}
+		return okReply(map[string]any{"features_rev": p.rev, "gateware": 68, "version": "4.0.6", "api": 2, "min_client_api": 2})
 	case "fpga_image":
 		return okReply(map[string]any{"image": 1, "name": "deep"})
 	case "prog_flash":
@@ -291,6 +297,44 @@ func TestFlashProgPICSendsCPAddr(t *testing.T) {
 	}
 	if _, has := r["baud"]; has {
 		t.Fatal("baud must not be sent")
+	}
+}
+
+// A pod with the prog_named feature (features_rev 20, firmware 4.0.6) gets the chip's options as
+// named fields; an older pod, and one that does not say, gets the packed flags.
+func TestFlashProgNamedFieldsOnlyForPodsThatHaveThem(t *testing.T) {
+	for _, c := range []struct {
+		rev   int
+		named bool
+	}{{20, true}, {19, false}, {0, false}} {
+		img := tmpImage(t, "fw.bin", make([]byte, 64))
+		pod := &progPod{id: "7030", result: "ok", mv: 3300, rev: c.rev}
+		g := progTestSetup(t, pod)
+		if out, err := runProg(t, g, progFlags("pic", img, progFlashFlags{clk: "3", data: "4"})); err != nil {
+			t.Fatalf("rev %d: %v\n%s", c.rev, err, out)
+		}
+		for _, r := range pod.allReqs() {
+			if r["cmd"] != "prog_flash" || (r["op"] != "start" && r["op"] != "info") {
+				continue
+			}
+			if r["op"] == "info" && r["cp_addr"] == nil && r["flags"] == nil && r["cmd_set"] == nil {
+				continue // the first probe of a PIC without a name: the plain 6-bit style sends nothing
+			}
+			_, hasFlags := r["flags"]
+			if c.named && r["op"] == "info" && r["cp_addr"] == nil { // a probe: the 6-bit style, named
+				if hasFlags || r["cmd_set"] != "6bit" {
+					t.Errorf("rev %d probe: %v", c.rev, r)
+				}
+				continue
+			}
+			if c.named {
+				if hasFlags || r["cp_addr"] != 65558.0 || r["cmd_set"] != "8bit" || r["cp_bit"] != 0.0 {
+					t.Errorf("rev %d %s: want named fields, got %v", c.rev, r["op"], r)
+				}
+			} else if r["flags"] != 1.0 || r["cp_addr"] != 65558.0 || r["cmd_set"] != nil {
+				t.Errorf("rev %d %s: want flags 1, got %v", c.rev, r["op"], r)
+			}
+		}
 	}
 }
 

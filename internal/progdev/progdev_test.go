@@ -35,7 +35,7 @@ func TestFindDevice(t *testing.T) {
 		t.Fatalf("alias: %v %v", d, err)
 	}
 	// a PIC whose ID is longer than the table's still matches as a prefix
-	if d, err = FindDevice("pic", "7030aabb", ""); err != nil || d.Name != "PIC16F18856" || d.CPAddr != 65558 {
+	if d, err = FindDevice("pic", "7030aabb", ""); err != nil || d.Name != "PIC16F18856" || d.Legacy["cp_addr"] != 65558 {
 		t.Fatalf("pic: %v %v", d, err)
 	}
 }

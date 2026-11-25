@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Copy the prog_flash device table (prog_devices.json and its README) from the embeddedci-python SDK
-# into the CLI, which embeds it (internal/progdev).
+# Write the prog_flash device table (prog_devices.json and its README) into the CLI, which embeds
+# it (internal/progdev). The table is generated from the one YAML file per chip in
+# embeddedci-python's prog-devices/ by its scripts/gen_prog_devices.py; never edit the copy.
 #
 #   scripts/sync-prog-devices.sh [path/to/embeddedci-python]   # default: ../embeddedci-python
+#   scripts/sync-prog-devices.sh --check [path]                # CI: fail when the copy is stale
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+check=""
+if [ "${1:-}" = "--check" ]; then check="--check"; shift; fi
 sdk="${1:-$here/../embeddedci-python}"
-dir="$sdk/packages/embeddedci/src/embeddedci/benchpod"
-[ -f "$dir/prog_devices.json" ] || { echo "sync-prog-devices: no $dir/prog_devices.json (pass the embeddedci-python checkout)" >&2; exit 1; }
-cp "$dir/prog_devices.json" "$here/internal/progdev/prog_devices.json"
-cp "$dir/prog_devices.README.md" "$here/internal/progdev/prog_devices.README.md"
-echo "sync-prog-devices: copied $(grep -c '"name"' "$dir/prog_devices.json") lines with a name from $dir"
+gen="$sdk/scripts/gen_prog_devices.py"
+[ -f "$gen" ] || { echo "sync-prog-devices: no $gen (pass the embeddedci-python checkout)" >&2; exit 1; }
+python3 "$gen" --src "$sdk/prog-devices" --cli "$here" $check
