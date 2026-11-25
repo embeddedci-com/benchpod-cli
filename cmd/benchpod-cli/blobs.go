@@ -269,7 +269,7 @@ func espLast(todo []blobEntry) []blobEntry {
 
 func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 	var dir, release, only string
-	var force bool
+	var force, noBridgeUpdate bool
 	cmd := &cobra.Command{
 		Use:   "install-blobs",
 		Short: "Install the gateware and ESP32-C3 images the pod's firmware goes with",
@@ -283,7 +283,13 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			"connection gives is refused. By default they come from the GitHub release that matches\n" +
 			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).\n\n" +
 			"Each blob's signature (blob-*.bin.sig) is checked and reported, and handed to\n" +
-			"firmware that checks it too; for now a missing or failing one never stops an install.",
+			"firmware that checks it too; for now a missing or failing one never stops an install.\n\n" +
+			"With --force, after it writes the \"bridge\" slot (the Wi-Fi bridge's firmware), it tells\n" +
+			"the pod to push that image to the bridge on its Ethernet port, even an older or EMC test\n" +
+			"image ({\"cmd\":\"wifi_bridge\",\"action\":\"update\"}), and waits up to a minute for the\n" +
+			"bridge to report it. With no bridge connected it says so and succeeds. Without --force\n" +
+			"the pod updates the bridge by itself when the slot holds a newer release image.\n" +
+			"--no-bridge-update skips the push.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			conn, err := g.blobConnection()
@@ -322,6 +328,11 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			if len(installed) > 0 {
 				g.reportFirmware(blobsEvent(ctx, target, before, installed))
 			}
+			if err == nil && force && !noBridgeUpdate && installedBlob(installed, "bridge") {
+				if c, ok := target.(podCommander); ok {
+					updateBridge(ctx, c, os.Stderr)
+				}
+			}
 			return err
 		},
 	}
@@ -329,5 +340,98 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&release, "release", "", "take the blobs from this firmware release tag (default: the one the pod runs)")
 	cmd.Flags().StringVar(&only, "only", "", "comma-separated slots to install (gw0, gw1, gw2, esp, xip, xip_prog; bridge on pods with Wi-Fi bridge support)")
 	cmd.Flags().BoolVar(&force, "force", false, "install even blobs the pod already holds")
+	cmd.Flags().BoolVar(&noBridgeUpdate, "no-bridge-update", false, "with --force: do not tell the pod to push the installed bridge image to its Wi-Fi bridge")
 	return cmd
+}
+
+func installedBlob(list []blobEntry, name string) bool {
+	for _, e := range list {
+		if e.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// How long updateBridge follows the pod's push to the bridge, and how often it asks. Variables
+// for the tests.
+var (
+	bridgeUpdateWait = 60 * time.Second
+	bridgeUpdatePoll = 2 * time.Second
+)
+
+// bridgeUpdateDone says whether the pod's bridge update status (wifi_status bridge.update) has
+// reached an end: "updated to X", or a failure that is not a retry.
+func bridgeUpdateDone(status string) bool {
+	return strings.HasPrefix(status, "updated to ") ||
+		(strings.Contains(status, "failed") && !strings.Contains(status, "will retry")) ||
+		strings.HasPrefix(status, "cannot update")
+}
+
+// updateBridge asks the pod to push its "bridge" slot to the Wi-Fi bridge on its Ethernet port and
+// follows wifi_status until the bridge reports the outcome. It never fails the install: the image
+// is in the pod's slot, and with no bridge (or firmware without the command) it only says so.
+func updateBridge(ctx context.Context, c podCommander, w io.Writer) {
+	_, before := readBridgeStatus(ctx, c)
+	if _, err := c.Command(ctx, map[string]any{"cmd": "wifi_bridge", "action": "update"}); err != nil {
+		if strings.Contains(err.Error(), "no Wi-Fi bridge") {
+			fmt.Fprintln(w, "bridge: no Wi-Fi bridge on the pod's Ethernet port, so nothing was pushed. "+
+				"The image is in the pod's \"bridge\" slot; connect the bridge and run `benchpod install-blobs --only bridge --force` again.")
+		} else {
+			fmt.Fprintf(w, "bridge: the image is installed, but the pod would not start the bridge update (%v)\n", err)
+		}
+		return
+	}
+	fmt.Fprintln(w, "bridge: the pod is pushing the new image to the Wi-Fi bridge...")
+	start := time.Now()
+	var last string
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(bridgeUpdatePoll):
+		}
+		fw, status := readBridgeStatus(ctx, c)
+		if status != "" && status != last {
+			last = status
+			fmt.Fprintf(w, "  bridge: %s\n", status)
+		}
+		// A status left by an earlier update stays until the new one starts: wait for a change
+		// (or a few polls, when this update changed nothing, e.g. a refusal repeated).
+		if bridgeUpdateDone(status) && (status != before || time.Since(start) >= 3*bridgeUpdatePoll) {
+			if strings.HasPrefix(status, "updated to ") {
+				fmt.Fprintf(w, "bridge: updated, the bridge reports firmware %s\n", valueOrDash(fw))
+			} else {
+				fmt.Fprintf(w, "bridge: the update did not finish (%s); the image stays in the pod's slot\n", status)
+			}
+			return
+		}
+		if time.Since(start) >= bridgeUpdateWait {
+			fmt.Fprintf(w, "bridge: not finished after %s (last status: %s); `benchpod show-network` shows it\n",
+				bridgeUpdateWait, valueOrDash(last))
+			return
+		}
+	}
+}
+
+// readBridgeStatus reads the bridge's firmware version and update status from wifi_status.
+func readBridgeStatus(ctx context.Context, c podCommander) (fw, update string) {
+	raw, err := c.Command(ctx, map[string]any{"cmd": "wifi_status"})
+	if err != nil {
+		return "", ""
+	}
+	var st struct {
+		Bridge *struct {
+			FW     string `json:"fw"`
+			Update string `json:"update"`
+		} `json:"bridge"`
+	}
+	if json.Unmarshal(raw, &st) != nil || st.Bridge == nil {
+		return "", ""
+	}
+	return st.Bridge.FW, st.Bridge.Update
+}
+
+func (l lanBlobs) Command(ctx context.Context, req map[string]any) (json.RawMessage, error) {
+	return l.lan.s.Command(ctx, req)
 }
