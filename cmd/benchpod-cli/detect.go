@@ -29,7 +29,7 @@ const (
 )
 
 // detectMethods are the probes in the order they run.
-var detectMethods = []string{"swd", "jtag", "updi", "pic", "c2", "tpi", "pdi", "esp32", "usb"}
+var detectMethods = []string{"swd", "jtag", "updi", "pic", "c2", "tpi", "pdi", "sbw", "esp32", "usb"}
 
 func detectInvasive(method string) bool {
 	switch method {
@@ -64,8 +64,8 @@ func newDetectCmd(g *globalFlags) *cobra.Command {
 			"  swd    SWD pins swd_swclk and swd_swdio: debug port, core and the vendor's ID register (firmware with dap_id)\n" +
 			"  jtag   JTAG pins jtag_tck, jtag_tms, jtag_tdi and jtag_tdo: the IDCODEs of the chain (firmware with dap_id)\n" +
 			"  usb    the device on the pod's USB host port, when host mode is already on (detect never turns it on)\n" +
-			"  updi, pic, c2, tpi, pdi   a pin programmer: only when the profile has a signal named for the protocol\n" +
-			"         (UPDI; ICSPCLK and ICSPDAT; C2CK and C2D; TPICLK and TPIDATA; PDI_CLK and PDI_DATA)\n" +
+			"  updi, pic, c2, tpi, pdi, sbw   a pin programmer: only when the profile has a signal named for the protocol\n" +
+			"         (UPDI; ICSPCLK and ICSPDAT; C2CK and C2D; TPICLK and TPIDATA; PDI_CLK and PDI_DATA; SBWTCK or TEST and SBWTDIO or RST)\n" +
 			"  esp32  an ESP32 over its UART ROM loader: needs uart_rx, uart_tx and a BOOT, IO0 or IO9 signal\n\n" +
 			"swd, jtag and usb only read. The programmer and ESP32 probes put the chip into programming mode\n" +
 			"and reset it; --no-invasive leaves them out. Nothing is probed while target power is off (the\n" +
@@ -478,7 +478,7 @@ func (d *detector) usb() {
 
 var progVendor = map[string][2]string{
 	"updi": {"Microchip", "AVR"}, "tpi": {"Microchip", "AVR"}, "pdi": {"Microchip", "AVR"},
-	"pic": {"Microchip", "PIC"}, "c2": {"Silicon Labs", "8051"},
+	"pic": {"Microchip", "PIC"}, "c2": {"Silicon Labs", "8051"}, "sbw": {"Texas Instruments", "MSP430"},
 }
 
 func (d *detector) prog(proto string) {
@@ -504,6 +504,11 @@ func (d *detector) prog(proto string) {
 		return
 	}
 	ctx, pod := d.ctx, d.pod
+	if proto == "sbw" && !progNamed(ctx, pod) {
+		// Spy-Bi-Wire shipped with firmware 4.0.6, the release that added prog_named.
+		d.skip(proto, "needs pod firmware with the sbw protocol (4.0.6 or newer; update the pod)", false)
+		return
+	}
 	progEnsureDeepImage(ctx, pod)
 	mv := progLAmV(ctx, pod)
 	volts := "not set"
@@ -528,6 +533,14 @@ func (d *detector) prog(proto string) {
 		return
 	}
 	vc := progVendor[proto]
+	if proto == "sbw" && len(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(st.ID)), "0x")) == 2 {
+		// Only the JTAG ID answered: the chip is JTAG-locked and its device ID cannot be read.
+		d.add(detect.Finding{Method: proto, Chip: "MSP430 (JTAG-locked)", Vendor: vc[0], Core: vc[1],
+			ID: "0x" + strings.TrimPrefix(strings.ToLower(strings.TrimSpace(st.ID)), "0x"), Confidence: detect.Low,
+			Pins: pins, Invasive: true, Raw: map[string]any{"proto": proto, "id": st.ID, "locked": true}})
+		d.note("sbw: only the JTAG ID answered, so the chip is JTAG-locked; flash with --device MSP430FR2433 (or the chip's name) and --erase chip to erase and unlock it")
+		return
+	}
 	f := detect.Finding{Method: proto, Vendor: vc[0], Core: vc[1], ID: st.ID, Pins: pins, Invasive: true,
 		Raw: map[string]any{"proto": proto, "id": st.ID}}
 	if dev != nil && findErr == nil {

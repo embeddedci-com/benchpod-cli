@@ -1831,9 +1831,9 @@ embeddedci.com always verifies and resets: `--no-verify`, `--no-reset`,
 | `--rx`                     | (profile `uart_rx`) | ESP32: LA pin on the target's TXD0.                         |
 | `--tx`                     | (profile `uart_tx`) | ESP32: LA pin on the target's RXD0.                         |
 | `--boot`                   | (profile signal `BOOT`, `IO0` or `IO9`) | ESP32: LA pin on the target's IO0 (IO9 on the C3/C6), driven open-drain. |
-| `--device`                 | (found from the chip's ID) | `avr-updi`, `pic`, `efm8`, `attiny-tpi`, `xmega`: the chip, for example `ATtiny1616`; checked against the ID the chip answers. |
-| `--clk`                    | (profile signal `ICSPCLK`, `C2CK`, `TPICLK` or `PDI_CLK`, else `swd_swclk`) | Those targets: LA pin on the chip's clock line. |
-| `--data`                   | (profile signal `UPDI`, `ICSPDAT`, `C2D`, `TPIDATA` or `PDI_DATA`, else `swd_swdio`) | Those targets: LA pin on the chip's data line. |
+| `--device`                 | (found from the chip's ID) | `avr-updi`, `pic`, `efm8`, `attiny-tpi`, `xmega`, `msp430`: the chip, for example `ATtiny1616` or `MSP430FR2433`; checked against the ID the chip answers. |
+| `--clk`                    | (profile signal `ICSPCLK`, `C2CK`, `TPICLK`, `PDI_CLK` or `SBWTCK` / `TEST`, else `swd_swclk`) | Those targets: LA pin on the chip's clock line. |
+| `--data`                   | (profile signal `UPDI`, `ICSPDAT`, `C2D`, `TPIDATA`, `PDI_DATA` or `SBWTDIO` / `RST`, else `swd_swdio`) | Those targets: LA pin on the chip's data line. |
 | `--reset`                  | (profile signal `MCLR` or `RESET`, else `nrst`) | `pic` and `attiny-tpi`: `nrst` (the pod's reset pin; `--nreset` says the same) or the LA pin on the chip's MCLR or RESET. |
 | `--erase`                  | `chip` | Those targets: `chip` (before the first write when the image has flash; also unlocks a locked chip), `page` (only the pages written; the TPI chips erase their whole code section) or `none`. |
 | `--info`                   | off     | Those targets: only enter programming mode and read the chip ID; nothing is written. |
@@ -1891,7 +1891,7 @@ at the end the target is reset into the new image. EN may also be a wiring-profi
 `esp_flash` command. Over embeddedci.com use the Python SDK (`bp.flash(target="esp32", ...)`) or
 the MCP server.
 
-#### Chips without SWD or a bootloader (AVR, PIC, EFM8, ATtiny TPI, XMEGA)
+#### Chips without SWD or a bootloader (AVR, PIC, EFM8, ATtiny TPI, XMEGA, MSP430)
 
 These targets are programmed over the chip's own programming protocol, run by the pod on its LA
 pins (firmware with the `prog_flash` feature; the protocols live in the `xip_prog` blob, so run
@@ -1904,6 +1904,7 @@ pins (firmware with the `prog_flash` feature; the protocols live in the `xip_pro
 | `efm8` (`c2`)               | Silicon Labs EFM8, C8051F                      | C2CK `--clk`, C2D `--data`             |
 | `attiny-tpi` (`tpi`)        | ATtiny4/5/9/10/20/40/102/104                   | TPICLK `--clk`, TPIDATA `--data`, RESET on `--reset` |
 | `xmega` (`pdi`)             | AVR XMEGA                                      | PDI_CLK `--clk`, PDI_DATA `--data`     |
+| `msp430` (`sbw`)            | MSP430 FRAM parts (MSP430FR2433), Spy-Bi-Wire (BenchPod 4.0.6 and later) | TEST (SBWTCK) `--clk`, RST (SBWTDIO) `--data`, no reset pin |
 
 `--file` is an Intel HEX file (`.hex`), an ELF (`.elf`, 32-bit little endian) or a raw `.bin`
 written at `--load-address` (default 0, into the flash). A `.hex` or `.elf` from avr-gcc or XC8
@@ -1925,6 +1926,7 @@ benchpod flash --target avr-updi --info --data 5                 # read the chip
 benchpod flash --target avr-updi --device attiny1614 --data 5 --file build/app.hex
 benchpod flash --target pic --clk 3 --data 4 --reset 5 --file app.hex
 benchpod flash --target efm8 --clk 3 --data 4 --device EFM8BB10F8G --file app.hex
+benchpod flash --target msp430 --clk 3 --data 4 --file app.hex     # TEST on LA3, RST on LA4
 ```
 
 The CLI refuses a chip the pod's I/O voltage cannot program before anything is written: the
@@ -2093,7 +2095,7 @@ built into the CLI (a copy of the SDK's `detect_ids.json`, refreshed by
 | `swd`  | `swd_swclk` and `swd_swdio` | The debug port, the core and the vendor's ID register (for example an STM32's DBGMCU_IDCODE). Firmware with `dap_id`. |
 | `jtag` | `jtag_tck`, `jtag_tms`, `jtag_tdi`, `jtag_tdo` | The IDCODEs of the JTAG chain. An ST boundary-scan TAP names the STM32. Firmware with `dap_id`. |
 | `usb`  | USB host mode already on (`benchpod usb-host on`) with a device mounted | VID:PID, the loader mode (Teensy HalfKay, BOOTSEL, DFU, ...) or the product string. `detect` never turns host mode on. Firmware 4.0.3 or later. |
-| `updi`, `pic`, `c2`, `tpi`, `pdi` | A signal named for the protocol: `UPDI`; `ICSPCLK` and `ICSPDAT`; `C2CK` and `C2D`; `TPICLK` and `TPIDATA`; `PDI_CLK` and `PDI_DATA` (the SWD pins are not a fallback) | The chip's ID through the same `prog_flash` info that `flash --target ... --info` uses. |
+| `updi`, `pic`, `c2`, `tpi`, `pdi`, `sbw` | A signal named for the protocol: `UPDI`; `ICSPCLK` and `ICSPDAT`; `C2CK` and `C2D`; `TPICLK` and `TPIDATA`; `PDI_CLK` and `PDI_DATA`; `SBWTCK` (or `TEST`) and `SBWTDIO` (or `RST`, BenchPod 4.0.6 and later) (the SWD pins are not a fallback) | The chip's ID through the same `prog_flash` info that `flash --target ... --info` uses. |
 | `esp32` | `uart_rx`, `uart_tx` and a `BOOT`, `IO0` or `IO9` signal | The chip name from its UART ROM loader. |
 
 `swd`, `jtag` and `usb` only read. The programmer and ESP32 probes put the chip into programming

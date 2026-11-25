@@ -442,3 +442,34 @@ func TestDetectCommandWiring(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 }
+
+func TestDetectSBW(t *testing.T) {
+	w := &podWiring{}
+	addSignal(w, "TEST", 9)
+	addSignal(w, "RST", 8)
+	for _, tc := range []struct {
+		id, chip, conf string
+	}{{"984082", "MSP430FR2433", "high"}, {"98", "MSP430 (JTAG-locked)", "low"}} {
+		p := newDetectPod()
+		p.status = okStatus("4.0.6", "v3r2", 20)
+		p.progID = tc.id
+		res, out, err := runDetectFor(t, p, w, detectOpts{asJSON: true, methods: []string{"sbw"}})
+		if err != nil || len(res.Findings) != 1 {
+			t.Fatalf("%s: %v %s", tc.id, err, out)
+		}
+		f := res.Findings[0]
+		if f.Method != "sbw" || f.Chip != tc.chip || string(f.Confidence) != tc.conf || f.Vendor != "Texas Instruments" || f.Core != "MSP430" || !f.Invasive {
+			t.Fatalf("%s: %+v", tc.id, f)
+		}
+		if tc.conf == "low" && (len(res.Notes) != 1 || !strings.Contains(res.Notes[0], "--erase chip")) {
+			t.Fatalf("locked note: %v", res.Notes)
+		}
+	}
+	// a pod without prog_named does not know the protocol
+	p := newDetectPod()
+	p.progID = "984082"
+	res, _, _ := runDetectFor(t, p, w, detectOpts{asJSON: true, methods: []string{"sbw"}})
+	if len(res.Findings) != 0 || len(res.Skipped) != 1 || p.count("prog_flash") != 0 {
+		t.Fatalf("old pod: %+v", res)
+	}
+}

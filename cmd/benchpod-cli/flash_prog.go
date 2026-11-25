@@ -15,7 +15,7 @@ import (
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
-// Chips without SWD, JTAG or a bootloader: `flash --target avr-updi|pic|efm8|attiny-tpi|xmega`
+// Chips without SWD, JTAG or a bootloader: `flash --target avr-updi|pic|efm8|attiny-tpi|xmega|msp430`
 // has the pod run the chip's own programming protocol on its LA pins (the firmware's prog_flash
 // command, feature prog_flash). The pod holds no device tables: it reads the chip's ID and the CLI
 // passes the geometry from internal/progdev (the SDK's table), the same way the SDK's
@@ -32,13 +32,24 @@ var progPollInterval = 200 * time.Millisecond
 var (
 	progClkSignals = map[string][]string{
 		"pic": {"ICSPCLK", "ICSP_CLK", "PGC"}, "c2": {"C2CK"}, "tpi": {"TPICLK", "TPI_CLK"}, "pdi": {"PDI_CLK"},
+		"sbw": {"SBWTCK", "SBW_TCK", "TEST"},
 	}
 	progDataSignals = map[string][]string{
 		"updi": {"UPDI"}, "pic": {"ICSPDAT", "ICSP_DAT", "PGD"}, "c2": {"C2D"},
 		"tpi": {"TPIDATA", "TPI_DATA"}, "pdi": {"PDI_DATA"},
+		"sbw": {"SBWTDIO", "SBW_TDIO", "RST"},
 	}
 	progResetSignals = []string{"MCLR", "RESET", "NRST", "PROG_RESET"}
 )
+
+// progPerByte is the time a write is given per byte beyond the base allowance (the SDK's
+// _SECONDS_PER_BYTE): Spy-Bi-Wire moves a 16-bit word in about 4 ms, the others are faster.
+func progPerByte(proto string) time.Duration {
+	if proto == "sbw" {
+		return 20 * time.Millisecond
+	}
+	return 5 * time.Millisecond
+}
 
 // progFlashFlags are the flags of the prog_flash targets (the rest are shared with flash).
 type progFlashFlags struct {
@@ -520,7 +531,7 @@ func runFlashProg(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 		}
 		chipErased = chipErased || mode == "chip"
 		what := fmt.Sprintf("%s at 0x%x", r.Mem, r.Addr)
-		st, err := progWait(ctx, c, what, 60*time.Second+time.Duration(len(r.Data))*5*time.Millisecond, pinText)
+		st, err := progWait(ctx, c, what, 60*time.Second+time.Duration(len(r.Data))*progPerByte(proto), pinText)
 		if err != nil {
 			return err
 		}

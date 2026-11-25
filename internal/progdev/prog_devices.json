@@ -318,6 +318,12 @@
 {"name":"ATxmega256D3","id":"1e9844","family":"XMEGA","vmin_mv":1800,"vmax_mv":3600,"mem":{"flash":{"size":270336,"page":512,"addr":0,"hex":0},"eeprom":{"size":4096,"page":32,"addr":0,"hex":8454144},"user":{"size":512,"page":512,"addr":0,"hex":8716288},"config":{"size":6,"page":1,"addr":0,"hex":8519680}}},
 {"name":"ATxmega384C3","id":"1e9845","family":"XMEGA","vmin_mv":1800,"vmax_mv":3600,"mem":{"flash":{"size":401408,"page":512,"addr":0,"hex":0},"eeprom":{"size":4096,"page":32,"addr":0,"hex":8454144},"user":{"size":512,"page":512,"addr":0,"hex":8716288},"config":{"size":6,"page":1,"addr":0,"hex":8519680}}},
 {"name":"ATxmega384D3","id":"1e9847","family":"XMEGA","vmin_mv":1800,"vmax_mv":3600,"mem":{"flash":{"size":401408,"page":512,"addr":0,"hex":0},"eeprom":{"size":4096,"page":32,"addr":0,"hex":8454144},"user":{"size":512,"page":512,"addr":0,"hex":8716288},"config":{"size":6,"page":1,"addr":0,"hex":8519680}}}
+]},
+"sbw":{
+"target":"msp430",
+"title":"MSP430 Spy-Bi-Wire (FRAM parts)",
+"devices":[
+{"name":"MSP430FR2433","aliases":["FR2433"],"id":"984082","family":"MSP430FR2xx","vmin_mv":1800,"vmax_mv":3600,"notes":"JTAG ID 0x98 then device ID 0x40 0x82 (TLV 0x1A04/0x1A05). Main FRAM 0xC400-0xFFFF (15 KB, the vectors and the two JTAG signature words at 0xFF80 included: an image that puts a value other than 0x0000/0xFFFF in both 0xFF80 and 0xFF82 locks the chip), information FRAM 0x1800-0x19FF (512 B). Not on hardware yet.","mem":{"flash":{"size":15360,"page":512,"addr":50176,"hex":50176,"align":2},"config":{"size":512,"page":512,"addr":6144,"hex":6144,"align":2}}}
 ]}
 }
 }
