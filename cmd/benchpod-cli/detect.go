@@ -12,7 +12,6 @@ import (
 
 	"github.com/embeddedci-com/benchpod-cli/internal/detect"
 	"github.com/embeddedci-com/benchpod-cli/internal/features"
-	"github.com/embeddedci-com/benchpod-cli/internal/progdev"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
@@ -511,20 +510,12 @@ func (d *detector) prog(proto string) {
 	if mv > 0 {
 		volts = fmt.Sprintf("%g V", float64(mv)/1000)
 	}
-	req := map[string]any{"cmd": "prog_flash", "op": "info", "proto": proto}
-	for k, v := range pins {
-		req[k] = v
-	}
-	if _, err := progCommand(ctx, pod, req, pinText); err != nil {
-		if isUnknownCommand(err) {
+	st, dev, findErr, err := progIdentify(ctx, pod, proto, pins, "", pinText)
+	if err != nil {
+		if strings.Contains(err.Error(), "no prog_flash command") {
 			d.skip(proto, "needs pod firmware with prog_flash", false)
 			return
 		}
-		d.failed(proto, err)
-		return
-	}
-	st, err := progWait(ctx, pod, "reading the chip ID", progInfoTimeout, pinText)
-	if err != nil {
 		d.failed(proto, err)
 		return
 	}
@@ -539,7 +530,7 @@ func (d *detector) prog(proto string) {
 	vc := progVendor[proto]
 	f := detect.Finding{Method: proto, Vendor: vc[0], Core: vc[1], ID: st.ID, Pins: pins, Invasive: true,
 		Raw: map[string]any{"proto": proto, "id": st.ID}}
-	if dev, err := progdev.FindDevice(proto, st.ID, ""); err == nil {
+	if dev != nil && findErr == nil {
 		f.Chip, f.Confidence = dev.Name, detect.High
 	} else {
 		f.Chip, f.Confidence = "unknown", detect.Low

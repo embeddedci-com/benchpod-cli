@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/embeddedci-com/benchpod-cli/internal/progdev"
 	"strings"
 	"testing"
 	"time"
@@ -22,13 +23,15 @@ type detectPod struct {
 	jtag       string
 	usb        string
 	progID     string // prog_flash info result id ("" = no answer)
+	progStyle  int    // >= 0: the chip answers only info sent with flags & 0x73 == progStyle
+	infoFlags  int    // the flags of the last info
 	espChip    string
 	espRunning int
 	sent       []map[string]any
 }
 
 func newDetectPod() *detectPod {
-	return &detectPod{status: okStatus("4.0.5", "v3r2", 19), efuse1: true, owners: map[int]string{}, usb: `{"mode":"device"}`}
+	return &detectPod{status: okStatus("4.0.5", "v3r2", 19), efuse1: true, owners: map[int]string{}, usb: `{"mode":"device"}`, progStyle: -1}
 }
 
 func (p *detectPod) count(cmd string) int {
@@ -71,9 +74,10 @@ func (p *detectPod) Command(ctx context.Context, req map[string]any) (json.RawMe
 		return json.RawMessage(`{"name":"deep"}`), nil
 	case "prog_flash":
 		if req["op"] == "info" {
+			p.infoFlags, _ = req["flags"].(int)
 			return json.RawMessage(`{"running":true}`), nil
 		}
-		if p.progID == "" {
+		if p.progID == "" || (p.progStyle >= 0 && p.infoFlags&0x73 != p.progStyle) {
 			return json.RawMessage(`{"running":false,"phase":"enter","result":"no answer"}`), nil
 		}
 		return json.RawMessage(fmt.Sprintf(`{"running":false,"phase":"done","id":%q,"result":"ok"}`, p.progID)), nil
@@ -263,6 +267,47 @@ func TestDetectNeedsDapID(t *testing.T) {
 	}
 	if p.count("dap_start") != 0 {
 		t.Fatal("firmware without dap_id must never get dap_start op id (it would start a DAP session)")
+	}
+}
+
+// A PIC answers only in its own entry style: without a device name, detect tries each style of
+// the table (python#154's identify) and finds a PIC18 Q (flags 3) and a PIC16F18xxx (flags 1).
+func TestDetectPICEntryStyles(t *testing.T) {
+	for _, tc := range []struct {
+		id, chip string
+		style    int
+	}{{"c074", "PIC18F57Q43", 3}, {"d430", "PIC16F18446", 1}} {
+		p := newDetectPod()
+		p.progID, p.progStyle = tc.id, tc.style
+		w := &podWiring{Efuse: ip(1)}
+		addSignal(w, "ICSPCLK", 4)
+		addSignal(w, "ICSPDAT", 3)
+		res, out, err := runDetectFor(t, p, w, detectOpts{asJSON: true})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.chip, err)
+		}
+		if len(res.Findings) != 1 || res.Findings[0].Chip != tc.chip || res.Findings[0].Confidence != "high" {
+			t.Fatalf("%s: %s", tc.chip, out)
+		}
+		var styles []int
+		for _, c := range p.sent {
+			if c["cmd"] == "prog_flash" && c["op"] == "info" {
+				f, _ := c["flags"].(int)
+				styles = append(styles, f)
+			}
+		}
+		if styles[0] != 0 || styles[len(styles)-1]&0x73 != tc.style {
+			t.Fatalf("%s: info flags sent %v", tc.chip, styles)
+		}
+	}
+	// a PIC that answers no style: a note, no finding, and every style was tried once
+	p := newDetectPod()
+	w := &podWiring{Efuse: ip(1)}
+	addSignal(w, "ICSPCLK", 4)
+	addSignal(w, "ICSPDAT", 3)
+	res, out, _ := runDetectFor(t, p, w, detectOpts{asJSON: true})
+	if len(res.Findings) != 0 || p.count("prog_flash") < 2*len(progdev.PICEntryStyles()) {
+		t.Fatalf("no answer: %s (prog_flash calls %d)", out, p.count("prog_flash"))
 	}
 }
 

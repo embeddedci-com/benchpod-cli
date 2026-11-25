@@ -267,6 +267,82 @@ func progWait(ctx context.Context, c podCommander, what string, timeout time.Dur
 	}
 }
 
+// progReadInfo enters programming mode and reads the chip's ID (nothing is written): prog_flash
+// op info with the chip's flags and cp_addr when known, then status until the job ends.
+func progReadInfo(ctx context.Context, c podCommander, proto string, pins map[string]any, flags, cpAddr int, pinText string) (*progStatus, error) {
+	req := map[string]any{"cmd": "prog_flash", "op": "info", "proto": proto}
+	for k, v := range pins {
+		req[k] = v
+	}
+	if flags != 0 {
+		req["flags"] = flags
+	}
+	if cpAddr != 0 {
+		req["cp_addr"] = cpAddr
+	}
+	if _, err := progCommand(ctx, c, req, pinText); err != nil {
+		return nil, err
+	}
+	return progWait(ctx, c, "reading the chip ID", progInfoTimeout, pinText)
+}
+
+// progIdentify reads the chip's ID and finds it in the table (the SDK's prog.identify). A PIC
+// answers only in its own entry style (flags): a named chip sends its own; without a name every
+// style of the table is tried until one answers with an ID in the table, and when the chip found
+// uses other flags than the style that answered, the ID is read again with its own. Other
+// protocols read the ID once.
+//
+// It returns the last status (its result is not "ok" when nothing answered), the chip (nil when
+// the ID is not in the table, findErr says why) and err for a failed command.
+func progIdentify(ctx context.Context, c podCommander, proto string, pins map[string]any, name, pinText string) (st *progStatus, dev *progdev.Device, findErr, err error) {
+	if proto != "pic" || name != "" {
+		flags, cp := 0, 0
+		if proto == "pic" {
+			d, ferr := progdev.FindDevice(proto, "", name)
+			if ferr != nil {
+				return nil, nil, ferr, nil
+			}
+			flags, cp = d.Flags, d.CPAddr
+		}
+		if st, err = progReadInfo(ctx, c, proto, pins, flags, cp, pinText); err != nil || st.result() != "ok" {
+			return st, nil, nil, err
+		}
+		dev, findErr = progdev.FindDevice(proto, st.ID, name)
+		return st, dev, findErr, nil
+	}
+	var first *progStatus
+	var firstFind error
+	for _, style := range progdev.PICEntryStyles() {
+		s, err := progReadInfo(ctx, c, proto, pins, style, 0, pinText)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if s.result() != "ok" {
+			if first == nil {
+				first = s
+			}
+			continue
+		}
+		d, ferr := progdev.FindDevice(proto, s.ID, "")
+		if ferr != nil {
+			if firstFind == nil {
+				first, firstFind = s, ferr
+			}
+			continue
+		}
+		if d.Flags&progdev.PICEntryMask != style {
+			if s, err = progReadInfo(ctx, c, proto, pins, d.Flags, d.CPAddr, pinText); err != nil || s.result() != "ok" {
+				return s, nil, nil, err
+			}
+			if d, ferr = progdev.FindDevice(proto, s.ID, d.Name); ferr != nil {
+				return s, nil, ferr, nil
+			}
+		}
+		return s, d, nil, nil
+	}
+	return first, nil, firstFind, nil
+}
+
 // progLAmV is the pod's LA I/O voltage in millivolts, 0 when it is not set or unknown.
 func progLAmV(ctx context.Context, c podCommander) int {
 	raw, err := c.Command(ctx, map[string]any{"cmd": "la_voltage"})
@@ -362,21 +438,20 @@ func runFlashProg(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 	}
 
 	// Enter programming mode and read the chip's ID (nothing is written).
-	if _, err := progCommand(ctx, c, req("info"), pinText); err != nil {
-		return err
-	}
-	st, err := progWait(ctx, c, "reading the chip ID", progInfoTimeout, pinText)
+	st, dev, findErr, err := progIdentify(ctx, c, proto, pins, strings.TrimSpace(p.device), pinText)
 	if err != nil {
 		return err
+	}
+	if st == nil && findErr != nil {
+		return usageErrorf("%w", findErr)
 	}
 	if st.result() != "ok" {
 		return progResultError(proto, "", st, pinText, volts, st.ID)
 	}
-	chipID := st.ID
-	dev, err := progdev.FindDevice(proto, chipID, strings.TrimSpace(p.device))
-	if err != nil {
-		return usageErrorf("%w", err)
+	if findErr != nil {
+		return usageErrorf("%w", findErr)
 	}
+	chipID := st.ID
 	fmt.Printf("%s (%s), ID %s\n", dev.Name, fam.Title, chipID)
 	checkErase := erase
 	if p.info {
