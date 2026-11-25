@@ -451,7 +451,7 @@ func TestDetectSBW(t *testing.T) {
 		id, chip, conf string
 	}{{"984082", "MSP430FR2433", "high"}, {"98", "MSP430 (JTAG-locked)", "low"}} {
 		p := newDetectPod()
-		p.status = okStatus("4.0.6", "v3r2", 20)
+		p.status = okStatus("4.0.6", "v3r2", 21)
 		p.progID = tc.id
 		res, out, err := runDetectFor(t, p, w, detectOpts{asJSON: true, methods: []string{"sbw"}})
 		if err != nil || len(res.Findings) != 1 {

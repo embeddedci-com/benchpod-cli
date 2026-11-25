@@ -301,13 +301,13 @@ func TestFlashProgPICSendsCPAddr(t *testing.T) {
 	}
 }
 
-// A pod with the prog_named feature (features_rev 20, firmware 4.0.6) gets the chip's options as
+// A pod with the prog_named feature (features_rev 21, firmware 4.0.6) gets the chip's options as
 // named fields; an older pod, and one that does not say, gets the packed flags.
 func TestFlashProgNamedFieldsOnlyForPodsThatHaveThem(t *testing.T) {
 	for _, c := range []struct {
 		rev   int
 		named bool
-	}{{20, true}, {19, false}, {0, false}} {
+	}{{21, true}, {20, false}, {19, false}, {0, false}} {
 		img := tmpImage(t, "fw.bin", make([]byte, 64))
 		pod := &progPod{id: "7030", result: "ok", mv: 3300, rev: c.rev}
 		g := progTestSetup(t, pod)
