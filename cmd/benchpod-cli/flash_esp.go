@@ -35,8 +35,10 @@ const (
 	// espDefaultFlashSize is the SPI_SET_PARAMS size when flasher_args.json names none: only an
 	// upper bound for the ROM's writes (a write past the real chip fails at the erase).
 	espDefaultFlashSize = 16 << 20
-	espPollInterval     = 250 * time.Millisecond
 )
+
+// espPollInterval is how often espWait asks the pod (tests shorten it).
+var espPollInterval = 250 * time.Millisecond
 
 // espBootSignals / espENSignals are the wiring-profile signal names used for the boot strap when
 // --boot is not given and for EN without --nreset (case-insensitive), the same as the SDK.

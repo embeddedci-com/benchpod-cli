@@ -1,0 +1,241 @@
+{
+ "version": 1,
+ "_comment": "Target IDs for detect (BenchPod.detect, benchpod detect, the web app). Canonical copy in embeddedci-python; the CLI and the web app carry copies. Hex strings, lower case.",
+ "jep106": {
+  "0x020": "STMicroelectronics",
+  "0x23b": "Arm",
+  "0x144": "Nordic Semiconductor",
+  "0x015": "NXP",
+  "0x00e": "NXP (Freescale)",
+  "0x01f": "Microchip (Atmel)",
+  "0x017": "Texas Instruments",
+  "0x493": "Raspberry Pi",
+  "0x272": "Tensilica (Espressif)",
+  "0x612": "Espressif"
+ },
+ "arm_cores": {
+  "0xc20": "Cortex-M0",
+  "0xc60": "Cortex-M0+",
+  "0xc21": "Cortex-M1",
+  "0xc23": "Cortex-M3",
+  "0xc24": "Cortex-M4",
+  "0xc27": "Cortex-M7",
+  "0xd20": "Cortex-M23",
+  "0xd21": "Cortex-M33",
+  "0xd22": "Cortex-M55",
+  "0xd23": "Cortex-M85",
+  "0xd24": "Cortex-M52"
+ },
+ "id_registers": [
+  {
+   "vendor": "STMicroelectronics",
+   "stm32": true,
+   "what": "DBGMCU_IDCODE",
+   "addr": "0xe0042000",
+   "mask": "0x00000fff",
+   "cores": [
+    "Cortex-M3",
+    "Cortex-M4",
+    "Cortex-M7"
+   ],
+   "parts": {
+    "0x410": "STM32F10x medium density",
+    "0x412": "STM32F10x low density",
+    "0x414": "STM32F10x high density",
+    "0x418": "STM32F105/F107",
+    "0x420": "STM32F100 value line",
+    "0x428": "STM32F100 value line high density",
+    "0x430": "STM32F10x XL density",
+    "0x411": "STM32F2xx",
+    "0x413": "STM32F405/F407/F415/F417",
+    "0x419": "STM32F42x/F43x",
+    "0x421": "STM32F446",
+    "0x423": "STM32F401xB/C",
+    "0x431": "STM32F411",
+    "0x433": "STM32F401xD/E",
+    "0x434": "STM32F469/F479",
+    "0x441": "STM32F412",
+    "0x458": "STM32F410",
+    "0x463": "STM32F413/F423",
+    "0x422": "STM32F302xB/C, F303xB/C",
+    "0x432": "STM32F37x",
+    "0x438": "STM32F303x6/8, F334",
+    "0x439": "STM32F301, F302x6/8",
+    "0x446": "STM32F302xD/E, F303xD/E",
+    "0x449": "STM32F74x/F75x",
+    "0x451": "STM32F76x/F77x",
+    "0x452": "STM32F72x/F73x",
+    "0x416": "STM32L1xx cat. 1",
+    "0x429": "STM32L1xx cat. 2",
+    "0x427": "STM32L1xx cat. 3",
+    "0x436": "STM32L1xx cat. 4",
+    "0x437": "STM32L1xx cat. 5/6",
+    "0x415": "STM32L47x/L48x",
+    "0x435": "STM32L43x/L44x",
+    "0x461": "STM32L496/L4A6",
+    "0x462": "STM32L45x/L46x",
+    "0x464": "STM32L41x/L42x",
+    "0x470": "STM32L4R/L4S",
+    "0x471": "STM32L4P5/L4Q5",
+    "0x468": "STM32G431/G441",
+    "0x469": "STM32G47x/G48x",
+    "0x479": "STM32G491/G4A1",
+    "0x495": "STM32WB5x",
+    "0x497": "STM32WLE5/WL55"
+   }
+  },
+  {
+   "vendor": "STMicroelectronics",
+   "stm32": true,
+   "what": "DBGMCU_IDCODE",
+   "addr": "0x5c001000",
+   "mask": "0x00000fff",
+   "cores": [
+    "Cortex-M7"
+   ],
+   "parts": {
+    "0x450": "STM32H74x/H75x",
+    "0x480": "STM32H7A3/H7B3",
+    "0x483": "STM32H72x/H73x"
+   }
+  },
+  {
+   "vendor": "STMicroelectronics",
+   "stm32": true,
+   "what": "DBGMCU_IDCODE",
+   "addr": "0x40015800",
+   "mask": "0x00000fff",
+   "cores": [
+    "Cortex-M0",
+    "Cortex-M0+"
+   ],
+   "parts": {
+    "0x440": "STM32F030x8/F05x",
+    "0x442": "STM32F030xC/F09x",
+    "0x444": "STM32F03x",
+    "0x445": "STM32F04x/F070x6",
+    "0x448": "STM32F07x",
+    "0x460": "STM32G07x/G08x",
+    "0x466": "STM32G03x/G04x",
+    "0x456": "STM32G05x/G06x",
+    "0x467": "STM32G0B1/G0C1",
+    "0x457": "STM32L01x/L02x",
+    "0x425": "STM32L03x/L04x",
+    "0x417": "STM32L05x/L06x",
+    "0x447": "STM32L07x/L08x",
+    "0x443": "STM32C011",
+    "0x453": "STM32C031"
+   }
+  },
+  {
+   "vendor": "STMicroelectronics",
+   "stm32": true,
+   "what": "DBGMCU_IDCODE",
+   "addr": "0xe0044000",
+   "mask": "0x00000fff",
+   "cores": [
+    "Cortex-M33"
+   ],
+   "parts": {
+    "0x472": "STM32L552/L562",
+    "0x482": "STM32U575/U585",
+    "0x455": "STM32U535/U545",
+    "0x481": "STM32U59x/U5Ax"
+   }
+  },
+  {
+   "vendor": "STMicroelectronics",
+   "stm32": true,
+   "what": "DBGMCU_IDCODE",
+   "addr": "0x44024000",
+   "mask": "0x00000fff",
+   "cores": [
+    "Cortex-M33"
+   ],
+   "parts": {
+    "0x484": "STM32H56x/H573",
+    "0x474": "STM32H503"
+   }
+  },
+  {
+   "vendor": "Nordic Semiconductor",
+   "what": "FICR INFO.PART",
+   "addr": "0x10000100",
+   "mask": "0xffffffff",
+   "cores": [
+    "Cortex-M4"
+   ],
+   "parts": {
+    "0x00052832": "nRF52832",
+    "0x00052840": "nRF52840",
+    "0x00052833": "nRF52833",
+    "0x00052820": "nRF52820",
+    "0x00052811": "nRF52811",
+    "0x00052810": "nRF52810",
+    "0x00052805": "nRF52805"
+   }
+  }
+ ],
+ "_jtag_comment": "Matched in order: (idcode & mask) == value. An IDCODE whose designer is ST (0x020) and that no entry matches is a boundary-scan TAP: (idcode >> 12) & 0xfff is the STM32 DEV_ID, looked up in the stm32 id_registers. TARGETID (SWD DPv2) of an ST part works the same way.",
+ "jtag": [
+  {
+   "mask": "0x0fffffff",
+   "value": "0x0ba00477",
+   "name": "Arm JTAG-DP (Cortex-M debug port)",
+   "vendor": "Arm",
+   "debug_port": true
+  },
+  {
+   "mask": "0x0fffffff",
+   "value": "0x0ba02477",
+   "name": "Arm JTAG-DP (Cortex-M debug port)",
+   "vendor": "Arm",
+   "debug_port": true
+  },
+  {
+   "mask": "0xffffffff",
+   "value": "0x120034e5",
+   "name": "ESP32 / ESP32-S2 / ESP32-S3 (Xtensa)",
+   "vendor": "Espressif"
+  },
+  {
+   "mask": "0xffffffff",
+   "value": "0x00005c25",
+   "name": "ESP32-C3",
+   "vendor": "Espressif"
+  },
+  {
+   "mask": "0xffffffff",
+   "value": "0x0000dc25",
+   "name": "ESP32-C6",
+   "vendor": "Espressif"
+  },
+  {
+   "mask": "0xffffffff",
+   "value": "0x00010c25",
+   "name": "ESP32-H2",
+   "vendor": "Espressif"
+  }
+ ],
+ "usb": {
+  "16c0:0478": "Teensy (HalfKay bootloader)",
+  "2e8a:0003": "RP2040 (BOOTSEL)",
+  "2e8a:000f": "RP2350 (BOOTSEL)",
+  "0483:df11": "STM32 (DFU bootloader)",
+  "303a:1001": "ESP32-S3 / C3 / C6 (USB serial/JTAG)",
+  "0483:374b": "ST-LINK/V2-1",
+  "0483:374e": "ST-LINK/V3",
+  "0483:374f": "ST-LINK/V3",
+  "0d28:0204": "DAPLink (CMSIS-DAP)",
+  "1366:0101": "SEGGER J-Link",
+  "1366:1015": "SEGGER J-Link OB",
+  "10c4:ea60": "CP210x USB-UART",
+  "1a86:7523": "CH340 USB-UART",
+  "0403:6001": "FTDI FT232R USB-UART",
+  "0403:6010": "FTDI FT2232 USB-UART",
+  "0403:6014": "FTDI FT232H",
+  "03eb:2ff4": "ATmega32U4 (DFU bootloader)",
+  "2341:0043": "Arduino Uno",
+  "2341:0042": "Arduino Mega 2560"
+ }
+}

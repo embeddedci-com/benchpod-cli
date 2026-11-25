@@ -318,6 +318,7 @@ leave out from the profile named by `--wiring-profile`, else the pod's default:
 | `flash`     | `--nreset`   | `swd_nreset`  |
 | `flash`     | `--target`   | `swd_target`  |
 | `spi-flash` | `--sck`, `--mosi`, `--miso`, `--cs` | `spi_sclk`, `spi_mosi`, `spi_miso`, `spi_cs` |
+| `detect`    | (none: no pin flags) | `swd_swclk`, `swd_swdio`, the JTAG fields, `efuse`, `uart_rx`, `uart_tx` and the signals named in [`benchpod detect`](#benchpod-detect) |
 
 Flags always win. The log says which values came from the profile (`[benchpod] flash: SWCLK
 LA11, SWDIO LA12 from the pod's wiring profile; ...`) or that the flags were used. Firmware
@@ -402,6 +403,7 @@ benchpod usb-reattach                   # re-enumerate on USB (macOS: after unlo
 # Firmware:
 benchpod flash ...        # flash a TARGET/DUT wired to the pod (SWD via OpenOCD CMSIS-DAP; --build: an uploaded build)
 benchpod spi-flash ...    # read/erase/program an SPI NOR flash on four LA pins (network)
+benchpod detect           # which chip is wired to the pod: SWD, JTAG, pin programmers, ESP32, USB (firmware with dap_id for SWD/JTAG)
 benchpod usb-host [on|off]           # the pod hosts the board's USB port and shows the device (firmware 4.0.3+)
 benchpod usb-flash FILE              # flash a board over USB: UF2, PICOBOOT, DFU, drive, Teensy, Arduino, ESP32 (firmware 4.0.3+)
 benchpod usb-check TEST              # check the board's USB firmware: enumeration time, current, suspend, resets, dropouts (firmware 4.0.3+)
@@ -1119,6 +1121,8 @@ stderr with a `[benchpod]` prefix.
 | `5`  | Unreachable: nothing answered on the pod's address, no pod was found on USB, or the pod is offline on embeddedci.com. |
 | `6`  | Update the CLI: the pod's firmware needs a newer benchpod CLI (see [Firmware and CLI levels](#firmware-and-cli-levels)). |
 | `7`  | Update the pod: its firmware is older than this CLI drives (firmware before 4.0: run `benchpod flash-self`), or it lacks what the command needs (`BP0002`, `BP0017`, `BP0060`). |
+| `8`  | `benchpod detect` found no chip. |
+| `9`  | `benchpod detect`: target power is off, so nothing was probed. |
 
 `benchpod ci` has its own exit codes (a CI result, not a command's): see
 [Exit codes of `benchpod ci`](#exit-codes-of-benchpod-ci).
@@ -2075,6 +2079,50 @@ starts it and says so.
 benchpod usb-hid
 benchpod usb-hid capture --duration 30s
 benchpod usb-hid capture --count 5 --instance 1 --json
+```
+
+### `benchpod detect`
+
+Find out which chip is wired to the pod. `detect` reads the target's IDs every way the wiring
+profile (`--wiring-profile`, else the pod's default) allows and names the chip from an ID table
+built into the CLI (a copy of the SDK's `detect_ids.json`, refreshed by
+`scripts/sync-detect-ids.sh`):
+
+| Method | Needs in the wiring profile | What it reads |
+|--------|-----------------------------|---------------|
+| `swd`  | `swd_swclk` and `swd_swdio` | The debug port, the core and the vendor's ID register (for example an STM32's DBGMCU_IDCODE). Firmware with `dap_id`. |
+| `jtag` | `jtag_tck`, `jtag_tms`, `jtag_tdi`, `jtag_tdo` | The IDCODEs of the JTAG chain. An ST boundary-scan TAP names the STM32. Firmware with `dap_id`. |
+| `usb`  | USB host mode already on (`benchpod usb-host on`) with a device mounted | VID:PID, the loader mode (Teensy HalfKay, BOOTSEL, DFU, ...) or the product string. `detect` never turns host mode on. Firmware 4.0.3 or later. |
+| `updi`, `pic`, `c2`, `tpi`, `pdi` | A signal named for the protocol: `UPDI`; `ICSPCLK` and `ICSPDAT`; `C2CK` and `C2D`; `TPICLK` and `TPIDATA`; `PDI_CLK` and `PDI_DATA` (the SWD pins are not a fallback) | The chip's ID through the same `prog_flash` info that `flash --target ... --info` uses. |
+| `esp32` | `uart_rx`, `uart_tx` and a `BOOT`, `IO0` or `IO9` signal | The chip name from its UART ROM loader. |
+
+`swd`, `jtag` and `usb` only read. The programmer and ESP32 probes put the chip into programming
+mode and reset it ("invasive"); `--no-invasive` leaves them out. Nothing is probed while target
+power is off (the profile's `efuse` rail, else either rail), and a pin that another function
+owns (a UART, a GPIO, a sensor: see `benchpod la pins`) is skipped. SWD and JTAG on a pod without
+the `dap_id` feature are listed as skipped with "needs pod firmware with dap_id"; update the pod
+with `benchpod flash-self`.
+
+Each finding is one line: the method, the chip with its vendor and core, the ID and the
+confidence: `high` (an exact table match), `medium` (vendor and core known, not the part) or
+`low` (only a debug port, or an unknown device, answered). Methods that were not probed follow as
+`skipped` lines; a method the profile does not wire is only listed when you name it with
+`--methods`. Exit code 0 when something was found, 8 when nothing was, 9 when target power is off.
+
+| Flag            | Default | Purpose                                                            |
+|-----------------|---------|--------------------------------------------------------------------|
+| `--methods`     | all the wiring allows | Only these methods, comma separated: `swd`, `jtag`, `updi`, `pic`, `c2`, `tpi`, `pdi`, `esp32`, `usb`. |
+| `--no-invasive` | off     | Only `swd`, `jtag` and `usb`: do not program pins, talk to an ESP32 ROM loader or reset the chip. |
+| `--json`        | off     | Print the result as JSON: `powered`, `findings` (`method`, `chip`, `vendor`, `core`, `id`, `confidence`, `pins`, `raw`, `invasive`), `skipped` (`method`, `reason`) and `notes`. |
+
+```bash
+benchpod detect
+# swd  STM32F446 (STMicroelectronics, Cortex-M4)  id 0x10006421  high
+# jtag  Arm JTAG-DP (Cortex-M debug port) (Arm)  id 0x4ba00477  low
+# jtag  STM32F446 (STMicroelectronics)  id 0x06421041  high
+# skipped esp32: LA5 (uart_rx) is in use by uart
+benchpod detect --no-invasive
+benchpod detect --methods swd,jtag --json
 ```
 
 ### `benchpod spi-flash`

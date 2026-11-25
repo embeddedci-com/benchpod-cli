@@ -21,10 +21,10 @@ import (
 // embeddedci/benchpod/prog.py does. Each region of the image is staged in the pod's PSRAM
 // (load_bin), written and read back by the pod in the background, and this polls its status.
 
-const (
-	progPollInterval = 200 * time.Millisecond
-	progInfoTimeout  = 10 * time.Second
-)
+const progInfoTimeout = 10 * time.Second
+
+// progPollInterval is how often progWait asks the pod (tests shorten it).
+var progPollInterval = 200 * time.Millisecond
 
 // Wiring-profile signal names looked up when a pin flag is not given (case-insensitive), as in
 // the SDK; the profile's swd_swclk and swd_swdio are the last fallback.
@@ -214,7 +214,7 @@ func progDirectionError(err error, pins string) error {
 }
 
 // progCommand runs one prog_flash command, with the refusals worth explaining in words.
-func progCommand(ctx context.Context, c *tcpclient.Client, req map[string]any, pins string) (json.RawMessage, error) {
+func progCommand(ctx context.Context, c podCommander, req map[string]any, pins string) (json.RawMessage, error) {
 	raw, err := c.Command(ctx, req)
 	if err == nil {
 		return raw, nil
@@ -233,7 +233,7 @@ func progCommand(ctx context.Context, c *tcpclient.Client, req map[string]any, p
 }
 
 // progWait polls prog_flash status until the job ends or timeout passes (then aborts it).
-func progWait(ctx context.Context, c *tcpclient.Client, what string, timeout time.Duration, pins string) (*progStatus, error) {
+func progWait(ctx context.Context, c podCommander, what string, timeout time.Duration, pins string) (*progStatus, error) {
 	lastPct := -1
 	deadline := time.Now().Add(timeout)
 	for {
@@ -268,7 +268,7 @@ func progWait(ctx context.Context, c *tcpclient.Client, what string, timeout tim
 }
 
 // progLAmV is the pod's LA I/O voltage in millivolts, 0 when it is not set or unknown.
-func progLAmV(ctx context.Context, c *tcpclient.Client) int {
+func progLAmV(ctx context.Context, c podCommander) int {
 	raw, err := c.Command(ctx, map[string]any{"cmd": "la_voltage"})
 	if err != nil {
 		return 0
@@ -282,7 +282,7 @@ func progLAmV(ctx context.Context, c *tcpclient.Client) int {
 
 // progEnsureDeepImage: the image is staged in PSRAM, which only the deep-replay gateware image
 // writes (as for ESP32 flashing): a pod left on another image is switched first (~3 s).
-func progEnsureDeepImage(ctx context.Context, c *tcpclient.Client) {
+func progEnsureDeepImage(ctx context.Context, c podCommander) {
 	raw, err := c.Command(ctx, map[string]any{"cmd": "fpga_image"})
 	if err != nil {
 		return // an older pod without fpga_image: nothing to switch
