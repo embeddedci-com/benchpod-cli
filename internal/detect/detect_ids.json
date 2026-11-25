@@ -1,6 +1,6 @@
 {
  "version": 1,
- "_comment": "Target IDs for detect (BenchPod.detect, benchpod detect, the web app). Canonical copy in embeddedci-python; the CLI and the web app carry copies. Hex strings, lower case.",
+ "_comment": "Target IDs for detect (BenchPod.detect, benchpod detect, the web app). Canonical copy in embeddedci-python; the CLI and the web app carry copies. Hex strings, lower case. A reading that no table entry names is never guessed: see detect.py.",
  "jep106": {
   "0x020": "STMicroelectronics",
   "0x23b": "Arm",
@@ -193,6 +193,13 @@
    "debug_port": true
   },
   {
+   "mask": "0x0fffffff",
+   "value": "0x0ba04477",
+   "name": "Arm JTAG-DP (Cortex-M debug port)",
+   "vendor": "Arm",
+   "debug_port": true
+  },
+  {
    "mask": "0xffffffff",
    "value": "0x120034e5",
    "name": "ESP32 / ESP32-S2 / ESP32-S3 (Xtensa)",
@@ -237,5 +244,43 @@
   "03eb:2ff4": "ATmega32U4 (DFU bootloader)",
   "2341:0043": "Arduino Uno",
   "2341:0042": "Arduino Mega 2560"
- }
+ },
+ "_dpidr_comment": "DPIDR of an SWD debug port, matched like the jtag list: (dpidr & mask) == value (the version nibble is masked). Only names the port: a debug port alone is a low confidence finding.",
+ "dpidr": [
+  {
+   "mask": "0x0fffffff",
+   "value": "0x0ba01477",
+   "name": "Arm SW-DP (Cortex-M3/M4 debug port)",
+   "vendor": "Arm",
+   "debug_port": true
+  },
+  {
+   "mask": "0x0fffffff",
+   "value": "0x0ba02477",
+   "name": "Arm SW-DP v2 (Cortex-M7 debug port)",
+   "vendor": "Arm",
+   "debug_port": true
+  },
+  {
+   "mask": "0x0fffffff",
+   "value": "0x0ba04477",
+   "name": "Arm DP v3 (Cortex-M33 debug port)",
+   "vendor": "Arm",
+   "debug_port": true
+  },
+  {
+   "mask": "0x0fffffff",
+   "value": "0x0bb11477",
+   "name": "Arm SW-DP (Cortex-M0 debug port)",
+   "vendor": "Arm",
+   "debug_port": true
+  },
+  {
+   "mask": "0x0fffffff",
+   "value": "0x0bc11477",
+   "name": "Arm SW-DP (Cortex-M0+ debug port)",
+   "vendor": "Arm",
+   "debug_port": true
+  }
+ ]
 }
