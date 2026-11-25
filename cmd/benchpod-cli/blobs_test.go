@@ -1,7 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/serialconsole"
 )
@@ -69,5 +76,81 @@ func TestBlobSourceForFirmware(t *testing.T) {
 	}
 	if s := blobSourceForFirmware("", "", ""); s.base != "https://github.com/embeddedci-com/benchpod-firmware/releases/latest/download" {
 		t.Fatalf("latest: %s", s.base)
+	}
+}
+
+// fakePod answers the pod commands updateBridge sends: wifi_status walks through statuses (the
+// last one repeats), wifi_bridge update answers updateErr.
+type fakePod struct {
+	statuses  []string
+	polls     int
+	updateErr error
+	sent      []string
+}
+
+func (f *fakePod) Command(_ context.Context, req map[string]any) (json.RawMessage, error) {
+	switch req["cmd"] {
+	case "wifi_bridge":
+		f.sent = append(f.sent, fmt.Sprintf("%v/%v", req["cmd"], req["action"]))
+		return json.RawMessage(`{"update":"requested"}`), f.updateErr
+	case "wifi_status":
+		i := min(f.polls, len(f.statuses)-1)
+		f.polls++
+		return json.RawMessage(fmt.Sprintf(`{"via":"wifi-bridge","bridge":{"fw":"1.2.3","update":%q}}`, f.statuses[i])), nil
+	}
+	return nil, errors.New("unexpected command")
+}
+
+func fastBridgePoll(t *testing.T) {
+	t.Helper()
+	w, p := bridgeUpdateWait, bridgeUpdatePoll
+	bridgeUpdateWait, bridgeUpdatePoll = 200*time.Millisecond, time.Millisecond
+	t.Cleanup(func() { bridgeUpdateWait, bridgeUpdatePoll = w, p })
+}
+
+func TestUpdateBridgeSucceeds(t *testing.T) {
+	fastBridgePoll(t)
+	f := &fakePod{statuses: []string{"updated to 1.2.2", "updating 1.2.2 to 1.2.3: starting", "updated to 1.2.3"}}
+	var out bytes.Buffer
+	updateBridge(context.Background(), f, &out)
+	if len(f.sent) != 1 || f.sent[0] != "wifi_bridge/update" {
+		t.Fatalf("sent %v", f.sent)
+	}
+	if !strings.Contains(out.String(), "bridge: updated, the bridge reports firmware 1.2.3") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+}
+
+func TestUpdateBridgeNoBridge(t *testing.T) {
+	f := &fakePod{statuses: []string{""}, updateErr: errors.New("wifi_bridge: no Wi-Fi bridge on the Ethernet port")}
+	var out bytes.Buffer
+	updateBridge(context.Background(), f, &out)
+	if !strings.Contains(out.String(), "no Wi-Fi bridge on the pod's Ethernet port") || f.polls > 1 {
+		t.Fatalf("output:\n%s (polls %d)", out.String(), f.polls)
+	}
+}
+
+func TestUpdateBridgeFailureAndTimeout(t *testing.T) {
+	fastBridgePoll(t)
+	var out bytes.Buffer
+	updateBridge(context.Background(), &fakePod{statuses: []string{"", "update to 1.2.3 failed: no answer"}}, &out)
+	if !strings.Contains(out.String(), "the update did not finish") {
+		t.Fatalf("failure output:\n%s", out.String())
+	}
+	out.Reset()
+	updateBridge(context.Background(), &fakePod{statuses: []string{"updating 1.2.2 to 1.2.3: starting"}}, &out)
+	if !strings.Contains(out.String(), "not finished after") {
+		t.Fatalf("timeout output:\n%s", out.String())
+	}
+}
+
+func TestBridgeUpdateDone(t *testing.T) {
+	for s, want := range map[string]bool{
+		"updated to 1.2.3": true, "update to 1.2.3 failed: x": true, "cannot update: no bridge": true,
+		"update to 1.2.3 failed (will retry): x": false, "updating 1.2.2 to 1.2.3: starting": false, "": false,
+	} {
+		if got := bridgeUpdateDone(s); got != want {
+			t.Errorf("bridgeUpdateDone(%q) = %v", s, got)
+		}
 	}
 }
