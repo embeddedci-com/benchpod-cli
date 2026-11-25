@@ -340,6 +340,11 @@ func (d *detector) add(f detect.Finding) {
 
 // ── swd and jtag ────────────────────────────────────────────────────────────
 
+// detectAnswerWaitMS is how long the pod retries the first SWD / JTAG read for a target that is
+// still booting: a NUCLEO answers SWD about 2 s after its power goes on (its ST-LINK boots first).
+// The pod replies as soon as the target answers, so only an empty port costs the full wait.
+const detectAnswerWaitMS = 3000
+
 func (d *detector) dapID(req map[string]any, into any) error {
 	req["cmd"], req["op"] = "dap_start", "id"
 	raw, err := d.pod.Command(d.ctx, req)
@@ -368,7 +373,9 @@ func (d *detector) swd() {
 	}
 	req := func() map[string]any { return map[string]any{"swclk": pins["swclk"], "swdio": pins["swdio"]} }
 	var r detect.SWDReply
-	if err := d.dapID(req(), &r); err != nil {
+	first := req()
+	first["wait_ms"] = detectAnswerWaitMS
+	if err := d.dapID(first, &r); err != nil {
 		d.failed("swd", err)
 		return
 	}
@@ -418,7 +425,8 @@ func (d *detector) jtag() {
 		d.skip("jtag", detectNeedsDAP, false)
 		return
 	}
-	req := map[string]any{"tck": pins["tck"], "tms": pins["tms"], "tdi": pins["tdi"], "tdo": pins["tdo"], "trst": trst}
+	req := map[string]any{"tck": pins["tck"], "tms": pins["tms"], "tdi": pins["tdi"], "tdo": pins["tdo"], "trst": trst,
+		"wait_ms": detectAnswerWaitMS}
 	var r detect.JTAGReply
 	if err := d.dapID(req, &r); err != nil {
 		d.failed("jtag", err)
