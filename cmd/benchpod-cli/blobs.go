@@ -284,10 +284,12 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).\n\n" +
 			"Each blob's signature (blob-*.bin.sig) is checked and reported, and handed to\n" +
 			"firmware that checks it too; for now a missing or failing one never stops an install.\n\n" +
-			"After it writes the \"bridge\" slot (the Wi-Fi bridge's firmware), it tells the pod to push\n" +
-			"that image to the bridge on its Ethernet port ({\"cmd\":\"wifi_bridge\",\"action\":\"update\"})\n" +
-			"and waits up to a minute for the bridge to report it. With no bridge connected it says\n" +
-			"so and succeeds. --no-bridge-update skips that step.",
+			"With --force, after it writes the \"bridge\" slot (the Wi-Fi bridge's firmware), it tells\n" +
+			"the pod to push that image to the bridge on its Ethernet port, even an older or EMC test\n" +
+			"image ({\"cmd\":\"wifi_bridge\",\"action\":\"update\"}), and waits up to a minute for the\n" +
+			"bridge to report it. With no bridge connected it says so and succeeds. Without --force\n" +
+			"the pod updates the bridge by itself when the slot holds a newer release image.\n" +
+			"--no-bridge-update skips the push.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			conn, err := g.blobConnection()
@@ -326,7 +328,7 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 			if len(installed) > 0 {
 				g.reportFirmware(blobsEvent(ctx, target, before, installed))
 			}
-			if err == nil && !noBridgeUpdate && installedBlob(installed, "bridge") {
+			if err == nil && force && !noBridgeUpdate && installedBlob(installed, "bridge") {
 				if c, ok := target.(podCommander); ok {
 					updateBridge(ctx, c, os.Stderr)
 				}
@@ -338,7 +340,7 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&release, "release", "", "take the blobs from this firmware release tag (default: the one the pod runs)")
 	cmd.Flags().StringVar(&only, "only", "", "comma-separated slots to install (gw0, gw1, gw2, esp, xip, xip_prog; bridge on pods with Wi-Fi bridge support)")
 	cmd.Flags().BoolVar(&force, "force", false, "install even blobs the pod already holds")
-	cmd.Flags().BoolVar(&noBridgeUpdate, "no-bridge-update", false, "do not tell the pod to push a newly installed bridge image to its Wi-Fi bridge")
+	cmd.Flags().BoolVar(&noBridgeUpdate, "no-bridge-update", false, "with --force: do not tell the pod to push the installed bridge image to its Wi-Fi bridge")
 	return cmd
 }
 

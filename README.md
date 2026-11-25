@@ -2221,12 +2221,14 @@ When the pod does not list its blob slots (its `blob_status` command fails), it 
 nothing and exits non-zero with the pod's reason.
 
 The `bridge` slot holds the Wi-Fi bridge's firmware (pods with Wi-Fi bridge support; select it
-with `--only bridge`, add `--force` to rewrite an identical image). After it writes that slot,
-the CLI sends `{"cmd":"wifi_bridge","action":"update"}` so the pod pushes the image to the bridge
-on its Ethernet port, then polls `wifi_status` for up to 60 seconds until the bridge reports
+with `--only bridge`, add `--force` to rewrite an identical image). With `--force`, after it writes that slot, the CLI
+sends `{"cmd":"wifi_bridge","action":"update"}` so the pod pushes the image to the bridge
+on its Ethernet port (also an older image or an EMC test build, which the pod never installs on
+its own), then polls `wifi_status` for up to 60 seconds until the bridge reports
 `updated to <version>`. With no bridge connected it prints a note and still succeeds (the image
 stays in the slot); a push still running after 60 seconds is reported, not an error.
-`--no-bridge-update` skips this step.
+`--no-bridge-update` skips this step. Without `--force` nothing is pushed: the pod updates the
+bridge by itself when the slot holds a newer release image.
 
 The ESP32-C3 image (`esp`) goes last. Firmware from the release after 3.10.x keeps no copy of it
 on the pod and writes it straight into the C3 instead: that takes about 2 minutes with the pod's
@@ -2246,7 +2248,7 @@ does the same after it installs the blobs. When the reload fails, restarting the
 | `--dir`     | (none)          | Take the blobs from this directory (holding `blobs-manifest.json`), e.g. `stm32h563/build/blobs`. |
 | `--only`    | (all)           | Comma-separated slots to install: `gw0`, `gw1`, `gw2` (the sensor emulation image, gateware v54+), `esp` (pods with a built-in ESP32-C3), `xip` and `xip_prog` (code the pod runs from its W25Q; `xip_prog` holds the chip protocols of `prog_flash`). |
 | `--force`   | off             | Install even the blobs the pod already holds.                  |
-| `--no-bridge-update` | off    | Do not tell the pod to push a newly installed `bridge` image to its Wi-Fi bridge. |
+| `--no-bridge-update` | off    | With `--force`: do not tell the pod to push the installed `bridge` image to its Wi-Fi bridge. |
 
 ### `benchpod dfu`
 
