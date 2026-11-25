@@ -183,6 +183,8 @@ type podWiring struct {
 	SwdSwdio  *int   `json:"swd_swdio"`
 	SwdNreset *bool  `json:"swd_nreset"`
 	SwdTarget string `json:"swd_target"`
+	// Efuse is the target-power rail the profile uses (1 internal 5 V, 2 external); nil = not set.
+	Efuse *int `json:"efuse"`
 	// DebugPort is "swd" or "jtag" when the profile fixes the debug port; nil = automatic.
 	DebugPort *string `json:"debug_port"`
 	// JTAG pins (firmware feature jtag); JtagTrst is optional.

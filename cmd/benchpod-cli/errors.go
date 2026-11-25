@@ -114,6 +114,9 @@ const (
 	exitUnreachable = 5 // the pod did not answer on its address, no pod on USB, or offline on embeddedci.com
 	exitUpdateCLI   = 6 // the pod's firmware needs a newer CLI (its API level is above this CLI's, or BP0030)
 	exitUpdatePod   = 7 // the pod's firmware is too old for this CLI or the command (below firmware 4.0, BP0002, BP0017)
+
+	exitDetectNothing   = 8 // detect found no chip
+	exitDetectUnpowered = 9 // detect: target power is off, nothing was probed
 )
 
 // exitCodesHelp is the exit-code table for the root command's help.
@@ -127,7 +130,9 @@ const exitCodesHelp = "Exit codes:\n" +
 	"     pod is offline on embeddedci.com\n" +
 	"  6  update the CLI: the pod's firmware needs a newer benchpod CLI\n" +
 	"  7  update the pod: its firmware is too old for this CLI (firmware before 4.0:\n" +
-	"     `benchpod flash-self`) or lacks what the command needs"
+	"     `benchpod flash-self`) or lacks what the command needs\n" +
+	"  8  benchpod detect found no chip\n" +
+	"  9  benchpod detect: target power is off, nothing was probed"
 
 // usageError marks a command-line mistake (exit code 2).
 type usageError struct{ err error }
@@ -152,6 +157,10 @@ func exitCode(err error) int {
 	// Cobra's own complaint about an unknown subcommand is not a typed error.
 	if strings.HasPrefix(err.Error(), "unknown command ") {
 		return exitUsage
+	}
+	var dout *detectOutcome
+	if errors.As(err, &dout) {
+		return dout.code
 	}
 	var upd *tcpclient.UpdateRequiredError
 	if errors.As(err, &upd) {
