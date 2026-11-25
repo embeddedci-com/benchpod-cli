@@ -510,7 +510,7 @@ func (d *detector) prog(proto string) {
 	if mv > 0 {
 		volts = fmt.Sprintf("%g V", float64(mv)/1000)
 	}
-	st, dev, findErr, err := progIdentify(ctx, pod, proto, pins, "", pinText)
+	st, dev, findErr, err := progIdentify(ctx, pod, proto, pins, "", pinText, progNamed(ctx, pod))
 	if err != nil {
 		if strings.Contains(err.Error(), "no prog_flash command") {
 			d.skip(proto, "needs pod firmware with prog_flash", false)

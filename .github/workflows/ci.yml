@@ -32,6 +32,22 @@ jobs:
           path: benchpod-firmware
           sparse-checkout: stm32h563/src
           persist-credentials: false
+      # The device table of the pin programmers is generated from embeddedci-python's prog-devices/
+      # (one YAML file per chip); the copy in internal/progdev must be that generator's output.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: embeddedci-com/embeddedci-python
+          ref: main
+          path: embeddedci-python
+          sparse-checkout: |
+            prog-devices
+            scripts
+            packages/embeddedci/src/embeddedci/benchpod
+          persist-credentials: false
+      - name: Pin-programmer device table matches the YAML source
+        run: |
+          python3 -m pip install pyyaml
+          scripts/sync-prog-devices.sh --check embeddedci-python
       - run: go vet ./...
       - run: go test ./... -count=1
         env:

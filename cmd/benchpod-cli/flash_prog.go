@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/embeddedci-com/benchpod-cli/internal/features"
 	"github.com/embeddedci-com/benchpod-cli/internal/progdev"
 	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
@@ -267,18 +268,27 @@ func progWait(ctx context.Context, c podCommander, what string, timeout time.Dur
 	}
 }
 
+// progNamed reports whether the pod takes the chip's options as named fields (feature prog_named,
+// firmware 4.0.6 and later); an older pod, or a status that does not say, gets the packed flags.
+func progNamed(ctx context.Context, c podCommander) bool {
+	raw, err := c.Command(ctx, features.StatusRequest())
+	if err != nil {
+		return false
+	}
+	ok, err := features.Has(raw, "prog_named")
+	return err == nil && ok
+}
+
 // progReadInfo enters programming mode and reads the chip's ID (nothing is written): prog_flash
-// op info with the chip's flags and cp_addr when known, then status until the job ends.
-func progReadInfo(ctx context.Context, c podCommander, proto string, pins map[string]any, flags, cpAddr int, pinText string) (*progStatus, error) {
+// op info with the chip's fields (progdev.Device.Fields or an entry style's) when known, then
+// status until the job ends.
+func progReadInfo(ctx context.Context, c podCommander, proto string, pins, fields map[string]any, pinText string) (*progStatus, error) {
 	req := map[string]any{"cmd": "prog_flash", "op": "info", "proto": proto}
 	for k, v := range pins {
 		req[k] = v
 	}
-	if flags != 0 {
-		req["flags"] = flags
-	}
-	if cpAddr != 0 {
-		req["cp_addr"] = cpAddr
+	for k, v := range fields {
+		req[k] = v
 	}
 	if _, err := progCommand(ctx, c, req, pinText); err != nil {
 		return nil, err
@@ -294,17 +304,17 @@ func progReadInfo(ctx context.Context, c podCommander, proto string, pins map[st
 //
 // It returns the last status (its result is not "ok" when nothing answered), the chip (nil when
 // the ID is not in the table, findErr says why) and err for a failed command.
-func progIdentify(ctx context.Context, c podCommander, proto string, pins map[string]any, name, pinText string) (st *progStatus, dev *progdev.Device, findErr, err error) {
+func progIdentify(ctx context.Context, c podCommander, proto string, pins map[string]any, name, pinText string, named bool) (st *progStatus, dev *progdev.Device, findErr, err error) {
 	if proto != "pic" || name != "" {
-		flags, cp := 0, 0
+		var fields map[string]any
 		if proto == "pic" {
 			d, ferr := progdev.FindDevice(proto, "", name)
 			if ferr != nil {
 				return nil, nil, ferr, nil
 			}
-			flags, cp = d.Flags, d.CPAddr
+			fields = d.Fields(named)
 		}
-		if st, err = progReadInfo(ctx, c, proto, pins, flags, cp, pinText); err != nil || st.result() != "ok" {
+		if st, err = progReadInfo(ctx, c, proto, pins, fields, pinText); err != nil || st.result() != "ok" {
 			return st, nil, nil, err
 		}
 		dev, findErr = progdev.FindDevice(proto, st.ID, name)
@@ -313,7 +323,7 @@ func progIdentify(ctx context.Context, c podCommander, proto string, pins map[st
 	var first *progStatus
 	var firstFind error
 	for _, style := range progdev.PICEntryStyles() {
-		s, err := progReadInfo(ctx, c, proto, pins, style, 0, pinText)
+		s, err := progReadInfo(ctx, c, proto, pins, style.Fields(named), pinText)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -330,8 +340,8 @@ func progIdentify(ctx context.Context, c podCommander, proto string, pins map[st
 			}
 			continue
 		}
-		if d.Flags&progdev.PICEntryMask != style {
-			if s, err = progReadInfo(ctx, c, proto, pins, d.Flags, d.CPAddr, pinText); err != nil || s.result() != "ok" {
+		if !style.SameEntry(*d) {
+			if s, err = progReadInfo(ctx, c, proto, pins, d.Fields(named), pinText); err != nil || s.result() != "ok" {
 				return s, nil, nil, err
 			}
 			if d, ferr = progdev.FindDevice(proto, s.ID, d.Name); ferr != nil {
@@ -438,7 +448,8 @@ func runFlashProg(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 	}
 
 	// Enter programming mode and read the chip's ID (nothing is written).
-	st, dev, findErr, err := progIdentify(ctx, c, proto, pins, strings.TrimSpace(p.device), pinText)
+	named := progNamed(ctx, c)
+	st, dev, findErr, err := progIdentify(ctx, c, proto, pins, strings.TrimSpace(p.device), pinText, named)
 	if err != nil {
 		return err
 	}
@@ -501,11 +512,8 @@ func runFlashProg(g *globalFlags, f *flashFlags, spec ConnSpec) error {
 		if e := dev.ExpectID(); e != "" {
 			start["expect_id"] = e
 		}
-		if dev.Flags != 0 {
-			start["flags"] = dev.Flags
-		}
-		if dev.CPAddr != 0 {
-			start["cp_addr"] = dev.CPAddr
+		for k, v := range dev.Fields(named) {
+			start[k] = v
 		}
 		if _, err := progCommand(ctx, c, start, pinText); err != nil {
 			return err

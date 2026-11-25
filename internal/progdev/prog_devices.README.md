@@ -6,12 +6,22 @@ the chip's ID bytes and the host passes the geometry. This file is that table, p
 per line, so other clients (the CLI) can copy it unchanged. The SDK reads it in
 `embeddedci/benchpod/prog.py`.
 
-## Schema (`"schema": 1`)
+**It is generated.** The source is `prog-devices/` in the embeddedci-python repository: one YAML file
+per chip, grouped by protocol and family, with typed fields (schema and workflow in
+`prog-devices/README.md`). `scripts/gen_prog_devices.py` writes this file, the CLI's copy and the web
+app's detect table; CI fails when any of them differs from the source. Do not edit them by hand.
+
+## Schema (`"schema": 2`)
 
 ```
-{ "schema": 1, "about": "...",
-  "families": { "<proto>": { "target": "...", "title": "...", "ignore": [...], "devices": [...] } } }
+{ "schema": 2, "about": "...",
+  "families": { "<proto>": { "target": "...", "title": "...", "ignore": [...], "devices": [...],
+                             "entry_styles": [...] } } }
 ```
+
+`entry_styles` (`pic` only): the distinct ways the table's PICs are entered, the plain 6-bit set first,
+each `{"prog": {...}, "flags": n}`: what a host tries, in turn, when no chip is named (a PIC answers
+only to its own command set).
 
 `<proto>` is the pod's `proto`: `updi`, `pic`, `c2`, `tpi`, `pdi`. `target` is the
 `flash(target=...)` name of the family (`avr-updi`, `pic`, `efm8`, `attiny-tpi`, `xmega`); the
@@ -29,7 +39,8 @@ A device:
 | `id` | Hex bytes, in the order of the pod's `status.id`. `??` is a byte that varies (a revision). The ID is matched as a prefix of what the pod reports: the pod's `expect_id` is `id` up to its first `??`. |
 | `family` | Free text, for messages. |
 | `mem` | The chip's memories, keys `flash`, `eeprom`, `config` (AVR fuses, PIC configuration words, C2 lock byte) and `user` (AVR user row, PIC user ID); each omitted when the chip has none or the pod cannot write it. |
-| `opts` | Extra fields of every `start` command: `flags` (protocol options) and `cp_addr` (PIC only: the byte address, as `addr` counts, of the configuration word that holds the code-protect bit; the bit number is in `flags`). |
+| `prog` | The chip's protocol options as named fields, copied into every `start` (and PIC `info`) request of a pod with the `prog_named` feature (firmware 4.0.6 and later): `updi` `flash_base`; `pic` `cmd_set` (`6bit`/`8bit`), `pc` (`byte`), `ee_erase`, `cp_high`, `q10`, `id_split`, `key_flip`, `cp_bit`, `cp_addr` (the byte address, as `addr` counts, of the configuration word that holds the code-protect bit); `tpi` `write_words`, `page_erase`; `c2` `fpdat`, `no_setup`. Meaning of each: the pod's `prog_flash` command in the firmware API.md. Omitted when the chip needs none. |
+| `legacy` | The same options as the one packed integer `flags` (and PIC `cp_addr`) that firmware before 4.0.6 reads: sent instead of `prog` to such a pod, and dropped together with that path. Generated from `prog`; never edited. |
 | `vmin_mv`, `vmax_mv` | The supply range the chip can be programmed in, in millivolts, at the pod's I/O voltage (1800 or 3300). A chip whose `vmin_mv` is above the pod's voltage is refused with `vnote` as the reason. |
 | `erase_vmin_mv` | (optional) the supply the chip erase needs: below it the erase can be ignored, so a `chip` erase is refused. |
 | `vnote` | (optional) the voltage remark of the datasheet. |
@@ -49,7 +60,7 @@ A memory (`mem.<name>`):
 To write an image: read the chip's ID with `info`, find the device whose `id` matches, and for every
 image run of bytes find the memory whose `hex` range holds it. The pod address of image byte `a`
 is `mem.addr + (a - mem.hex) / stride`. Start the regions flash first, `config` last, each as one
-`start` with `mem`, `addr`, `len`, `page`, `expect_id`, the `opts`, and `erase: "chip"` on the
+`start` with `mem`, `addr`, `len`, `page`, `expect_id`, the chip's `prog` fields (`legacy` for a pod before 4.0.6), and `erase: "chip"` on the
 first one only (later ones `none`).
 
 ## Sources
@@ -65,7 +76,7 @@ cross-check, that is said. Nothing here was run on hardware yet.
 * The IDs, sizes and pages were read from avrdude's `avrdude.conf` (`src/avrdude.conf.in`,
   github.com/avrdudes/avrdude), which carries them from the Atmel/Microchip device packs, and
   checked against the datasheets above.
-* The flash base in the AVR data space (`opts.flags`) follows the firmware: 0x8000 for tinyAVR
+* The flash base in the AVR data space (`prog.flash_base`) follows the firmware: 0x8000 for tinyAVR
   0/1/2, 0x4000 for megaAVR 0, 0x800000 for the NVM version 2 parts (DA, DB, DD).
 * Left out: AVR DU, EA, EB, LA, SD and the "S" variants (other NVM versions, not handled by the pod
   firmware yet).
@@ -98,7 +109,7 @@ cross-check, that is said. Nothing here was run on hardware yet.
 Every value was read from Microchip's memory programming specifications (not from memory); most PDFs
 came from third-party mirrors, none was cross-checked against an MPLAB DFP or gputils.
 
-| Family | Specification | Command set (`opts.flags`) |
+| Family | Specification | Command set (`prog.cmd_set`, `prog.pc`) |
 |---|---|---|
 | PIC16F150x | DS41573 | 6-bit, DEV in bits 13:5 of the word at 0x8006 |
 | PIC16F151x/152x | DS41442 | 6-bit, packed ID |
@@ -114,10 +125,10 @@ came from third-party mirrors, none was cross-checked against an MPLAB DFP or gp
 | PIC18F Q43 | DS40002079 | 8-bit, byte PC |
 | PIC18F Q83, Q84 | DS40002137 | 8-bit, byte PC |
 
-The LF parts have their own device IDs and are separate entries. `flags` bit values are in
-`stm32h563/src/prog_pic.h` of benchpod-firmware. `opts.cp_addr` is the byte address of the
-configuration word that holds the code-protect bit (the pod reads it to tell a locked chip), and bits
-8..11 of `flags` its bit number; the polarity is 0 = protected on every chip here.
+The LF parts have their own device IDs and are separate entries. The legacy `flags` bit values are in
+`stm32h563/src/prog_pic.h` of benchpod-firmware. `prog.cp_addr` is the byte address of the
+configuration word that holds the code-protect bit (the pod reads it to tell a locked chip), `prog.cp_bit`
+its bit number; the polarity is 0 = protected on every chip here (`cp_high` otherwise).
 Addresses: flash, configuration words and user ID are the spec's absolute word address times 2
 (PIC16: word 0x8007 is 0x1000E, user ID 0x10000); PIC18 uses the spec's byte addresses (0x200000 user
 ID, 0x300000 configuration, 0x380000 EEPROM, 0x310000 on Q10). `hex` equals `addr` for all of them.
