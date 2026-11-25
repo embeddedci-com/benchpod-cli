@@ -504,6 +504,11 @@ func (d *detector) prog(proto string) {
 		return
 	}
 	ctx, pod := d.ctx, d.pod
+	if proto == "sbw" && !progNamed(ctx, pod) {
+		// Spy-Bi-Wire shipped with firmware 4.0.6, the release that added prog_named.
+		d.skip(proto, "needs pod firmware with the sbw protocol (4.0.6 or newer; update the pod)", false)
+		return
+	}
 	progEnsureDeepImage(ctx, pod)
 	mv := progLAmV(ctx, pod)
 	volts := "not set"
@@ -528,6 +533,14 @@ func (d *detector) prog(proto string) {
 		return
 	}
 	vc := progVendor[proto]
+	if proto == "sbw" && len(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(st.ID)), "0x")) == 2 {
+		// Only the JTAG ID answered: the chip is JTAG-locked and its device ID cannot be read.
+		d.add(detect.Finding{Method: proto, Chip: "MSP430 (JTAG-locked)", Vendor: vc[0], Core: vc[1],
+			ID: "0x" + strings.TrimPrefix(strings.ToLower(strings.TrimSpace(st.ID)), "0x"), Confidence: detect.Low,
+			Pins: pins, Invasive: true, Raw: map[string]any{"proto": proto, "id": st.ID, "locked": true}})
+		d.note("sbw: only the JTAG ID answered, so the chip is JTAG-locked; flash with --device MSP430FR2433 (or the chip's name) and --erase chip to erase and unlock it")
+		return
+	}
 	f := detect.Finding{Method: proto, Vendor: vc[0], Core: vc[1], ID: st.ID, Pins: pins, Invasive: true,
 		Raw: map[string]any{"proto": proto, "id": st.ID}}
 	if dev != nil && findErr == nil {
