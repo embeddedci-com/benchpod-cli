@@ -494,11 +494,18 @@ func TestSBWTargetsAndPins(t *testing.T) {
 	}
 }
 
+// sbwFlags flashes a raw image at the start of the MSP430FR2433's FRAM.
+func sbwFlags(file string, p progFlashFlags) *flashFlags {
+	f := progFlags("msp430", file, p)
+	f.loadAddr = "0xC400"
+	return f
+}
+
 func TestFlashProgSBW(t *testing.T) {
 	img := tmpImage(t, "fw.bin", make([]byte, 32))
 	pod := &progPod{id: "984082", result: "ok", polls: 1, mv: 3300}
 	g := progTestSetup(t, pod)
-	out, err := runProg(t, g, progFlags("msp430", img, progFlashFlags{clk: "4", data: "3"}))
+	out, err := runProg(t, g, sbwFlags(img, progFlashFlags{clk: "4", data: "3"}))
 	if err != nil || !strings.Contains(out, "MSP430FR2433") {
 		t.Fatalf("%v: %s", err, out)
 	}
@@ -506,7 +513,7 @@ func TestFlashProgSBW(t *testing.T) {
 	if info["proto"] != "sbw" || info["clk"] != 4.0 || info["data"] != 3.0 {
 		t.Fatalf("info: %v", info)
 	}
-	if start["proto"] != "sbw" || start["mem"] != "flash" || start["addr"] != 51200.0 || start["expect_id"] != "984082" {
+	if start["proto"] != "sbw" || start["mem"] != "flash" || start["addr"] != 50176.0 || start["expect_id"] != "984082" {
 		t.Fatalf("start: %v", start)
 	}
 	if _, ok := start["reset"]; ok {
@@ -518,13 +525,13 @@ func TestFlashProgSBWLockedChip(t *testing.T) {
 	img := tmpImage(t, "fw.bin", make([]byte, 32))
 	pod := &progPod{id: "98", result: "ok", mv: 3300}
 	g := progTestSetup(t, pod)
-	_, err := runProg(t, g, progFlags("msp430", img, progFlashFlags{clk: "4", data: "3"}))
+	_, err := runProg(t, g, sbwFlags(img, progFlashFlags{clk: "4", data: "3"}))
 	if err == nil || !strings.Contains(err.Error(), "JTAG-locked") {
 		t.Fatalf("locked chip without --device: %v", err)
 	}
 	pod = &progPod{id: "98", result: "ok", mv: 3300}
 	g = progTestSetup(t, pod)
-	if _, err := runProg(t, g, progFlags("msp430", img, progFlashFlags{clk: "4", data: "3", device: "MSP430FR2433"})); err != nil {
+	if _, err := runProg(t, g, sbwFlags(img, progFlashFlags{clk: "4", data: "3", device: "MSP430FR2433"})); err != nil {
 		t.Fatalf("locked chip with --device: %v", err)
 	}
 	if pod.req("start")["erase"] != "chip" {
