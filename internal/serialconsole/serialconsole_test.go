@@ -699,3 +699,34 @@ func TestParseSerialPodMACs(t *testing.T) {
 		t.Fatalf("older firmware: WiFiMAC %q", old.WiFiMAC)
 	}
 }
+
+func TestCandidatePortsRanksOwnIDFirst(t *testing.T) {
+	withLister(t, func() ([]*enumerator.PortDetails, error) {
+		return []*enumerator.PortDetails{
+			{Name: "/dev/cu.usbmodem-a-other", IsUSB: true, VID: "1234", PID: "0001"},
+			{Name: "/dev/cu.usbmodem-b-st", IsUSB: true, VID: "0483", PID: "5740"},
+			{Name: "/dev/cu.usbmodem-c-pidcodes", IsUSB: true, VID: "1209", PID: "0002"},
+			{Name: "/dev/cu.usbmodem-z-pod", IsUSB: true, VID: "1209", PID: "ec10"},
+		}, nil
+	})
+	withGlobber(t)
+	got, err := candidatePorts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/dev/cu.usbmodem-z-pod", "/dev/cu.usbmodem-b-st", "/dev/cu.usbmodem-c-pidcodes", "/dev/cu.usbmodem-a-other"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
+func TestPortPrio(t *testing.T) {
+	for _, c := range []struct {
+		vid, pid string
+		want     int
+	}{{"1209", "EC10", 0}, {"1209", "ec10", 0}, {"1209", "0001", 1}, {"0483", "5740", 1}, {"2E8A", "000A", 1}, {"1234", "EC10", 2}, {"", "", 2}} {
+		if got := portPrio(c.vid, c.pid); got != c.want {
+			t.Errorf("portPrio(%q,%q) = %d, want %d", c.vid, c.pid, got, c.want)
+		}
+	}
+}

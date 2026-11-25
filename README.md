@@ -126,8 +126,9 @@ sudo cp packaging/linux/70-benchpod.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-It sets `ENV{ID_MM_DEVICE_IGNORE}="1"` for the pod's USB IDs: `0483:5740` (ST's stock CDC
-ID, every STM32 firmware including 3.9.0; it also matches other ST CDC devices) and
+It sets `ENV{ID_MM_DEVICE_IGNORE}="1"` for the pod's USB IDs: `1209:EC10` (the pod's own
+pid.codes ID, firmware releases after 4.0.4), `0483:5740` (ST's stock CDC
+ID, firmware up to 4.0.x; it also matches other ST CDC devices) and
 `1209:0001` (pre-release 3.9.0 builds), and `TAG+="uaccess"`, which lets the
 user signed in at the desktop open the console without joining the `dialout` group. Over
 SSH, or without the rule, add yourself to `dialout` (`sudo usermod -aG dialout $USER`,
@@ -229,7 +230,7 @@ The USB network adapter works with the in-box drivers of macOS, Linux and Window
 (tested). Windows 10 (1903 or newer) is supported but not tested: if the adapter shows
 up without a driver there, open Device Manager, update its driver, and pick "UsbNcm
 Host Device" from the list of network adapters.
-The pod keeps ST's USB ID `0483:5740`: on a Windows computer with ST's Virtual COM Port
+Firmware up to 4.0.x uses ST's USB ID `0483:5740` (later releases use `1209:EC10`, which needs no ST driver): on a Windows computer with ST's Virtual COM Port
 driver installed, that driver can claim the whole pod, which then shows up as one COM
 port without the network adapter. Uninstall it for the pod (Device Manager, Ports,
 "STMicroelectronics Virtual COM Port", Uninstall device, tick "Attempt to remove the
