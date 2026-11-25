@@ -154,7 +154,9 @@ otherwise `brew install dfu-util` (or your distro's package). See
 Firmware from 3.5.0 on keeps the iCE40 gateware and the ESP32-C3 Wi-Fi image in the pod's
 W25Q flash rather than in its image. After writing the firmware, `flash-self` waits for the
 pod's USB console and installs the ones it lacks from the same release (or from `blobs/`
-next to a local `.bin`); `install-blobs` does that step on its own, and `set-wifi` runs it
+next to a local `.bin`); `install-blobs` does that step on its own (on the pod `--connection` names: a network
+address or a pod name found on the LAN goes over the network, and a pod that answers under
+another name is refused), and `set-wifi` runs it
 first when the ESP32-C3 image is missing. If the flashed pod answers but does not list its
 blob slots (its `blob_status` fails), `flash-self` still exits 0, since the firmware is in, but
 prints a warning that names the blobs it skipped; install them with `benchpod install-blobs`,
@@ -413,7 +415,8 @@ benchpod dfu              # reboot an STM32 pod into its USB DFU bootloader (USB
 benchpod flash-self                  # fetch latest firmware + flash the POD over USB DFU (STM32)
 benchpod flash-self --enter-dfu      # …rebooting a running pod into DFU first
 benchpod flash-self ./fw.bin         # …flashing a specific local build instead
-benchpod install-blobs               # gateware + ESP32-C3 images the pod's firmware goes with (USB)
+benchpod install-blobs               # gateware + ESP32-C3 images the pod's firmware goes with
+benchpod install-blobs --connection 192.168.1.5   # …to the pod at that address, over the network
 benchpod install-blobs --dir stm32h563/build/blobs   # …from a local firmware build
 
 # Cloud auth (optional):

@@ -272,40 +272,35 @@ func newInstallBlobsCmd(g *globalFlags) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "install-blobs",
-		Short: "Install the gateware and ESP32-C3 images the pod's firmware goes with (over USB)",
+		Short: "Install the gateware and ESP32-C3 images the pod's firmware goes with",
 		Long: "The pod keeps its iCE40 gateware images and its ESP32-C3 Wi-Fi image in the\n" +
 			"W25Q flash next to the FPGA, not in its firmware. This sends the ones it lacks\n" +
-			"over the pod's USB network adapter (firmware 3.9.0+), else its network address.\n" +
+			"to the pod --connection names: a network address, or a pod name found on the\n" +
+			"LAN, gets them over the network. With usb (or no connection) they go over the\n" +
+			"pod's USB network adapter (firmware 3.9.0+), else its network address.\n" +
 			"USB networking off: `benchpod usb-network on --connection usb` (the console's\n" +
-			"`usb-network on`). By default they come from the GitHub release that matches\n" +
+			"`usb-network on`). A pod that answers under another name than the one the\n" +
+			"connection gives is refused. By default they come from the GitHub release that matches\n" +
 			"the firmware the pod runs; --dir takes them from a local build (stm32h563/build/blobs).\n\n" +
 			"Each blob's signature (blob-*.bin.sig) is checked and reported, and handed to\n" +
 			"firmware that checks it too; for now a missing or failing one never stops an install.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			device, err := g.usbDevice("install-blobs")
+			conn, err := g.blobConnection()
 			if err != nil {
 				return err
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), g.effectiveTimeout(blobsInstallTimeout))
 			defer cancel()
-			// This computer's end of the pod's USB network link needs no console; else the console
-			// names the way in: the USB network when it is up, else the pod's network address.
-			target, closeTarget := g.localBlobTarget(ctx)
-			path := "the USB network"
-			if target == nil {
-				console, cpath, cctx, ccancel, err := g.openSerialConsole(device, g.effectiveTimeout(blobsInstallTimeout))
-				if err != nil {
-					return err
-				}
-				defer ccancel()
-				defer console.Close()
-				ctx, path = cctx, cpath
-				if target, closeTarget, err = blobTargetFor(ctx, console, path); err != nil {
-					return err
-				}
+			target, path, tctx, closeTarget, err := openBlobTarget(ctx, g, conn)
+			if err != nil {
+				return err
 			}
 			defer closeTarget()
+			ctx = tctx
+			if err := checkSamePod(ctx, target, conn.want); err != nil {
+				return err
+			}
 			src := blobSource{base: dir}
 			if strings.TrimSpace(dir) == "" {
 				tag := release
