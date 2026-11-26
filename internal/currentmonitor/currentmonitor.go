@@ -1,77 +1,18 @@
 // Package currentmonitor drives the external INA current monitors the embeddedci SDK knows
-// (chips.json, a snapshot of its CURRENT_MONITOR_CHIPS) through the pod's I2C master: probe by ID,
-// configure, read. The SDK (bp.current_monitor) and the MCP server's current_monitor tool are the
-// reference; this is the same register model for `benchpod current-monitor`.
+// (the kind "current" entries of internal/expansion's chips.json, a snapshot of EXPANSION_CHIPS) through the pod's I2C master: probe by ID,
+// configure, read. The SDK (bp.expansion("ina226", ...)) and the MCP server's expansion tool are the
+// reference; this is the same register model for `benchpod expansion ina226`.
 package currentmonitor
 
 import (
-	_ "embed"
-	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
-	"strings"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/expansion"
 )
 
-//go:embed chips.json
-var chipsJSON []byte
-
-// Chip is one entry of the SDK's CURRENT_MONITOR_CHIPS.
-type Chip struct {
-	Name        string    `json:"name"`
-	Addrs       []int     `json:"addrs"`
-	Voltages    []float64 `json:"voltages"`
-	ShuntBits   int       `json:"shunt_bits"`
-	ShuntLSB    float64   `json:"shunt_lsb"`
-	BusLSB      float64   `json:"bus_lsb"`
-	ShuntMax    float64   `json:"shunt_max"`
-	Channels    int       `json:"channels"`
-	InternalOhm float64   `json:"internal_ohm"`
-	IDs         [][]int   `json:"ids"` // {register, mask, value}
-	Note        string    `json:"note"`
-	Since       string    `json:"since"`
-}
-
-// Chips is every chip the SDK drives, in its order.
-func Chips() []Chip {
-	var f struct {
-		Chips []Chip `json:"chips"`
-	}
-	if err := json.Unmarshal(chipsJSON, &f); err != nil {
-		panic("currentmonitor: chips.json: " + err.Error())
-	}
-	return f.Chips
-}
-
-// Lookup finds a chip by name, case-insensitive.
-func Lookup(name string) (Chip, error) {
-	key := strings.ToLower(strings.TrimSpace(name))
-	var names []string
-	for _, c := range Chips() {
-		if key == c.Name {
-			return c, nil
-		}
-		names = append(names, c.Name)
-	}
-	return Chip{}, fmt.Errorf("unknown current monitor chip %q; known: %s", name, strings.Join(names, ", "))
-}
-
-// HasAddr reports whether addr is one of the chip's addresses.
-func (c Chip) HasAddr(addr int) bool {
-	for _, a := range c.Addrs {
-		if a == addr {
-			return true
-		}
-	}
-	return false
-}
-
-// AddrRange is "0x40-0x4f".
-func (c Chip) AddrRange() string {
-	a := append([]int(nil), c.Addrs...)
-	sort.Ints(a)
-	return fmt.Sprintf("0x%02x-0x%02x", a[0], a[len(a)-1])
-}
+// Chip is an INA entry of the SDK's EXPANSION_CHIPS (kind "current").
+type Chip = expansion.Chip
 
 // Xfer writes then reads one I2C device (a repeated START between), like the pod's i2c_xfer.
 type Xfer func(addr int, write []byte, read int) ([]byte, error)

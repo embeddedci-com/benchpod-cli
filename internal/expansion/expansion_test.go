@@ -7,7 +7,7 @@ func TestLookupAndLayouts(t *testing.T) {
 		t.Fatalf("alias: %v %v", c, err)
 	}
 	for _, c := range Chips() {
-		if c.Bus != "i2c" {
+		if c.Bus != "i2c" || c.Kind == "current" {
 			continue
 		}
 		if _, err := layout(c); err != nil {

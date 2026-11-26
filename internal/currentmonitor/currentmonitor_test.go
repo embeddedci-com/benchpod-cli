@@ -4,6 +4,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/embeddedci-com/benchpod-cli/internal/expansion"
 )
 
 // ina is a register file: reads continue into the next register, writes take one 16-bit value.
@@ -48,7 +50,7 @@ func near(t *testing.T, what string, got, want float64) {
 
 func mon(t *testing.T, name string, d *ina, shunt float64, ch int) *Monitor {
 	t.Helper()
-	c, err := Lookup(name)
+	c, err := expansion.Lookup(name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,15 +58,20 @@ func mon(t *testing.T, name string, d *ina, shunt float64, ch int) *Monitor {
 }
 
 func TestChipTable(t *testing.T) {
-	if _, err := Lookup("ina999"); err == nil || !strings.Contains(err.Error(), "known: ina226") {
-		t.Fatalf("%v", err)
-	}
-	for _, c := range Chips() {
+	var n int
+	for _, c := range expansion.Chips() {
+		if c.Kind != "current" {
+			continue
+		}
+		n++
 		for _, v := range c.Voltages {
 			if v < 3 {
 				t.Fatalf("%s runs at %g V?", c.Name, v)
 			}
 		}
+	}
+	if n != 6 {
+		t.Fatalf("%d INA chips", n)
 	}
 }
 

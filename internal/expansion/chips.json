@@ -26,7 +26,12 @@
       "aliases": [
         "tca9535"
       ],
-      "note": "TI, 1.65-5.5 V"
+      "note": "TI, 1.65-5.5 V",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "pca9555",
@@ -52,7 +57,12 @@
       "aliases": [
         "pca9535"
       ],
-      "note": "NXP, 2.3-5.5 V: not at 1.8 V"
+      "note": "NXP, 2.3-5.5 V: not at 1.8 V",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "mcp23017",
@@ -77,7 +87,12 @@
       "max_hz": 400000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "Microchip, 1.8-5.5 V"
+      "note": "Microchip, 1.8-5.5 V",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "pcf8574",
@@ -101,7 +116,12 @@
       "max_hz": 100000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "NXP/TI, 2.5-6 V: not at 1.8 V; 100 kHz"
+      "note": "NXP/TI, 2.5-6 V: not at 1.8 V; 100 kHz",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "pcf8574a",
@@ -125,7 +145,12 @@
       "max_hz": 100000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "the PCF8574 at addresses 0x38-0x3f"
+      "note": "the PCF8574 at addresses 0x38-0x3f",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "pcf8575",
@@ -149,7 +174,12 @@
       "max_hz": 400000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "NXP/TI, 2.5-5.5 V: not at 1.8 V"
+      "note": "NXP/TI, 2.5-5.5 V: not at 1.8 V",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "tca6416a",
@@ -168,7 +198,12 @@
       "max_hz": 400000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "TI, 1.65-5.5 V, level-shifting (VCCI = the LA voltage)"
+      "note": "TI, 1.65-5.5 V, level-shifting (VCCI = the LA voltage)",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "tca6424a",
@@ -187,7 +222,12 @@
       "max_hz": 400000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "TI, 1.65-5.5 V, level-shifting (VCCI = the LA voltage)"
+      "note": "TI, 1.65-5.5 V, level-shifting (VCCI = the LA voltage)",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "mcp23s17",
@@ -212,7 +252,12 @@
       "max_hz": 6000000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "Microchip, SPI; several on one CS by hardware address (A0-A2)"
+      "note": "Microchip, SPI; several on one CS by hardware address (A0-A2)",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "74hc595",
@@ -227,7 +272,12 @@
       "max_hz": 6000000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "shift-register chain, outputs only; CS to RCLK (latch), MISO a free pin"
+      "note": "shift-register chain, outputs only; CS to RCLK (latch), MISO a free pin",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
     },
     {
       "name": "74hc165",
@@ -242,7 +292,283 @@
       "max_hz": 6000000,
       "since": "2.13.21",
       "aliases": [],
-      "note": "shift-register chain, inputs only; CS to CLK INH, load= to SH/LD, MOSI a free pin"
+      "note": "shift-register chain, inputs only; CS to CLK INH, load= to SH/LD, MOSI a free pin",
+      "kind": "gpio",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.0,
+      "ids": []
+    },
+    {
+      "name": "ina226",
+      "bus": "i2c",
+      "pins": 0,
+      "la_pins": 2,
+      "addrs": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79
+      ],
+      "voltages": [
+        3.3,
+        5.0
+      ],
+      "directions": "",
+      "max_hz": 400000,
+      "since": "4.0.7",
+      "aliases": [],
+      "note": "current monitor: 16-bit, shunt 2.5 \u00b5V/step (0.25 \u00b5A with 10 ohm), +-81.92 mV, bus to 36 V",
+      "kind": "current",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.08192,
+      "ids": [
+        [
+          254,
+          65535,
+          21577
+        ],
+        [
+          255,
+          65535,
+          8800
+        ]
+      ]
+    },
+    {
+      "name": "ina228",
+      "bus": "i2c",
+      "pins": 0,
+      "la_pins": 2,
+      "addrs": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79
+      ],
+      "voltages": [
+        3.3,
+        5.0
+      ],
+      "directions": "",
+      "max_hz": 400000,
+      "since": "4.0.7",
+      "aliases": [],
+      "note": "current monitor: 20-bit, shunt 78 nV/step on the +-40.96 mV range, bus to 85 V",
+      "kind": "current",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.16384,
+      "ids": [
+        [
+          62,
+          65535,
+          21577
+        ],
+        [
+          63,
+          65520,
+          8832
+        ]
+      ]
+    },
+    {
+      "name": "ina238",
+      "bus": "i2c",
+      "pins": 0,
+      "la_pins": 2,
+      "addrs": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79
+      ],
+      "voltages": [
+        3.3,
+        5.0
+      ],
+      "directions": "",
+      "max_hz": 400000,
+      "since": "4.0.7",
+      "aliases": [],
+      "note": "current monitor: 16-bit, shunt 1.25 \u00b5V/step on the +-40.96 mV range, bus to 85 V",
+      "kind": "current",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.16384,
+      "ids": [
+        [
+          62,
+          65535,
+          21577
+        ],
+        [
+          63,
+          65520,
+          9088
+        ]
+      ]
+    },
+    {
+      "name": "ina219",
+      "bus": "i2c",
+      "pins": 0,
+      "la_pins": 2,
+      "addrs": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79
+      ],
+      "voltages": [
+        3.3,
+        5.0
+      ],
+      "directions": "",
+      "max_hz": 400000,
+      "since": "4.0.7",
+      "aliases": [],
+      "note": "current monitor: shunt 10 \u00b5V/step (1 \u00b5A with 10 ohm), +-320 mV, bus to 32 V; 3-5.5 V; no ID register, so only the address is probed",
+      "kind": "current",
+      "channels": 1,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.32,
+      "ids": []
+    },
+    {
+      "name": "ina260",
+      "bus": "i2c",
+      "pins": 0,
+      "la_pins": 2,
+      "addrs": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79
+      ],
+      "voltages": [
+        3.3,
+        5.0
+      ],
+      "directions": "",
+      "max_hz": 400000,
+      "since": "4.0.7",
+      "aliases": [],
+      "note": "current monitor, internal 2 mohm shunt, 1.25 mA/step, +-15 A: for amps, not \u00b5A",
+      "kind": "current",
+      "channels": 1,
+      "internal_ohm": 0.002,
+      "shunt_max": 0.0,
+      "ids": [
+        [
+          254,
+          65535,
+          21577
+        ],
+        [
+          255,
+          65520,
+          8816
+        ]
+      ]
+    },
+    {
+      "name": "ina3221",
+      "bus": "i2c",
+      "pins": 0,
+      "la_pins": 2,
+      "addrs": [
+        64,
+        65,
+        66,
+        67
+      ],
+      "voltages": [
+        3.3,
+        5.0
+      ],
+      "directions": "",
+      "max_hz": 400000,
+      "since": "4.0.7",
+      "aliases": [],
+      "note": "current monitor, 3 channels, shunt 40 \u00b5V/step (4 \u00b5A with 10 ohm), bus to 26 V; averaging and conversion time apply to all three",
+      "kind": "current",
+      "channels": 3,
+      "internal_ohm": 0.0,
+      "shunt_max": 0.1638,
+      "ids": [
+        [
+          254,
+          65535,
+          21577
+        ],
+        [
+          255,
+          65535,
+          12832
+        ]
+      ]
     }
   ]
 }

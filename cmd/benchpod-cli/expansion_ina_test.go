@@ -48,13 +48,13 @@ func fakeINA226(pod *fakeSensorPod, session bool) {
 	}
 }
 
-func TestCurrentMonitorListsChips(t *testing.T) {
+func TestExpansionListsTheINAChips(t *testing.T) {
 	_, g := newFakeSensorPod(t)
-	out, err := runBus(t, g, newCurrentMonitorCmd(g))
+	out, err := runBus(t, g, newExpansionCmd(g))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"ina226", "0x40-0x4f", "ina3221", "0x40-0x43", "3.3 V, 5 V"} {
+	for _, want := range []string{"ina226", "I2C 0x40-0x4f", "ina3221", "I2C 0x40-0x43", "current monitor", "3.3 V, 5 V"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in\n%s", want, out)
 		}
@@ -64,7 +64,7 @@ func TestCurrentMonitorListsChips(t *testing.T) {
 func TestCurrentMonitorReadsOverAnOpenSession(t *testing.T) {
 	pod, g := newFakeSensorPod(t)
 	fakeINA226(pod, true)
-	out, err := runBus(t, g, newCurrentMonitorCmd(g), "ina226", "--shunt", "10")
+	out, err := runBus(t, g, newExpansionCmd(g), "ina226", "--shunt", "10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestCurrentMonitorReadsOverAnOpenSession(t *testing.T) {
 func TestCurrentMonitorOpensItsOwnSessionAndMeasures(t *testing.T) {
 	pod, g := newFakeSensorPod(t)
 	fakeINA226(pod, false)
-	out, err := runBus(t, g, newCurrentMonitorCmd(g), "ina226", "--shunt", "10", "--sda", "1", "--scl", "2",
+	out, err := runBus(t, g, newExpansionCmd(g), "ina226", "--shunt", "10", "--sda", "1", "--scl", "2",
 		"--seconds", "0.05", "--averaging", "1", "--conversion-time", "140us", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -88,10 +88,13 @@ func TestCurrentMonitorOpensItsOwnSessionAndMeasures(t *testing.T) {
 	if pod.last("i2c_start") == nil || pod.last("i2c_stop") == nil {
 		t.Fatal("the run's own session must be opened and closed")
 	}
-	var res monitorResult
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatal(err)
+	var doc struct {
+		Monitors []monitorResult `json:"monitors"`
 	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil || len(doc.Monitors) != 1 {
+		t.Fatalf("%v %s", err, out)
+	}
+	res := doc.Monitors[0]
 	if res.Chip != "ina226" || res.N < 2 || math.Abs(res.Mean-1e-6) > 1e-12 || math.Abs(res.BusVoltage-3.3) > 1e-9 {
 		t.Fatalf("json %s", out)
 	}
@@ -104,7 +107,8 @@ func TestCurrentMonitorRefusals(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"ina999"}, "unknown current monitor chip"},
+		{[]string{"ina999"}, "unknown expander chip"},
+		{[]string{"tca9555", "--shunt", "10"}, "are for the INA current monitors"},
 		{[]string{"ina226"}, "--shunt is required"},
 		{[]string{"ina226", "--shunt", "10", "--addr", "0x20"}, "0x40-0x4f"},
 		{[]string{"ina3221", "--shunt", "10", "--channel", "4"}, "1 to 3"},
@@ -114,7 +118,7 @@ func TestCurrentMonitorRefusals(t *testing.T) {
 		{[]string{"ina226", "--shunt", "10", "--averaging", "3"}, "averaging is one of"},
 	}
 	for _, c := range cases {
-		_, err := runBus(t, g, newCurrentMonitorCmd(g), c.args...)
+		_, err := runBus(t, g, newExpansionCmd(g), c.args...)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%v: got %v, want %q", c.args, err, c.want)
 		}
