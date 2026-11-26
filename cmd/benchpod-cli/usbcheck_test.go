@@ -25,7 +25,7 @@ type usbExtPod struct {
 
 func newUSBExtPod(t *testing.T) *usbExtPod {
 	p := &usbExtPod{fakeUSBPod: newFakeUSBPod(t)}
-	p.status = okStatus("4.0.3", "v3r4", 15)
+	p.status = okStatus("4.0.3", "v4", 15)
 	p.device = usbDev(0x0483, 0x5740, "Board", usbIface(3, 1, 1, "hid"))
 	return p
 }
@@ -191,7 +191,7 @@ func TestRunUSBCheckStatusAbortAndJSON(t *testing.T) {
 
 func TestRunUSBCheckRefusalsAndOldFirmware(t *testing.T) {
 	pod := newUSBExtPod(t)
-	pod.status = okStatus("4.0.2", "v3r4", 14)
+	pod.status = okStatus("4.0.2", "v4", 14)
 	if _, _, err := runCheckFake(t, pod, usbCheckOpts{action: "reset"}); err == nil || !strings.Contains(err.Error(), "needs firmware 4.0.3") {
 		t.Errorf("old firmware: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestRunUSBHIDCaptureEndsWhenTheBoardLeavesAndEmptyJSON(t *testing.T) {
 
 func TestRunUSBHIDOldFirmwareAndValidation(t *testing.T) {
 	pod := newUSBExtPod(t)
-	pod.status = okStatus("4.0.2", "v3r4", 14)
+	pod.status = okStatus("4.0.2", "v4", 14)
 	if _, _, err := runHIDFake(t, pod, usbHIDOpts{action: "list", instance: -1}); err == nil || !strings.Contains(err.Error(), "needs firmware 4.0.3") {
 		t.Errorf("old firmware: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestChooseAndPlanPicoboot(t *testing.T) {
 
 func TestRunUSBFlashPicoboot(t *testing.T) {
 	pod := newFakeUSBPod(t)
-	pod.status = okStatus("4.0.3", "v3r4", 15)
+	pod.status = okStatus("4.0.3", "v4", 15)
 	pod.mode, pod.port, pod.remain = "host", "usb_a", 3000
 	pod.device = usbDev(0x2E8A, 0x0003, "RP2 Boot", usbIface(8, 6, 80, "msc"))
 	pod.flashResult = usbFlashStatus{Mode: "picoboot", Phase: "done", Done: 9, Total: 9, Result: "ok", OK: true, Protocol: "picoboot"}
@@ -434,7 +434,7 @@ func TestRunUSBFlashPicoboot(t *testing.T) {
 	}
 	// A pod without the feature refuses before touching the board.
 	old := newFakeUSBPod(t)
-	old.status = okStatus("4.0.3", "v3r4", 14)
+	old.status = okStatus("4.0.3", "v4", 14)
 	old.mode, old.port, old.remain = "host", "usb_a", 3000
 	old.device = pod.device
 	_, _, err = runFlashFake(t, old, usbFlashOpts{file: "app.bin"}, []byte{1})
@@ -448,7 +448,7 @@ func TestRunUSBFlashFilePassesTimeAndReadBack(t *testing.T) {
 	usbFlashNow = func() time.Time { return time.Unix(1800000000, 0) }
 	t.Cleanup(func() { usbFlashNow = old })
 	pod := newFakeUSBPod(t)
-	pod.status = okStatus("4.0.3", "v3r4", 15)
+	pod.status = okStatus("4.0.3", "v4", 15)
 	pod.mode, pod.port, pod.remain = "host", "usb_a", 3000
 	pod.device = usbDev(0x0D28, 0x0204, "DAPLink", usbIface(8, 6, 80, "msc"))
 	pod.flashResult = usbFlashStatus{Mode: "file", Phase: "done", Result: "ok", OK: true, Note: "FAIL.TXT was not checked: the drive did not come back"}
@@ -477,7 +477,7 @@ func TestRunUSBFlashFilePassesTimeAndReadBack(t *testing.T) {
 
 func TestRunUSBFlashUF2Verify(t *testing.T) {
 	pod := newFakeUSBPod(t)
-	pod.status = okStatus("4.0.3", "v3r4", 15)
+	pod.status = okStatus("4.0.3", "v4", 15)
 	pod.mode, pod.port, pod.remain = "host", "usb_a", 3000
 	pod.device = usbDev(0x2E8A, 3, "Pico", usbIface(8, 6, 80, "msc"))
 	pod.flashResult = usbFlashStatus{Mode: "uf2", Phase: "done", Result: "ok", OK: true, Note: "verified 12 blocks"}

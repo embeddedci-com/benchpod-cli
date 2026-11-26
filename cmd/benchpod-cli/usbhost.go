@@ -128,7 +128,8 @@ func requireUSBFeatures(ctx context.Context, c podCommander, what string, names 
 
 var boardRevRe = regexp.MustCompile(`^v(\d+)(?:r(\d+))?$`)
 
-// hasUSBAHost says the pod has the USB-A host port: board_rev v3r4 or later.
+// hasUSBAHost says the pod has the USB-A host port: board_rev v4 or later. "v3r4" is the
+// pre-rename name of v4 (firmware 4.0.x says it), so both count.
 func hasUSBAHost(boardRev string) bool {
 	m := boardRevRe.FindStringSubmatch(strings.ToLower(strings.TrimSpace(boardRev)))
 	if m == nil {
@@ -207,7 +208,7 @@ func newUSBHostCmd(g *globalFlags) *cobra.Command {
 			"  on      start host mode (or renew its timeout when it runs on that port)\n" +
 			"  off     stop it\n" +
 			"  status  show the mode and the device\n\n" +
-			"--port is usb_a (the USB-A host port, on pods of board v3r4 and later: the board's own USB\n" +
+			"--port is usb_a (the USB-A host port, on pods of board v4 and later: the board's own USB\n" +
 			"cable goes there; the default) or usb_c (the pod's own USB-C connector through a breakout:\n" +
 			"D+, D- and GND to the board, 5 V from a supply into the pod's VBUS; the default on older pods).\n" +
 			"The global --timeout is how long `on` keeps host mode (default 60s, 1s to 1h); when it runs out\n" +
@@ -251,7 +252,7 @@ func newUSBHostCmd(g *globalFlags) *cobra.Command {
 			return runUSBHost(ctx, t.client, t.where(), usbHostOpts{action: action, port: port, timeout: hostTimeout, asJSON: asJSON}, out)
 		},
 	}
-	cmd.Flags().StringVar(&port, "port", "", "usb_a or usb_c (default: usb_a on a pod with the USB-A host port, board v3r4 or later; else usb_c)")
+	cmd.Flags().StringVar(&port, "port", "", "usb_a or usb_c (default: usb_a on a pod with the USB-A host port, board v4 or later; else usb_c)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the pod's reply as JSON")
 	return cmd
 }

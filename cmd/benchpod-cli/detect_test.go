@@ -392,7 +392,7 @@ func TestDetectESP32(t *testing.T) {
 func TestDetectUSB(t *testing.T) {
 	const dev = `{"mode":"host","port":"usb_a","attached":true,"connected":true,"device":{"vid":5824,"pid":1144,"manufacturer":"PJRC","product":"Teensy Bootloader"}}`
 	p := newDetectPod()
-	p.status = okStatus("4.0.5", "v3r4", 19)
+	p.status = okStatus("4.0.5", "v4", 19)
 	p.usb = dev
 	res, _, err := runDetectFor(t, p, &podWiring{}, detectOpts{asJSON: true, noInvasive: true})
 	if err != nil || len(res.Findings) != 1 {

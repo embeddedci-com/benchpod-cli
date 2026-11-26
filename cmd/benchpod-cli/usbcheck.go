@@ -127,7 +127,7 @@ func newUSBCheckCmd(g *globalFlags) *cobra.Command {
 			"to eFuse 1 (the internal 5 V rail) and switch it on (web app, SDK or a `power_on` CI step) first. Currents are the\n" +
 			"board's own draw. The global --timeout is the whole deadline (default 5m); a long check needs more.\n\n" +
 			"--port is usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host\n" +
-			"port, board v3r4 and later; else usb_c). While the pod hosts it is off the computer's USB, so use the\n" +
+			"port, board v4 and later; else usb_c). While the pod hosts it is off the computer's USB, so use the\n" +
 			"pod's network address (not --connection usb). Host mode stays on until its timeout;\n" +
 			"`benchpod usb-host off` stops it.",
 		Example: "  benchpod usb-check enumerate --count 20\n" +
@@ -168,7 +168,7 @@ func newUSBCheckCmd(g *globalFlags) *cobra.Command {
 	f.IntVar(&o.cycleTO, "cycle-timeout", 0, "enumerate, reset, replug: milliseconds to wait for the board after each cycle, 500 to 30000 (default 5000)")
 	f.DurationVar(&duration, "duration", 0, "power (default 3s) and suspend (default 1s): the measuring time, 200ms to 60s")
 	f.DurationVar(&settle, "settle", 0, "suspend: the wait after the bus is suspended before measuring, 20ms to 5s (default 200ms)")
-	f.StringVar(&o.port, "port", "", "usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host port, board v3r4 or later; else usb_c)")
+	f.StringVar(&o.port, "port", "", "usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host port, board v4 or later; else usb_c)")
 	f.BoolVar(&o.asJSON, "json", false, "print the pod's final reply as JSON")
 	return cmd
 }

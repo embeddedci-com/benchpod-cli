@@ -51,7 +51,7 @@ func okStatus(version, boardRev string, featuresRev int) string {
 }
 
 func newFakeUSBPod(t *testing.T) *fakeUSBPod {
-	return &fakeUSBPod{t: t, status: okStatus("4.0.3", "v3r4", 14), mode: "device", port: "none"}
+	return &fakeUSBPod{t: t, status: okStatus("4.0.3", "v4", 14), mode: "device", port: "none"}
 }
 
 func (f *fakeUSBPod) sent(cmd string) []map[string]any {
@@ -149,8 +149,8 @@ func TestUSBHostPortChoice(t *testing.T) {
 		}
 	}
 	cases := []struct{ flag, rev, want string }{
-		{"", "v3r4", "usb_a"}, {"", "v3", "usb_c"}, {"", "", "usb_c"},
-		{"usb_c", "v3r4", "usb_c"}, {"USB_A", "v3r4", "usb_a"}, {"usb_c", "v3", "usb_c"},
+		{"", "v4", "usb_a"}, {"", "v3r4", "usb_a"}, {"", "v3", "usb_c"}, {"", "", "usb_c"},
+		{"usb_c", "v4", "usb_c"}, {"USB_A", "v4", "usb_a"}, {"usb_c", "v3", "usb_c"},
 	}
 	for _, c := range cases {
 		got, err := chooseUSBHostPort(c.flag, c.rev)
@@ -161,7 +161,7 @@ func TestUSBHostPortChoice(t *testing.T) {
 	if _, err := chooseUSBHostPort("usb_a", "v3r3"); err == nil || exitCode(err) != exitUsage {
 		t.Errorf("usb_a on an old pod: %v", err)
 	}
-	if _, err := chooseUSBHostPort("usb_b", "v3r4"); err == nil {
+	if _, err := chooseUSBHostPort("usb_b", "v4"); err == nil {
 		t.Error("want an error for usb_b")
 	}
 }
@@ -449,8 +449,8 @@ func TestRunUSBHostWiringHints(t *testing.T) {
 
 func TestUSBFeatureGate(t *testing.T) {
 	for name, status := range map[string]string{
-		"old firmware": `{"version":"4.0.2","board_rev":"v3r4"}`,
-		"rev 13":       okStatus("4.0.2", "v3r4", 13),
+		"old firmware": `{"version":"4.0.2","board_rev":"v4"}`,
+		"rev 13":       okStatus("4.0.2", "v4", 13),
 	} {
 		pod := newFakeUSBPod(t)
 		pod.status = status

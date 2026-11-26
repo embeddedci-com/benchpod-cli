@@ -120,7 +120,7 @@ func TestLAVoltageSavesNothingWhenThePodStoresProfiles(t *testing.T) {
 	}
 }
 
-// Digital board v3r4: 5 V mode shows pin 21, does not warn that the bank (3.3 V) differs, and
+// Digital board v4: 5 V mode shows pin 21, does not warn that the bank (3.3 V) differs, and
 // warns when pin 21 sits above its setting. Older boards send no vref_out and print as before.
 func TestLAVoltagePin21(t *testing.T) {
 	stubLAVoltageProfile(t, "", false, nil)

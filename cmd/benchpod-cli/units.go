@@ -100,7 +100,7 @@ func formatSI(v float64, unit string) string {
 }
 
 // parseLAVoltage reads the LA bank voltage as the pod takes it, in millivolts (1800, 3300, or 5000
-// for 5 V I/O on the digital board v3r4; other pods refuse 5000 themselves). It accepts "3.3V",
+// for 5 V I/O on the digital board v4; other pods refuse 5000 themselves). It accepts "3.3V",
 // "1800mV" or "3.3" (a bare number is volts).
 func parseLAVoltage(s string) (int, error) {
 	in := strings.TrimSpace(s)
@@ -110,7 +110,7 @@ func parseLAVoltage(s string) (int, error) {
 	}
 	mv := int(math.Round(v * 1000))
 	if mv != 1800 && mv != 3300 && mv != 5000 {
-		return 0, fmt.Errorf("LA voltage %q: the pod takes 1.8V or 3.3V (5V on the digital board v3r4)", in)
+		return 0, fmt.Errorf("LA voltage %q: the pod takes 1.8V or 3.3V (5V on the digital board v4)", in)
 	}
 	return mv, nil
 }

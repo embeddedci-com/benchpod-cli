@@ -376,12 +376,12 @@ benchpod status --json     # the pod's raw status reply
 
 # Hardware (network):
 benchpod la voltage 3.3V                          # the DUT's I/O voltage for now (it normally comes from the wiring profile)
-benchpod la voltage 5V                            # digital board v3r4: 5 V I/O (see the 5 V page linked under la voltage)
+benchpod la voltage 5V                            # digital board v4: 5 V I/O (see the 5 V page linked under la voltage)
 benchpod generate --waveform sine --freq 1kHz --path 3v3 --amplitude-v 1 --offset-v 1.65 --duration 2s   # DAC waveform
 benchpod measure --waveform sine --samples 1024   # DAC + ADC loopback
 benchpod capture --samples 1024 --format csv      # ADC snapshot
 benchpod test ...
-benchpod la pull 3 up                             # LA pin pull resistor: up, down or off (digital v3r4: every pin, strength picked by the pod)
+benchpod la pull 3 up                             # LA pin pull resistor: up, down or off (digital v4: every pin, strength picked by the pod)
 benchpod la status
 benchpod la step --la 6 --steps 200 --delay 500us --dir-la 7 --direction 1
 benchpod la pins                                  # every LA pin: function, level, pull-up, direction, warnings
@@ -701,7 +701,7 @@ benchpod usb-check enumerate           # then check the board's USB firmware: se
 benchpod usb-hid capture               # and the HID reports it sends
 ```
 
-The board's own USB cable goes in the pod's USB-A host port (board v3r4 and later, `--port usb_a`,
+The board's own USB cable goes in the pod's USB-A host port (board v4 and later, `--port usb_a`,
 the default there). Older pods use their USB-C connector through a breakout (`--port usb_c`).
 
 #### Flashing the pod itself (STM32, USB DFU)
@@ -1599,7 +1599,7 @@ embeddedci.com; `la voltage` also works over USB.
 ### `benchpod la voltage [VOLTAGE]`
 
 Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
-(also `1800mV` or `3.3`: a bare number is volts), or `5V` on a pod with the digital board v3r4
+(also `1800mV` or `3.3`: a bare number is volts), or `5V` on a pod with the digital board v4
 ([5 V I/O](https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io): pin 21 goes to 5 V,
 and the output then shows pin 21). Leave it out to show the setting. The pod refuses
 LA capture, UART, SWD flash, pull-ups and sensor emulation until it is set;
@@ -1956,7 +1956,7 @@ the pod refuses it. A pod without the feature gets "needs firmware 4.0.3".
 
 | Flag     | Default | Purpose                                                              |
 |----------|---------|----------------------------------------------------------------------|
-| `--port` | `usb_a` on a pod with the USB-A host port (board v3r4 or later), else `usb_c` | `usb_a`, the USB-A host port (the board's own cable), or `usb_c`, the pod's USB-C connector through a breakout (D+, D- and GND to the board, 5 V from a supply into the pod's VBUS). Only with `on`. |
+| `--port` | `usb_a` on a pod with the USB-A host port (board v4 or later), else `usb_c` | `usb_a`, the USB-A host port (the board's own cable), or `usb_c`, the pod's USB-C connector through a breakout (D+, D- and GND to the board, 5 V from a supply into the pod's VBUS). Only with `on`. |
 | `--json` | off     | Print the pod's reply as JSON.                                       |
 
 ```bash
