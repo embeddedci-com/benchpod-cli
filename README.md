@@ -1782,6 +1782,46 @@ benchpod expansion mcp23017 --addr 0x20,0x21 --pullups external --json
 | `--pullups` | `pod`   | `pod` (the pod's pull-ups on LA1-LA6) or `external` (the breakout's). |
 | `--json`    | `false` | Print JSON.                                                         |
 
+### `benchpod current-monitor [chip]`
+
+External INA current monitors for µA currents: the pod's own current monitors step about
+125 µA, too coarse for a sleep current. Put a shunt in series between the pod's target-power output
+and the DUT and an INA breakout across it (IN+ on the supply side; IN- and the bus pin on the DUT
+side). The Python SDK (`bp.current_monitor`) and the MCP server's `current_monitor` tool are the
+full API; this command is a quick read on the bench. Without a chip, it lists the chips (INA226,
+INA228, INA238, INA219, INA260, INA3221), their addresses and the LA voltages they run at (3.3 V or
+5 V: not 1.8 V). With a chip, it probes the chip (manufacturer and die ID where it has them),
+resets and configures it for continuous conversion, and prints the current through the shunt, the
+bus voltage and the power. `--seconds N` measures for N seconds and prints the mean, minimum and
+maximum current. With 10 ohm an INA226 resolves 0.25 µA up to about 8 mA.
+
+An open `benchpod i2c start` session is used as it is. Otherwise the command (on gateware v65 and
+later, after switching the pod from the emulation image to the loop image, or failing while sensors
+run) opens one on `--sda` and `--scl` (default: the wiring profile's `i2c_sda` and `i2c_scl`) and
+closes it afterwards; with `--pullups pod` the pull-ups must be on (`benchpod la pull 1 up`). The
+chip keeps running afterwards.
+
+```bash
+benchpod current-monitor                                          # the chip list
+benchpod current-monitor ina226 --shunt 10 --sda 1 --scl 2
+benchpod current-monitor ina228 --shunt 10 --max-current 0.001 --seconds 5 --json
+```
+
+| Flag              | Default | Purpose                                                       |
+|-------------------|---------|---------------------------------------------------------------|
+| `--shunt`         | (required) | The shunt resistor in ohms (the INA260 has its own 2 mohm). |
+| `--addr`          | `0x40`  | The chip's 7-bit address (`0x40`-`0x4f`, INA3221 `0x40`-`0x43`). |
+| `--channel`       | `1`     | INA3221 channel 1-3.                                          |
+| `--seconds`       | `0`     | Measure this long (mean, min, max); 0 is one reading.         |
+| `--averaging`     | `16`    | Conversions averaged per result: 1, 4, 16, 64, 128, 256, 512 or 1024 (INA219: 1-128). |
+| `--conversion-time` | `1.1ms` | Per shunt and bus conversion, the nearest the chip has (50µs to 8.2ms). |
+| `--max-current`   | (chip default) | Largest current in amps (`0.001`): INA219, INA228 and INA238 pick the narrowest range covering it. |
+| `--sda`           | (profile `i2c_sda`) | LA pin for SDA when no I2C session is open.          |
+| `--scl`           | (profile `i2c_scl`) | LA pin for SCL when no I2C session is open.          |
+| `--hz`            | `400000` | SCL rate when a session is opened.                           |
+| `--pullups`       | `pod`   | `pod` (the pod's pull-ups on LA1-LA6) or `external` (the breakout's). |
+| `--json`          | `false` | Print JSON.                                                   |
+
 ### `benchpod flash`
 
 Flash an SWD target wired to the pod, through host-side OpenOCD and the pod's

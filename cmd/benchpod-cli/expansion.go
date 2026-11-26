@@ -79,7 +79,7 @@ func newExpansionCmd(g *globalFlags) *cobra.Command {
 					return usageErrorf("an I2C session is open on SDA LA%d, SCL LA%d: leave out --sda/--scl to use it, or `benchpod i2c stop` first", st.SDA, st.SCL)
 				}
 			} else {
-				if st, err = startExpansionBus(ctx, g, t, sda, scl, hz, pullups); err != nil {
+				if st, err = startExpansionBus(ctx, g, t, sda, scl, hz, pullups, "expansion"); err != nil {
 					return err
 				}
 				defer func() {
@@ -160,7 +160,7 @@ func parseExpansionAddrs(chip expansion.Chip, s string) ([]int, error) {
 	return out, nil
 }
 
-func startExpansionBus(ctx context.Context, g *globalFlags, t *podTarget, sda, scl string, hz int, pullups string) (i2cSession, error) {
+func startExpansionBus(ctx context.Context, g *globalFlags, t *podTarget, sda, scl string, hz int, pullups, what string) (i2cSession, error) {
 	r := &pinResolver{g: g}
 	if sda == "" || scl == "" {
 		if w := r.wiring(); w != nil {
@@ -183,14 +183,14 @@ func startExpansionBus(ctx context.Context, g *globalFlags, t *podTarget, sda, s
 		return i2cSession{}, usageErrorf("--sda and --scl are both LA%d; each needs its own pin", sdaPin)
 	}
 	if err := ensureBusMasterImage(ctx, t.client, "the I2C master"); err != nil {
-		return i2cSession{}, fmt.Errorf("expansion: %w", err)
+		return i2cSession{}, fmt.Errorf("%s: %w", what, err)
 	}
 	var s i2cSession
 	req := map[string]any{"cmd": "i2c_start", "sda": sdaPin, "scl": sclPin, "clock_hz": hz, "pullups": pullups}
-	if err := busCommand(ctx, t, "expansion", "I2C master", req, &s); err != nil {
+	if err := busCommand(ctx, t, what, "I2C master", req, &s); err != nil {
 		return i2cSession{}, err
 	}
-	fmt.Fprintf(os.Stderr, "expansion: opened I2C on %s for this run\n", s.String())
+	fmt.Fprintf(os.Stderr, "%s: opened I2C on %s for this run\n", what, s.String())
 	return s, nil
 }
 
