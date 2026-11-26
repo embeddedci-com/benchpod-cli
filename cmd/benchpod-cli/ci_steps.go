@@ -178,7 +178,14 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 	fw := r.fw
 	if fw.Overrides.TargetPower == 0 {
 		// The target must be powered to answer SWD: the profile's rail, as the SDK's flash does.
-		fw.Overrides.TargetPower = r.wiring.rail()
+		if j1 := r.wiring.j1Rail(); j1 != "" {
+			// A J1 supply is not a flash power option: switch it on here, the flash then finds the target up.
+			if _, err := r.pod.Command(ctx, map[string]any{"cmd": "target_power", "rail": j1, "enabled": true}); err != nil {
+				return fmt.Errorf("power on (%s) before the flash: %w", j1, err)
+			}
+		} else {
+			fw.Overrides.TargetPower = r.wiring.rail()
+		}
 	}
 	fw.Timeout = stepTimeout(s)
 	if dl, ok := ctx.Deadline(); ok {
@@ -201,6 +208,7 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 // powerOn applies the profile's I/O voltage (only while the rail is off), then switches the
 // profile's rail on, naming the profile so the pod records it.
 func (r *ciRunner) powerOn(ctx context.Context, w io.Writer) error {
+	j1 := r.wiring.j1Rail()
 	rail := r.wiring.rail()
 	if mv := r.wiring.intKey("la_mv", 0); mv > 0 {
 		st, _, err := readPodStatus(ctx, r.pod)
@@ -208,7 +216,7 @@ func (r *ciRunner) powerOn(ctx context.Context, w io.Writer) error {
 			return err
 		}
 		if st.LAVccioMV != mv {
-			if r.railOn(ctx, rail) {
+			if r.railOn(ctx, rail, j1) {
 				return fmt.Errorf("the board is powered with I/O at %d mV and the wiring profile wants %d mV: power it off first", st.LAVccioMV, mv)
 			}
 			if _, err := r.pod.Command(ctx, map[string]any{"cmd": "la_voltage", "mv": mv}); err != nil {
@@ -218,6 +226,15 @@ func (r *ciRunner) powerOn(ctx context.Context, w io.Writer) error {
 		}
 	}
 	req := map[string]any{"cmd": "target_power", "efuse": rail, "enabled": true}
+	if j1 != "" {
+		// A J1 supply (digital board v4): the profile's rail, named as the pod names it.
+		req = map[string]any{"cmd": "target_power", "rail": j1, "enabled": true}
+		if _, err := r.pod.Command(ctx, req); err != nil {
+			return fmt.Errorf("power on (%s): %w", j1, err)
+		}
+		fmt.Fprintf(w, "power on, %s (J1)\n", j1)
+		return nil
+	}
 	if r.wiring.Name != "" {
 		req["profile"] = r.wiring.Name
 	}
@@ -229,6 +246,13 @@ func (r *ciRunner) powerOn(ctx context.Context, w io.Writer) error {
 }
 
 func (r *ciRunner) powerOff(ctx context.Context, w io.Writer) error {
+	if j1 := r.wiring.j1Rail(); j1 != "" {
+		if _, err := r.pod.Command(ctx, map[string]any{"cmd": "target_power", "rail": j1, "enabled": false}); err != nil {
+			return fmt.Errorf("power off (%s): %w", j1, err)
+		}
+		fmt.Fprintf(w, "power off, %s (J1)\n", j1)
+		return nil
+	}
 	rail := r.wiring.rail()
 	if _, err := r.pod.Command(ctx, map[string]any{"cmd": "target_power", "efuse": rail, "enabled": false}); err != nil {
 		return fmt.Errorf("power off (eFuse %d): %w", rail, err)
@@ -237,7 +261,7 @@ func (r *ciRunner) powerOff(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
-func (r *ciRunner) railOn(ctx context.Context, rail int) bool {
+func (r *ciRunner) railOn(ctx context.Context, rail int, j1 string) bool {
 	raw, err := r.pod.Command(ctx, map[string]any{"cmd": "target_status"})
 	if err != nil {
 		return false
@@ -245,6 +269,9 @@ func (r *ciRunner) railOn(ctx context.Context, rail int) bool {
 	var tp targetPower
 	if json.Unmarshal(raw, &tp) != nil {
 		return false
+	}
+	if j1 != "" {
+		return tp.J1Rails != nil && ((j1 == "j1_3v3" && bool(tp.J1Rails.V3V3)) || (j1 == "j1_1v8" && bool(tp.J1Rails.V1V8)))
 	}
 	if rail == 2 {
 		return bool(tp.Efuse2.Enabled)
@@ -506,6 +533,9 @@ func nestedStats(data json.RawMessage) json.RawMessage {
 }
 
 func (r *ciRunner) measurePower(ctx context.Context, m *ci.MeasurePower, w io.Writer) (map[string]float64, error) {
+	if j1 := r.wiring.j1Rail(); j1 != "" {
+		return nil, fmt.Errorf("measure_power: the profile's rail is %s (a J1 supply), which has no current monitor; measure it with an external current monitor, or power the board from the internal or external rail", j1)
+	}
 	rail := r.wiring.rail()
 	ms := int(m.Duration / time.Millisecond)
 	var stats *powerStats

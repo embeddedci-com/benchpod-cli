@@ -330,6 +330,15 @@ func (w *ciWiring) rail() int {
 	return 1
 }
 
+// j1Rail is the profile's target-power rail when it is a J1 supply of the digital board v4
+// ("j1_3v3" or "j1_1v8", profile key efuse), else "".
+func (w *ciWiring) j1Rail() string {
+	if s := w.strKey("efuse"); s == "j1_3v3" || s == "j1_1v8" {
+		return s
+	}
+	return ""
+}
+
 // loadWiring reads the YAML's wiring profile (else the pod's default) from the pod.
 func (r *ciRunner) loadWiring(ctx context.Context) *ciExit {
 	r.wiring = &ciWiring{Name: r.cfg.Wiring}
