@@ -201,6 +201,8 @@ type podWiring struct {
 	SpiCs    *int `json:"spi_cs"`
 	UartRx   *int `json:"uart_rx"`
 	UartTx   *int `json:"uart_tx"`
+	// Monitors are the external INA current monitors (see wiring_monitors.go).
+	Monitors []profileMonitor `json:"monitors"`
 	// Signals are the profile's named DUT signals ("DRDY" on LA7).
 	Signals []struct {
 		Name string `json:"name"`

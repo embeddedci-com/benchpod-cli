@@ -1790,6 +1790,29 @@ benchpod expansion ina226 --shunt 10 --sda 1 --scl 2
 benchpod expansion ina228 --shunt 10 --max-current 0.001 --seconds 5 --json
 ```
 
+**Monitors in the wiring profile.** The profile's optional `monitors` key (at most 8 entries) describes
+the INA breakouts on the bench, so the command needs no flags. `benchpod expansion <chip>` takes what
+the flags leave out from the entries whose `chip` matches: with `--addr` the entry at that address,
+without it every matching entry (each one is read). Explicit flags win. The entry's `name` is printed
+next to the chip (and is `name` in the JSON); without one it is `chip@0xAA` (ina3221: `.channel`
+appended). `--shunt` is only required when no entry supplies `shunt_ohm`. `benchpod wiring save`
+checks the key: `chip` and `addr` (a number, 64 is 0x40) are required; `shunt_ohm` is required
+except for the ina260; `channel` is for the ina3221 (1-3); `sda`/`scl` (LA 1-14, default the profile's
+`i2c_sda`/`i2c_scl`) must be the same pair for all monitors; `averaging`, `conversion_time` (seconds,
+at most 0.01) and `max_current` (amps) are optional; (`addr`, `channel`) and names are unique.
+
+```json
+"monitors": [
+  {"chip": "ina226", "addr": 64, "shunt_ohm": 10.0, "name": "dut", "sda": 13, "scl": 14,
+   "averaging": 16, "conversion_time": 0.0011, "max_current": 0.001}
+]
+```
+
+```bash
+benchpod expansion ina226                  # reads every ina226 entry of the profile
+benchpod expansion ina226 --addr 0x40 --seconds 5
+```
+
 | Flag        | Default | Purpose                                                             |
 |-------------|---------|---------------------------------------------------------------------|
 | `--addr`    | (the chip's first address) | The 7-bit address, or several for chips on one bus: `0x20,0x21`. |

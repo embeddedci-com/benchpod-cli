@@ -24,30 +24,106 @@ type monitorFlags struct {
 	convTime                   time.Duration
 }
 
-// runMonitors reads each INA monitor at addrs and prints it (one reading, or --seconds of them).
-func runMonitors(ctx context.Context, out io.Writer, chip expansion.Chip, addrs []int, f monitorFlags,
-	st i2cSession, asJSON bool, xfer currentmonitor.Xfer) error {
-	shunt := f.shunt
-	if chip.InternalOhm > 0 {
-		if shunt != 0 && shunt != chip.InternalOhm {
-			return usageErrorf("the %s has its own %g mohm shunt: leave --shunt out", chip.Name, chip.InternalOhm*1000)
+// monitorJob is one INA reading: an address and channel with the settings that apply to it.
+type monitorJob struct {
+	addr, channel, averaging int
+	shunt, maxCurrent        float64
+	convTime                 time.Duration
+	name                     string
+	sda, scl                 int // from the profile entry; 0 = not set
+}
+
+// monitorJobs builds the readings for chip. addrs are the --addr addresses when addrGiven, else
+// the chip's first. The profile's monitors entries for the chip supply the settings the flags leave
+// out: with --addr the entries at those addresses, without it every entry. An address no entry
+// covers (or a profile without entries) is read from the flags alone.
+func monitorJobs(chip expansion.Chip, addrs []int, addrGiven bool, f monitorFlags, w *podWiring) ([]monitorJob, error) {
+	entries := w.monitorsFor(chip)
+	var jobs []monitorJob
+	add := func(addr int, e *profileMonitor) {
+		j := monitorJob{addr: addr, channel: 1, shunt: f.shunt, maxCurrent: f.maxCurrent, averaging: f.averaging, convTime: f.convTime}
+		if e != nil {
+			j.channel, j.averaging, j.maxCurrent = max(e.Channel, 1), e.Averaging, e.MaxCurrent
+			j.convTime = time.Duration(math.Round(e.ConversionTime * 1e9))
+			if e.ShuntOhm != nil {
+				j.shunt = *e.ShuntOhm
+			}
+			j.name = e.displayName(chip)
+			if e.SDA != nil && e.SCL != nil {
+				j.sda, j.scl = *e.SDA, *e.SCL
+			}
+			// explicit flags win over the entry
+			if f.shunt != 0 {
+				j.shunt = f.shunt
+			}
+			if f.averaging != 0 {
+				j.averaging = f.averaging
+			}
+			if f.convTime != 0 {
+				j.convTime = f.convTime
+			}
+			if f.maxCurrent != 0 {
+				j.maxCurrent = f.maxCurrent
+			}
 		}
-		shunt = chip.InternalOhm
+		if f.channel != 0 {
+			j.channel = f.channel
+		}
+		jobs = append(jobs, j)
 	}
+	if !addrGiven && len(entries) > 0 {
+		for i := range entries {
+			add(entries[i].Addr, &entries[i])
+		}
+	} else {
+		for _, a := range addrs {
+			found := false
+			for i := range entries {
+				if entries[i].Addr == a {
+					add(a, &entries[i])
+					found = true
+				}
+			}
+			if !found {
+				add(a, nil)
+			}
+		}
+	}
+	for _, j := range jobs {
+		if chip.InternalOhm == 0 && j.shunt <= 0 {
+			return nil, usageErrorf("--shunt is required for the %s: the shunt resistor in ohms, e.g. --shunt 10 (or shunt_ohm in a monitors entry of the wiring profile)", chip.Name)
+		}
+		if chip.InternalOhm > 0 && f.shunt != 0 && f.shunt != chip.InternalOhm {
+			return nil, usageErrorf("the %s has its own %g mohm shunt: leave --shunt out", chip.Name, chip.InternalOhm*1000)
+		}
+		if j.channel > chip.Channels {
+			return nil, usageErrorf("--channel is 1 to %d for the %s", chip.Channels, chip.Name)
+		}
+	}
+	return jobs, nil
+}
+
+// runMonitors reads each INA monitor job and prints it (one reading, or seconds of them).
+func runMonitors(ctx context.Context, out io.Writer, chip expansion.Chip, jobs []monitorJob, seconds float64,
+	st i2cSession, asJSON bool, xfer currentmonitor.Xfer) error {
 	var results []monitorResult
-	for _, addr := range addrs {
-		mon := currentmonitor.New(chip, addr, f.channel, shunt, xfer)
+	for _, j := range jobs {
+		shunt := j.shunt
+		if chip.InternalOhm > 0 {
+			shunt = chip.InternalOhm
+		}
+		mon := currentmonitor.New(chip, j.addr, j.channel, shunt, xfer)
 		if err := mon.Probe(); err != nil {
 			return err
 		}
-		if err := mon.Configure(true, f.averaging, f.convTime.Seconds(), f.maxCurrent*shunt); err != nil {
+		if err := mon.Configure(true, j.averaging, j.convTime.Seconds(), j.maxCurrent*shunt); err != nil {
 			return usageErrorf("%v", err)
 		}
-		res, err := sampleMonitor(ctx, mon, f.seconds)
+		res, err := sampleMonitor(ctx, mon, seconds)
 		if err != nil {
 			return err
 		}
-		res.Chip, res.Addr, res.Channel, res.ShuntOhm, res.SDA, res.SCL = chip.Name, addr, f.channel, shunt, st.SDA, st.SCL
+		res.Chip, res.Name, res.Addr, res.Channel, res.ShuntOhm, res.SDA, res.SCL = chip.Name, j.name, j.addr, j.channel, shunt, st.SDA, st.SCL
 		results = append(results, res)
 	}
 	if asJSON {
@@ -56,7 +132,11 @@ func runMonitors(ctx context.Context, out io.Writer, chip expansion.Chip, addrs 
 		return err
 	}
 	for _, res := range results {
-		fmt.Fprintf(out, "%s at 0x%02x (SDA LA%d, SCL LA%d), shunt %g ohm\n", res.Chip, res.Addr, st.SDA, st.SCL, res.ShuntOhm)
+		label := res.Chip
+		if res.Name != "" {
+			label += " (" + res.Name + ")"
+		}
+		fmt.Fprintf(out, "%s at 0x%02x (SDA LA%d, SCL LA%d), shunt %g ohm\n", label, res.Addr, st.SDA, st.SCL, res.ShuntOhm)
 		if res.N == 1 {
 			fmt.Fprintf(out, "current  %s\nbus      %.4f V\nshunt    %s\npower    %s\n", formatAmps(res.Mean), res.BusVoltage,
 				formatVolts(res.Mean*res.ShuntOhm), formatWatts(res.Mean*res.BusVoltage))
@@ -73,6 +153,7 @@ func runMonitors(ctx context.Context, out io.Writer, chip expansion.Chip, addrs 
 
 type monitorResult struct {
 	Chip         string  `json:"chip"`
+	Name         string  `json:"name,omitempty"`
 	Addr         int     `json:"addr"`
 	Channel      int     `json:"channel"`
 	ShuntOhm     float64 `json:"shunt_ohm"`
