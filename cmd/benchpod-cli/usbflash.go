@@ -77,7 +77,7 @@ func newUSBFlashCmd(g *globalFlags) *cobra.Command {
 			"reads FAIL.TXT after the copy, so a DAPLink that rejected the file fails the flash. The pod's note\n" +
 			"(\"verified 12 blocks\") is printed. For a file copy the CLI sends the current time for the new file's dates.\n\n" +
 			"If USB host mode is off, usb-flash starts it (and says so) on --port: usb_a on a pod with the\n" +
-			"USB-A host port (board v3r4 and later), else usb_c. It then waits for a device, shows the\n" +
+			"USB-A host port (board v4 and later), else usb_c. It then waits for a device, shows the\n" +
 			"progress and exits non-zero with the pod's reason when the flash fails. Host mode stays on until\n" +
 			"its timeout; `benchpod usb-host off` stops it. While the pod hosts it is off the computer's USB,\n" +
 			"so use the pod's network address (not --connection usb). The global --timeout is the whole\n" +
@@ -134,7 +134,7 @@ func newUSBFlashCmd(g *globalFlags) *cobra.Command {
 	f.StringVar(&o.mode, "mode", "", "override the automatic choice: uf2, file, dfu, teensy, avr, samd, esp or picoboot")
 	f.StringVar(&o.address, "address", "", "flash address of the image for dfu, teensy, avr, samd, esp and picoboot (default: from a .hex or .dfu file, else 0x08000000 for dfu, 0x2000 for samd, 0x10000000 for picoboot, 0)")
 	f.StringVar(&o.name, "name", "", "file mode: the file name on the drive, 8.3 (default: the file's name, shortened)")
-	f.StringVar(&o.port, "port", "", "usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host port, board v3r4 or later; else usb_c)")
+	f.StringVar(&o.port, "port", "", "usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host port, board v4 or later; else usb_c)")
 	f.BoolVar(&o.noLeave, "no-leave", false, "keep the board in its bootloader at the end instead of starting the new firmware")
 	f.BoolVar(&o.verify, "verify", false, "uf2: after the write, compare the file with the loader's CURRENT.UF2 (only when the board is still in its loader)")
 	f.BoolVar(&o.checkFail, "check-fail-txt", false, "file: after the copy, wait for the drive to come back and fail the flash when it holds a FAIL.TXT")

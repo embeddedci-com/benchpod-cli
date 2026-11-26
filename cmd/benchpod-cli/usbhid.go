@@ -76,7 +76,7 @@ func newUSBHIDCmd(g *globalFlags) *cobra.Command {
 			"The pod never sends anything to the device. A capture ends with the command; it also ends when the board\n" +
 			"detaches (a board that resets needs a new capture). The pod refuses usb-hid while a usb-flash or usb-check\n" +
 			"runs. --port is usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host\n" +
-			"port, board v3r4 and later; else usb_c). While the pod hosts it is off the computer's USB, so use the\n" +
+			"port, board v4 and later; else usb_c). While the pod hosts it is off the computer's USB, so use the\n" +
 			"pod's network address (not --connection usb). `benchpod usb-host off` stops host mode.",
 		Example: "  benchpod usb-hid\n" +
 			"  benchpod usb-hid capture --duration 30s\n" +
@@ -120,7 +120,7 @@ func newUSBHIDCmd(g *globalFlags) *cobra.Command {
 	f.IntVar(&o.instance, "instance", -1, "only this HID interface, 0 or 1 (default: all)")
 	f.IntVar(&o.count, "count", 0, "capture: stop after this many reports (default: run for --duration)")
 	f.DurationVar(&o.duration, "duration", usbHIDDefaultDuration, "capture: how long to catch reports, 1s to 1h")
-	f.StringVar(&o.port, "port", "", "usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host port, board v3r4 or later; else usb_c)")
+	f.StringVar(&o.port, "port", "", "usb_a or usb_c when host mode has to be started (default: usb_a on a pod with the USB-A host port, board v4 or later; else usb_c)")
 	f.BoolVar(&o.asJSON, "json", false, "print the interfaces (list) or the reports (capture) as JSON")
 	return cmd
 }

@@ -25,13 +25,13 @@ const laVoltageMissing = "this firmware has no LA voltage selection; update the 
 func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "voltage [VOLTAGE]",
-		Short: "Show or set the LA bank I/O voltage (1.8V or 3.3V, 5V on digital v3r4: the DUT's logic level)",
+		Short: "Show or set the LA bank I/O voltage (1.8V or 3.3V, 5V on digital v4: the DUT's logic level)",
 		Long: "Show or set the voltage of the pod's LA bank (LA1-LA14), which must match the\n" +
 			"DUT's I/O voltage. The pod refuses LA capture, UART, SWD flash, pull-ups and\n" +
 			"sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
 			"VOLTAGE is 1.8V or 3.3V (also 1800mV, or 3.3: a bare number is volts).\n\n" +
-			"5V (5.0, 5000) works on a pod with the digital board v3r4: pin 21, the pull-up rail,\n" +
+			"5V (5.0, 5000) works on a pod with the digital board v4: pin 21, the pull-up rail,\n" +
 			"goes to 5V and outputs reach 5V through their pull-ups (benchpod la pull PIN up). The\n" +
 			"output then shows pin 21. BP0028: 5V did not come up. Other pods refuse 5000. Details:\n" +
 			"https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io\n\n" +
@@ -68,11 +68,11 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 type laVoltageReply struct {
 	MV         int `json:"mv"`
 	ReadbackMV int `json:"readback_mv"`
-	// VrefOut is J1 pin 21 on the digital board v3r4 (nil on other boards).
+	// VrefOut is J1 pin 21 on the digital board v4 (nil on other boards).
 	VrefOut *vrefOut `json:"vref_out,omitempty"`
 }
 
-// vrefOut is pin 21 in the la_voltage reply (digital board v3r4).
+// vrefOut is pin 21 in the la_voltage reply (digital board v4).
 type vrefOut struct {
 	Source string `json:"source"` // "bank" or "5v"
 	SetMV  int    `json:"set_mv"`
