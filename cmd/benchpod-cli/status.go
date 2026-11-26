@@ -228,6 +228,12 @@ type targetPower struct {
 		Enabled flexBool `json:"enabled"`
 		Fault   flexBool `json:"fault"`
 	} `json:"efuse2"`
+	// J1Rails is the switched supply pins on J1 of the digital board v4 (pin 17 +3.3 V, pin 18
+	// +1.8 V); nil on boards where both are always on.
+	J1Rails *struct {
+		V3V3 flexBool `json:"v3v3"`
+		V1V8 flexBool `json:"v1v8"`
+	} `json:"j1_rails"`
 }
 
 // flexBool reads a firmware 4.0 boolean (true/false) and, for status against firmware 3.x (which
@@ -333,6 +339,9 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 	}
 	if s.power != nil {
 		row("Target power", describeTargetPower(*s.power))
+		if j := describeJ1Rails(*s.power); j != "" {
+			row("J1 supplies", j)
+		}
 	}
 	if s.draw != nil {
 		if d := describePowerDraw(*s.draw, s.power); d != "" {
@@ -380,6 +389,21 @@ func describeTargetPower(p targetPower) string {
 		return "off"
 	}
 	return strings.Join(on, ", ")
+}
+
+// describeJ1Rails is the J1 supplies row of a digital board v4 ("pin 17 3.3 V on, pin 18 1.8 V
+// off"); "" on boards where both pins are always on.
+func describeJ1Rails(p targetPower) string {
+	if p.J1Rails == nil {
+		return ""
+	}
+	state := func(on flexBool) string {
+		if on {
+			return "on"
+		}
+		return "off"
+	}
+	return fmt.Sprintf("pin 17 3.3 V %s, pin 18 1.8 V %s", state(p.J1Rails.V3V3), state(p.J1Rails.V1V8))
 }
 
 // describeMACs is the MAC row, for a network that hands out addresses only to registered

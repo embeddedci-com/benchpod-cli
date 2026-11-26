@@ -1317,6 +1317,10 @@ BenchPod at 192.168.1.220:8080
   Cloud         registered, connected, on your account as benchpod-baea06
 ```
 
+The `J1 supplies` line appears on the digital board v4 (firmware with feature `dut_rails`): it
+shows whether J1 pin 17 (+3.3 V) and pin 18 (+1.8 V) are on. Both come on at boot; scripts and
+the MCP server switch them (`bp.j1_power`, `power_on` with `j1_rail`).
+
 The `MAC` line (firmware after 3.10.7) has the Ethernet MAC and, on a pod with Wi-Fi, the MAC it
 uses on Wi-Fi, or `not known yet` until a `benchpod scan-wifi` or a join tells the pod. Through
 embeddedci.com the pod sends a shorter status without them: the pod's Settings tab on the web
