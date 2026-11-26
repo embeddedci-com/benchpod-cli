@@ -521,6 +521,15 @@ func planAddr(p *usbFlashPlan) string {
 func usbWaitDevice(ctx context.Context, c podCommander, first *usbHostReport, poll time.Duration, say func(string, ...any)) (*usbDevice, error) {
 	announced := false
 	r := first
+	noDevice := func() error {
+		msg := "no USB device enumerated"
+		if h := usbLineHint(r); h != "" {
+			msg += ": " + h
+		} else if r.Connected {
+			msg += " (a device is connected but did not enumerate)"
+		}
+		return fmt.Errorf("%s: %w", msg, ctx.Err())
+	}
 	for {
 		if r.Enumeration == "stuck" {
 			return nil, fmt.Errorf("a USB device is attached but did not finish enumerating: %s", usbLineHint(r))
@@ -534,19 +543,17 @@ func usbWaitDevice(ctx context.Context, c podCommander, first *usbHostReport, po
 		}
 		select {
 		case <-ctx.Done():
-			msg := "no USB device enumerated"
-			if h := usbLineHint(r); h != "" {
-				msg += ": " + h
-			} else if r.Connected {
-				msg += " (a device is connected but did not enumerate)"
-			}
-			return nil, fmt.Errorf("%s: %w", msg, ctx.Err())
+			return nil, noDevice()
 		case <-time.After(poll):
 		}
-		var err error
-		if r, _, err = usbHostRead(ctx, c); err != nil {
+		next, _, err := usbHostRead(ctx, c)
+		if err != nil {
+			if ctx.Err() != nil { // the deadline hit during the read: same outcome as hitting it while idle
+				return nil, noDevice()
+			}
 			return nil, err
 		}
+		r = next
 		if r.Mode != "host" {
 			return nil, fmt.Errorf("USB host mode ended while waiting for the device (its timeout ran out, or `usb-host off`)")
 		}
@@ -557,17 +564,23 @@ func usbWaitDevice(ctx context.Context, c podCommander, first *usbHostReport, po
 // is printed when the phase changes and at each 10 percent. On cancel it aborts the flash.
 func usbFlashWait(ctx context.Context, c podCommander, poll time.Duration, say func(string, ...any)) (*usbFlashStatus, json.RawMessage, error) {
 	lastPhase, lastPct := "", -1
+	abort := func() (*usbFlashStatus, json.RawMessage, error) {
+		actx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, _ = c.Command(actx, map[string]any{"cmd": "usb_flash", "abort": true})
+		cancel()
+		return nil, nil, fmt.Errorf("flash: %w (the flash was aborted)", ctx.Err())
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			actx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, _ = c.Command(actx, map[string]any{"cmd": "usb_flash", "abort": true})
-			cancel()
-			return nil, nil, fmt.Errorf("flash: %w (the flash was aborted)", ctx.Err())
+			return abort()
 		case <-time.After(poll):
 		}
 		raw, err := c.Command(ctx, map[string]any{"cmd": "usb_flash"})
 		if err != nil {
+			if ctx.Err() != nil { // cancelled during the poll: still abort the flash on the pod
+				return abort()
+			}
 			return nil, nil, err
 		}
 		var st usbFlashStatus

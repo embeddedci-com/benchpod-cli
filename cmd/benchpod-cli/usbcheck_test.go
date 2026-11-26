@@ -14,7 +14,10 @@ import (
 // usbExtPod adds scripted usb_check and usb_hid state to the fake USB pod.
 type usbExtPod struct {
 	*fakeUSBPod
-	checkRuns   int    // usb_check polls that report running
+	checkRuns   int                // usb_check polls that report running
+	cancel      context.CancelFunc // called at the cancelAt-th usb_check poll (tests end a run without a real-time deadline)
+	cancelAt    int
+	checkPolls  int
 	checkResult string // the final usb_check reply
 	checkErr    error  // refusal of the start
 	hidList     string
@@ -43,6 +46,10 @@ func (p *usbExtPod) Command(ctx context.Context, req map[string]any) (json.RawMe
 				return nil, p.checkErr
 			}
 			return json.RawMessage(`{"running":true,"have_result":false,"test":"x"}`), nil
+		}
+		p.checkPolls++
+		if p.cancel != nil && p.cancelAt > 0 && p.checkPolls == p.cancelAt {
+			p.cancel()
 		}
 		if p.checkRuns > 0 {
 			p.checkRuns--
@@ -207,8 +214,9 @@ func TestRunUSBCheckAbortsWhenCancelled(t *testing.T) {
 	fastUSB(t)
 	pod := newUSBExtPod(t)
 	pod.checkRuns = 1 << 30
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	pod.cancel, pod.cancelAt = cancel, 20
 	var out, prog bytes.Buffer
 	err := runUSBCheck(ctx, pod, usbCheckOpts{action: "reset", hostSecs: 360}, &out, &prog)
 	if err == nil || !strings.Contains(err.Error(), "aborted") {
