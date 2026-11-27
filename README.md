@@ -962,7 +962,8 @@ With `firmware` set and no `flash` step, the run flashes first (a required step 
 `flash`); the firmware is flashed once also with `--repeat`. Flash settings (SWD pins, target
 config, reset) come from the wiring profile, like `benchpod flash`; `firmware.flash` takes
 `target`, `swclk`, `swdio`, `nreset`, `load_address`, `target_power`, `verify`, `reset`,
-`connect_under_reset` and `openocd`.
+`connect_under_reset` and `openocd`. `target_power` is a supply (`5v`, `external`, `3v3` or `1v8`);
+`1`, `2` and `internal` still work but warn.
 
 Every step has exactly one of these keys, plus optional `id`, `name`, `required`, `timeout`
 and `expect`:
@@ -1851,7 +1852,7 @@ and flashed by the local OpenOCD. Both need `benchpod login` or `BENCHPOD_API_KE
 
 ```bash
 benchpod flash --connection embeddedci:bench-1 --repo acme/firmware --ref main
-benchpod flash --build 3f9c2a1e-... --target-power 1
+benchpod flash --build 3f9c2a1e-... --target-power 5v
 ```
 
 Without `--artifact` the build's `.elf` is flashed, else its `.hex`, else its `.bin`.
@@ -1878,7 +1879,7 @@ embeddedci.com always verifies and resets: `--no-verify`, `--no-reset`,
 | `--no-verify`              | off     | Do not verify after programming.                                        |
 | `--no-reset`               | off     | Do not reset the target after programming.                              |
 | `--keep-reset-init`        | off     | Keep the target config's reset-init clock boost (cleared by default because it glitches the link). |
-| `--target-power`           | (none)  | Turn on a target power eFuse first: `1` (internal 5 V) or `2` (external). |
+| `--target-power`           | (none)  | Switch a target power supply on first: `5v` (the pod's 5 V), `external`, or on a BenchPod v4 `3v3` or `1v8`. `1`, `2` and `internal` still work but warn. Server-side flashes take `5v` and `external` only. |
 | `--openocd`                | (`PATH`) | Path to the `openocd` binary.                                          |
 | `--command`, `-c`          | (none)  | Extra OpenOCD command, repeatable, appended last.                       |
 | `--openocd-arg`            | (none)  | Extra raw OpenOCD argument, repeatable, appended last.                  |

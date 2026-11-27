@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/embeddedci-com/benchpod-cli/internal/ci"
 	"io"
 	"log"
 	"os"
@@ -67,7 +68,7 @@ type flashFlags struct {
 	noConnectUnderReset bool
 	keepResetInit       bool
 	openocdBin          string
-	targetPower         int
+	targetPower         string // a supply (5v, external, 3v3, 1v8), "" = leave power alone
 	extraConfigs        []string
 	extraArgs           []string
 
@@ -156,7 +157,7 @@ func newFlashCmd(g *globalFlags) *cobra.Command {
 	fl.BoolVar(&f.noConnectUnderReset, "no-connect-under-reset", false, "do not hold the target in reset while connecting (on by default when --nreset is set; it stops already-running firmware from disabling SWD before the debug port is read)")
 	fl.BoolVar(&f.keepResetInit, "keep-reset-init", false, "keep the target cfg's reset-init/reset-start events (clock boost); by default they are cleared because the just-after-reset clock writes glitch the slow bit-banged link (flashing then runs at the default reset clock — slower but reliable)")
 	fl.StringVar(&f.openocdBin, "openocd", "", "path to the openocd binary; defaults to the one on PATH")
-	fl.IntVar(&f.targetPower, "target-power", 0, "enable a target power eFuse before flashing: 1 (internal 5V) or 2 (external)")
+	fl.StringVar(&f.targetPower, "target-power", "", "switch a target power supply on before flashing: 5v, external, or on a BenchPod v4 3v3 or 1v8 (1, 2 and internal are deprecated)")
 	fl.StringArrayVarP(&f.extraConfigs, "command", "c", nil, "extra OpenOCD command, repeatable (passthrough, appended last)")
 	fl.StringArrayVar(&f.extraArgs, "openocd-arg", nil, "extra raw OpenOCD argument, repeatable (passthrough, appended last)")
 	fl.StringVar(&f.espRx, "rx", "", "ESP32 (--target esp32...): LA pin on the target's TXD0 (default: uart_rx from the pod's wiring profile)")
@@ -240,8 +241,18 @@ func runFlash(g *globalFlags, f *flashFlags) error {
 		}
 		return usageErrorf("--file requires --target")
 	}
-	if f.targetPower != 0 && f.targetPower != 1 && f.targetPower != 2 {
-		return usageErrorf("--target-power must be 1 (internal 5V) or 2 (external)")
+	if f.targetPower != "" {
+		sup, legacy, ok := ci.NormalizeSupply(f.targetPower)
+		if !ok {
+			return usageErrorf("--target-power must be %s", ci.SupplyValues)
+		}
+		if legacy {
+			fmt.Fprintf(os.Stderr, "warning: --target-power %s is deprecated: use --target-power %s\n", f.targetPower, sup)
+		}
+		f.targetPower = sup
+	}
+	if fromBuild && serverSide && f.targetPower != "" && supplyEfuse(f.targetPower) == 0 {
+		return usageErrorf("--target-power %s is not available with a server-side flash: use 5v or external, or flash here with --server-side=false", f.targetPower)
 	}
 	if fromBuild && serverSide {
 		return f.flashOnServer(g, spec, art, pins)
@@ -383,10 +394,10 @@ func printTargetUnreachableHint(f *flashFlags, jtag bool) {
 	} else {
 		fmt.Fprintln(os.Stderr, "\nThe pod's SWD probe is working, but the target MCU never answered. Check, in order:")
 	}
-	if f.targetPower == 0 {
-		fmt.Fprintln(os.Stderr, "  • power — the target must be powered. The pod can do it: re-run with --target-power 1 (internal 5V) or 2 (external)")
+	if f.targetPower == "" {
+		fmt.Fprintln(os.Stderr, "  • power — the target must be powered. The pod can do it: re-run with --target-power 5v (the pod's 5 V) or external")
 	} else {
-		fmt.Fprintf(os.Stderr, "  • power — eFuse %d was enabled; confirm the target actually receives voltage (check for an over-current fault)\n", f.targetPower)
+		fmt.Fprintf(os.Stderr, "  • power — the %s supply was switched on; confirm the target actually receives voltage (check for an over-current fault)\n", supplyLabel(f.targetPower))
 	}
 	if jtag {
 		fmt.Fprintf(os.Stderr, "  • wiring — TCK (%s), TMS (%s), TDI (%s) and TDO (%s) must reach the target's TCK/TMS/TDI/TDO pins (TDI and TDO not swapped), with a common ground\n", f.tck, f.tms, f.tdi, f.tdo)
@@ -408,8 +419,8 @@ func printTargetUnreachableHint(f *flashFlags, jtag bool) {
 // openDAP optionally powers the target, then arms the pod's CMSIS-DAP probe (dap_start over
 // the network, or over USB on the pod's USB network adapter) and returns the length-framed DAP
 // stream to bridge to OpenOCD.
-// powerEfuse 0 leaves target power untouched; 1/2 enables that eFuse first.
-func openDAP(ctx context.Context, g *globalFlags, pins dapPins, powerEfuse int) (io.ReadWriteCloser, bool, error) {
+// powerSupply "" leaves target power untouched; else that supply is switched on first.
+func openDAP(ctx context.Context, g *globalFlags, pins dapPins, powerSupply string) (io.ReadWriteCloser, bool, error) {
 	spec, err := g.resolveConnection()
 	if err != nil {
 		return nil, false, err
@@ -437,14 +448,14 @@ func openDAP(ctx context.Context, g *globalFlags, pins dapPins, powerEfuse int) 
 		if v, err := client.HasNRSTPin(ctx); err == nil {
 			hasNRST = v
 		}
-		if powerEfuse != 0 {
-			if err := client.TargetPower(ctx, powerEfuse, true); err != nil {
-				return nil, false, fmt.Errorf("flash: enable target-power eFuse %d: %w", powerEfuse, err)
+		if powerSupply != "" {
+			if err := switchSupplyOn(ctx, client, powerSupply); err != nil {
+				return nil, false, fmt.Errorf("flash: switch the %s supply on: %w", supplyLabel(powerSupply), err)
 			}
-			fmt.Fprintf(os.Stderr, "flash: target-power eFuse %d on\n", powerEfuse)
+			fmt.Fprintf(os.Stderr, "flash: %s supply on\n", supplyLabel(powerSupply))
 			settle(ctx, targetPowerSettle)
 		}
-		opts := dapOptions(powerEfuse != 0)
+		opts := dapOptions(powerSupply != "")
 		swclk, swdio := pins.swclk, pins.swdio
 		if pins.jtag {
 			jp := pins.jtagPins

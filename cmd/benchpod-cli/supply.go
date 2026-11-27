@@ -6,15 +6,12 @@ import (
 	"fmt"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/features"
+	"github.com/embeddedci-com/benchpod-cli/internal/tcpclient"
 )
 
 // The target power outputs ("supplies"): "5v" (the pod's 5 V through eFuse 1), "external" (the
 // user's supply through eFuse 2), and on a BenchPod v4 the switched "3v3" and "1v8" of J1.
 // Profiles and firmware before the supply key send efuse 1/2 instead.
-
-// supplyKeyRevFallback is the features table revision that introduced the `supply` key, used
-// when the embedded table does not know the supply_3v3_1v8 feature that came with it.
-const supplyKeyRevFallback = 22
 
 func isSupply(s string) bool {
 	switch s {
@@ -59,14 +56,12 @@ func supplyEfuse(s string) int {
 	return 0
 }
 
-// podTakesSupplyKey reports whether the pod's firmware reads the `supply` key (firmware 4.0.7
-// and later, the features table revision of supply_3v3_1v8). Older firmware only knows efuse 1/2.
+// podTakesSupplyKey reports whether the pod has the supply_3v3_1v8 feature (firmware 4.0.7 and
+// later on a BenchPod v4): then power commands send supply. Otherwise they send efuse 1/2, which
+// every firmware takes for the 5 V and external supplies.
 func podTakesSupplyKey(statusReply json.RawMessage) bool {
-	rev := supplyKeyRevFallback
-	if e, ok := features.Lookup("supply_3v3_1v8"); ok {
-		rev = e.Rev
-	}
-	return features.PodRevisionAtLeast(statusReply, rev)
+	ok, err := features.Has(statusReply, "supply_3v3_1v8")
+	return err == nil && ok
 }
 
 // supplyRequest sets the supply (or, for firmware before the supply key, the eFuse) of a power
@@ -135,4 +130,19 @@ func supplyIsOn(ctx context.Context, pod ciPod, name string) bool {
 	}
 	s, ok := tp.supplyState(name)
 	return ok && bool(s.Enabled)
+}
+
+// switchSupplyOn switches a supply on over a direct connection: supply for a pod that has the
+// supply feature, else efuse 1/2.
+func switchSupplyOn(ctx context.Context, c *tcpclient.Client, supply string) error {
+	var takes bool
+	if raw, err := c.Command(ctx, features.StatusRequest()); err == nil {
+		takes = podTakesSupplyKey(raw)
+	}
+	req := map[string]any{"cmd": "target_power", "enabled": true}
+	if err := supplyRequest(req, supply, takes); err != nil {
+		return err
+	}
+	_, err := c.Command(ctx, req)
+	return err
 }

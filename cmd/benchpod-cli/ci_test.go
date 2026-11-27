@@ -36,6 +36,7 @@ type fakeCIPod struct {
 	refuse    map[string]error
 	profile   map[string]any
 	featRev   int // status features_rev (0: 4)
+	hw        []string
 }
 
 func newFakeCIPod() *fakeCIPod {
@@ -74,7 +75,7 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 		if p.statusErr != nil {
 			return nil, p.statusErr
 		}
-		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": max(p.featRev, 4), "la_vccio_mv": 3300, "api": 2, "min_client_api": 2}
+		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": max(p.featRev, 4), "hw": p.hw, "la_vccio_mv": 3300, "api": 2, "min_client_api": 2}
 		p.mu.Lock()
 		if len(p.uptimes) > 0 {
 			st["uptime_ms"] = p.uptimes[0]
@@ -848,7 +849,7 @@ func TestCILeaseLostStopsTheRunningStep(t *testing.T) {
 	}
 }
 
-// Firmware that reads the supply key (features table revision of 4.0.7) gets `supply`; older
+// A pod with the supply_3v3_1v8 feature gets `supply`; older
 // firmware gets efuse 1/2, and refuses nothing it cannot express: 3v3/1v8 stop with a hint.
 func TestCIPowerSendsSupplyOrEfuse(t *testing.T) {
 	for _, tc := range []struct {
@@ -865,6 +866,9 @@ func TestCIPowerSendsSupplyOrEfuse(t *testing.T) {
 	} {
 		f := newCIFixture(t, "version: 1\nsuite: s\ndut: d\nsteps:\n  - power_on: {}\n")
 		f.pod.featRev = tc.featRev
+		if tc.featRev >= 22 {
+			f.pod.hw = []string{"supply_3v3_1v8"}
+		}
 		f.pod.profile = tc.profile
 		exit, _ := f.run()
 		cmds := strings.Join(f.pod.cmds(), ",")

@@ -233,6 +233,9 @@ func (r *ciRunner) prepareFirmware(ctx context.Context) *ciExit {
 		fw = &ci.Firmware{}
 	}
 	r.fw = ciFlash{Overrides: fw.Flash}
+	if fw.Flash.TargetPowerLegacy {
+		fmt.Fprintf(r.stderr, "warning: firmware.flash.target_power 1, 2 and internal are deprecated: use %s\n", ci.SupplyValues)
+	}
 	switch {
 	case strings.HasPrefix(override, "build:"):
 		r.fw.BuildID = strings.TrimSpace(strings.TrimPrefix(override, "build:"))

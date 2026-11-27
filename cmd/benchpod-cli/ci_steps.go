@@ -177,7 +177,7 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 		return errors.New("no firmware to flash: set firmware.file (or build_id, repo/ref), or pass --firmware")
 	}
 	fw := r.fw
-	if fw.Overrides.TargetPower == 0 {
+	if fw.Overrides.TargetPower == "" {
 		// The target must be powered to answer SWD: the profile's supply, as the SDK's flash does.
 		if sw := r.wiring.switched(); sw != "" {
 			// 3v3 and 1v8 are not flash power options: switch it on here, the flash then finds the target up.
@@ -189,7 +189,7 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 				return fmt.Errorf("power on (%s supply) before the flash: %w", supplyLabel(sw), err)
 			}
 		} else {
-			fw.Overrides.TargetPower = r.wiring.rail()
+			fw.Overrides.TargetPower = r.wiring.supply()
 		}
 	}
 	fw.Timeout = stepTimeout(s)

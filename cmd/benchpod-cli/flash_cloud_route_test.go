@@ -68,7 +68,7 @@ func TestFlashCloudRouteWithGitHubToken(t *testing.T) {
 	cloudLeaseID = "L-run"
 	t.Cleanup(func() { cloudLeaseID = "" })
 	g := &globalFlags{connection: "embeddedci:benchpod-a1b2c3"}
-	if err := runFlash(g, &flashFlags{repo: "acme/fw", ref: "main", build: "latest", targetPower: 1}); err != nil {
+	if err := runFlash(g, &flashFlags{repo: "acme/fw", ref: "main", build: "latest", targetPower: "5v"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := flashForCI(g, ciFlash{BuildID: "b-42", Timeout: time.Minute}); err != nil {
