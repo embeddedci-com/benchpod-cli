@@ -27,24 +27,18 @@ import (
 	"go.bug.st/serial/enumerator"
 )
 
-// benchPodVIDs are the USB vendor IDs a bench-pod CDC-ACM console enumerates
+// benchPodVIDs are the USB vendor IDs a bench-pod CDC-ACM console has enumerated
 // under, matched case-insensitively against enumerator VID strings:
 //
-//	2E8A — Raspberry Pi, the RP2350 pod's native USB port.
-//	0483 — STMicroelectronics, the STM32H563 pod up to firmware 4.0.x (ST's
-//	       stock CDC VID/PID 0483:5740, so the host binds its in-box CDC driver;
-//	       3.9.0 and later make it a composite device with the console and a USB
-//	       network adapter).
-//	1209 — pid.codes. Pre-release builds of firmware 3.9.0 used the test ID 1209:0001.
-//	       The pod's own ID 1209:EC10 (granted 2026-11-25, https://pid.codes/1209/EC10/)
-//	       is used by the firmware releases after 4.0.4.
+//	2E8A — Raspberry Pi, the retired RP2350 pod's native USB port.
+//	0483 — STMicroelectronics, the STM32H563 pod up to firmware 4.0.4 (ST's
+//	       stock CDC VID/PID 0483:5740).
+//	1209 — pid.codes. Pre-release builds of firmware 3.9.0 used the test ID 1209:0001;
+//	       the pod's own ID 1209:EC10 is used from firmware 4.0.5.
 //
-// None of the IDs is exclusive to a bench pod — 2E8A is shared with the CMSIS-DAP
-// probe's CDC, 0483:5740 with every ST Virtual COM Port on the bench and 1209
-// with every pid.codes device — so
-// these only ORDER the ports to probe (see portPrio): an exact 1209:EC10 match
-// first, then the vendor-only matches. Identification is always
-// by probing for benchpodMarker, never by an ID alone.
+// None of these IDs identifies a pod by itself (0483:5740 is shared by every ST Virtual COM
+// Port: spectrum analyzers, NanoVNAs, customers' boards), so a VID only ORDERS ports (see
+// portPrio). What allows a port to be opened and written to is isPodPort.
 var benchPodVIDs = []string{"2E8A", "0483", "1209"}
 
 // isBenchPodVID reports whether vid is one of benchPodVIDs.
@@ -127,6 +121,33 @@ func portGone(err error) bool {
 // active-probe filters), which the seam does not need.
 var portLister = func() ([]*enumerator.PortDetails, error) { return enumerator.GetDetailedPortsList() }
 
+// isPodPort is the one rule for opening a port during automatic detection (no explicit device).
+// A port may be opened and written to only when its USB descriptors say it is a pod:
+//
+//  1. VID:PID is exactly the pod's own ID, 1209:EC10 (firmware 4.0.5 and later); or
+//  2. the manufacturer string is "EmbeddedCI" (firmware 3.9.0 and later, pre-release 3.9.0
+//     builds on 1209:0001, and 3.8.x and older, all on 0483:5740); or
+//  3. the product string contains "bench" ("BenchPod", "bench-pod STM32H563 CDC").
+//
+// Everything else is never opened: other devices on a pod-capable VID ("tinySA4", "STM32
+// Virtual ComPort", ST-Links) and ports with no USB information. Writing a console command into
+// an instrument can freeze it. An explicitly given device bypasses this rule.
+func isPodPort(p *enumerator.PortDetails) bool {
+	if p == nil || !p.IsUSB {
+		return false
+	}
+	if isPodOwnID(p.VID, p.PID) {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(p.Manufacturer), "EmbeddedCI") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(p.Product), "bench")
+}
+
+// noPodRule is the hint appended to "no pod found" errors.
+const noPodRule = "looked for USB ID 1209:EC10 or an EmbeddedCI/BenchPod device; pass --connection <device> to use another port"
+
 // DetectPort chooses the bench-pod serial console.
 //
 //	explicit != ""  -> used verbatim, no enumeration.
@@ -134,7 +155,7 @@ var portLister = func() ([]*enumerator.PortDetails, error) { return enumerator.G
 //	1 match         -> that port.
 //	>1 matches      -> error listing candidates; the user must pass --connection <device>.
 //
-// Unlike capabilities.DetectSerial there is no per-OS default fallback: the VID
+// Unlike capabilities.DetectSerial there is no per-OS default fallback: the isPodPort
 // filter is the whole point, and guessing the wrong port for a console that can
 // trigger `bootsel` is unsafe. --connection <device> is the escape hatch.
 func DetectPort(explicit string) (string, error) {
@@ -151,7 +172,7 @@ func DetectPort(explicit string) (string, error) {
 		if p == nil || strings.TrimSpace(p.Name) == "" || !p.IsUSB {
 			continue
 		}
-		if isBenchPodVID(p.VID) {
+		if isPodPort(p) {
 			cands = append(cands, cand{name: p.Name, product: p.Product, serial: p.SerialNumber})
 		}
 	}
@@ -159,12 +180,12 @@ func DetectPort(explicit string) (string, error) {
 
 	switch len(cands) {
 	case 0:
-		return "", noPod(fmt.Errorf("no bench-pod USB console found (USB VID %s). Is the device plugged in? Pass --connection <device> to override", strings.Join(benchPodVIDs, "/")))
+		return "", noPod(fmt.Errorf("no bench-pod USB console found. Is the device plugged in? (%s)", noPodRule))
 	case 1:
 		return cands[0].name, nil
 	default:
 		var b strings.Builder
-		fmt.Fprintf(&b, "multiple bench-pod USB consoles found (USB VID %s); pass --connection <device> to choose one:", strings.Join(benchPodVIDs, "/"))
+		b.WriteString("multiple bench-pod USB consoles found; pass --connection <device> to choose one:")
 		for _, c := range cands {
 			b.WriteString("\n  " + c.name)
 			detail := strings.TrimSpace(c.product)
@@ -276,14 +297,12 @@ func newConsole(rw io.ReadWriteCloser) *Console {
 
 // OpenBenchpod opens the bench-pod serial console, identifying it by probe.
 //
-// With an explicit device it opens that verbatim (the caller chose it). Otherwise
-// it enumerates USB serial ports — the `preferred` hint first (a previously-found
-// device cached by the caller), then the bench-pod USB VIDs, then any other USB
-// serial device (both /dev/cu.* and /dev/tty.*) — and probes each with `status`,
-// returning the first whose output identifies a bench pod. This avoids latching
-// onto the CMSIS-DAP debug probe's CDC (same VID) or another serial device.
-// probeTimeout bounds each probe (a real bench pod answers in well under a second;
-// only non-bench-pod ports run the timeout out).
+// With an explicit device it opens that verbatim (the caller chose it, no filtering). Otherwise
+// it enumerates USB serial ports, keeps only those isPodPort allows (and their macOS cu/tty
+// twins), tries the `preferred` hint first (a previously-found device cached by the caller),
+// then the pod's own ID, and probes each with `status`, returning the first whose output
+// identifies a bench pod. Other devices (spectrum analyzers, ST-Links, the CMSIS-DAP probe's CDC)
+// are never opened. probeTimeout bounds each probe.
 func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Console, string, error) {
 	if explicit = strings.TrimSpace(explicit); explicit != "" {
 		return Open(explicit)
@@ -294,12 +313,12 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 	}
 	cands = preferFirst(strings.TrimSpace(preferred), cands)
 	if len(cands) == 0 {
-		return nil, "", noPod(errors.New("no USB ports found; plug in the pod or pass --connection <device>"))
+		return nil, "", noPod(errors.New("no pod USB port found; plug in the pod (" + noPodRule + ")"))
 	}
 	var tried, denied []string
 	for _, name := range cands {
 		serialLogf("probing %s for a bench-pod console...", name)
-		port, err := serial.Open(name, &serial.Mode{BaudRate: baudRate})
+		c, err := openPort(name)
 		if err != nil {
 			serialLogf("  %s: open failed: %v", name, err)
 			if isPermissionDenied(err) {
@@ -307,8 +326,6 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 			}
 			continue
 		}
-		c := newConsole(port)
-		c.logf = serialLogf
 		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 		ok := c.IsBenchpod(ctx)
 		cancel()
@@ -320,14 +337,13 @@ func OpenBenchpod(explicit, preferred string, probeTimeout time.Duration) (*Cons
 		_ = c.Close()
 		tried = append(tried, name)
 	}
-	return nil, "", noPod(fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]%s; pass --connection <device> to force one",
-		len(tried), strings.Join(tried, ", "), deniedHint(denied)))
+	return nil, "", noPod(fmt.Errorf("no bench-pod console found among %d probed USB port(s) [%s]%s; %s",
+		len(tried), strings.Join(tried, ", "), deniedHint(denied), noPodRule))
 }
 
-// serialGlobs are the /dev node patterns scanned (in addition to the enumerator)
-// so the dial-in /dev/tty.* variants — and anything the enumerator misses — are
-// probed too. No-op on Windows (the patterns match nothing there; the enumerator
-// supplies COM ports).
+// serialGlobs are the /dev node patterns scanned (in addition to the enumerator) to find the
+// dial-in /dev/tty.* twin of an allowed /dev/cu.* port. A globbed node is only a candidate when
+// the enumerator lists a pod port with the same name (see candidatePortsIDs). No-op on Windows.
 var serialGlobs = []string{
 	"/dev/cu.usb*", "/dev/tty.usb*", // usbserial / usbmodem (CDC-ACM)
 	"/dev/cu.SLAB*", "/dev/tty.SLAB*", // Silicon Labs CP210x
@@ -346,9 +362,10 @@ var globPorts = func() []string {
 	return out
 }
 
-// candidatePorts lists serial ports to probe: the enumerator's USB ports plus the
-// globbed /dev/cu.* and /dev/tty.* nodes (deduped), ordered by benchPodVIDs first
-// (the VIDs a pod's console enumerates under) then everything else by name.
+// candidatePorts lists the serial ports automatic detection may open: only ports isPodPort
+// allows. The enumerator's USB ports are filtered by isPodPort; a globbed /dev/cu.* or /dev/tty.*
+// node is added only when its twin (same name after the cu./tty. prefix) is an allowed port, so
+// a node with no USB info is never a candidate. Deduped, the pod's own ID first, then by name.
 func candidatePorts() ([]string, error) {
 	names, _, err := candidatePortsVID()
 	return names, err
@@ -363,15 +380,19 @@ func candidatePortsVID() ([]string, map[string]string, error) {
 
 // candidatePortsIDs is candidatePortsVID plus each port's USB PID.
 func candidatePortsIDs() ([]string, map[string]string, map[string]string, error) {
-	// VID and PID by port name, from the enumerator (cross-platform), for ordering.
 	vid := map[string]string{}
 	pid := map[string]string{}
+	allowed := map[string]bool{} // twinName of every allowed port
+	var enumerated []string
 	if ports, err := portLister(); err == nil {
 		for _, p := range ports {
-			if p != nil && p.IsUSB && strings.TrimSpace(p.Name) != "" {
-				vid[p.Name] = p.VID
-				pid[p.Name] = p.PID
+			if p == nil || strings.TrimSpace(p.Name) == "" || !isPodPort(p) {
+				continue
 			}
+			vid[p.Name] = p.VID
+			pid[p.Name] = p.PID
+			allowed[twinName(p.Name)] = true
+			enumerated = append(enumerated, p.Name)
 		}
 	}
 
@@ -383,11 +404,13 @@ func candidatePortsIDs() ([]string, map[string]string, map[string]string, error)
 			names = append(names, n)
 		}
 	}
-	for n := range vid {
+	for _, n := range enumerated {
 		add(n)
 	}
 	for _, m := range globPorts() {
-		add(m)
+		if allowed[twinName(m)] {
+			add(m)
+		}
 	}
 	// An empty list is a finding, not a failure: `discover` reports "nothing to
 	// probe" while OpenBenchpod turns it into its own actionable error.
@@ -401,8 +424,8 @@ func candidatePortsIDs() ([]string, map[string]string, map[string]string, error)
 	return names, vid, pid, nil
 }
 
-// portPrio orders the ports to probe: 0 the pod's own ID (1209:EC10), 1 any other
-// pod-capable VID, 2 everything else.
+// portPrio orders the allowed ports: 0 the pod's own ID (1209:EC10), 1 any other
+// pod-capable VID, 2 everything else (an EmbeddedCI/BenchPod string on another ID, or a twin).
 func portPrio(vid, pid string) int {
 	switch {
 	case isPodOwnID(vid, pid):

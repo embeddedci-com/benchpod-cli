@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"time"
-
-	"go.bug.st/serial"
 )
 
 // ── discovery over USB ──────────────────────────────────────────────────────
@@ -54,9 +52,9 @@ func (p SerialPod) Addressed() bool {
 	return ip != "" && ip != "0.0.0.0" && ip != "-"
 }
 
-// ProbeSerial enumerates USB serial ports and probes each for a bench-pod
-// console, returning every pod found (not just the first, unlike OpenBenchpod)
-// together with the ports that answered but were not bench pods.
+// ProbeSerial enumerates USB serial ports, keeps those isPodPort allows (other devices are never
+// opened or written to) and probes each for a bench-pod console, returning every pod found (not just the first, unlike OpenBenchpod)
+// together with the allowed ports that did not open or answer like a pod.
 //
 // It exists for `discover`, which reports on a whole bench rather than opening
 // one pod: a machine can legitimately have several pods plugged in, and the
@@ -75,12 +73,11 @@ func ProbeSerial(preferred string, probeTimeout time.Duration) (pods []SerialPod
 	// the one that opens), but only the first answer per pod is kept.
 	seen := map[string]bool{}
 	for _, name := range preferFirst(strings.TrimSpace(preferred), cands) {
-		port, oErr := serial.Open(name, &serial.Mode{BaudRate: baudRate})
+		c, oErr := openPort(name)
 		if oErr != nil {
 			skipped = append(skipped, name)
 			continue
 		}
-		c := newConsole(port)
 		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 		raw, _ := c.Status(ctx)
 		cancel()

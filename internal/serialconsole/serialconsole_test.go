@@ -113,7 +113,8 @@ func TestDetectPortSingleMatch(t *testing.T) {
 		return []*enumerator.PortDetails{
 			{Name: "/dev/cu.Bluetooth", IsUSB: false},
 			{Name: "/dev/cu.usbserial-X", IsUSB: true, VID: "1234"},
-			{Name: "/dev/cu.usbmodem1101", IsUSB: true, VID: "2e8a", PID: "0009"},
+			{Name: "/dev/cu.usbmodem1101", IsUSB: true, VID: "1209", PID: "ec10"},
+			{Name: "/dev/cu.usbmodem2202", IsUSB: true, VID: "0483", PID: "5740", Product: "tinySA4", Manufacturer: "tinysa.org"},
 		}, nil
 	})
 	got, err := DetectPort("")
@@ -133,12 +134,10 @@ func TestDetectPortNoMatch(t *testing.T) {
 	})
 	_, err := DetectPort("")
 	if err == nil {
-		t.Fatal("expected error when no VID 2E8A port present")
+		t.Fatal("expected error when no pod port present")
 	}
-	for _, vid := range benchPodVIDs {
-		if !strings.Contains(err.Error(), vid) {
-			t.Fatalf("error should mention VID %s: %v", vid, err)
-		}
+	if !strings.Contains(err.Error(), "1209:EC10") || !strings.Contains(err.Error(), "EmbeddedCI") {
+		t.Fatalf("error should state the rule: %v", err)
 	}
 	if !strings.Contains(err.Error(), "--connection") {
 		t.Fatalf("error should mention the override flag: %v", err)
@@ -155,7 +154,7 @@ func TestOpenBenchpodWithNoPortsIsUnreachable(t *testing.T) {
 	if err == nil || !errors.Is(err, tcpclient.ErrUnreachable) {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.HasPrefix(err.Error(), "no USB ports found") {
+	if !strings.HasPrefix(err.Error(), "no pod USB port found") {
 		t.Fatalf("text changed: %v", err)
 	}
 }
@@ -164,7 +163,7 @@ func TestDetectPortMultipleMatches(t *testing.T) {
 	withLister(t, func() ([]*enumerator.PortDetails, error) {
 		return []*enumerator.PortDetails{
 			{Name: "/dev/cu.usbmodemB", IsUSB: true, VID: "2E8A", Product: "Bench Pod", SerialNumber: "B2"},
-			{Name: "/dev/cu.usbmodemA", IsUSB: true, VID: "2E8A", SerialNumber: "A1"},
+			{Name: "/dev/cu.usbmodemA", IsUSB: true, VID: "1209", PID: "EC10", SerialNumber: "A1"},
 		}, nil
 	})
 	_, err := DetectPort("")
@@ -229,9 +228,10 @@ func TestIsBenchpod(t *testing.T) {
 func TestCandidatePortsOrderAndFilter(t *testing.T) {
 	withLister(t, func() ([]*enumerator.PortDetails, error) {
 		return []*enumerator.PortDetails{
-			{Name: "/dev/cu.other", IsUSB: true, VID: "10C4"},   // CP2102 etc. (prio 1)
-			{Name: "/dev/cu.pi", IsUSB: true, VID: "2E8A"},      // Raspberry Pi VID (prio 0)
-			{Name: "/dev/cu.serialbus", IsUSB: false, VID: "X"}, // not USB -> excluded
+			{Name: "/dev/cu.other", IsUSB: true, VID: "10C4", Manufacturer: "EmbeddedCI"}, // allowed by string (prio 2)
+			{Name: "/dev/cu.pi", IsUSB: true, VID: "1209", PID: "EC10"},                   // own ID (prio 0)
+			{Name: "/dev/cu.serialbus", IsUSB: false, VID: "X"},                           // not USB -> excluded
+			{Name: "/dev/cu.cp2102", IsUSB: true, VID: "10C4", Product: "CP2102"},         // not a pod -> excluded
 		}, nil
 	})
 	withGlobber(t) // no globbed devices in this case
@@ -240,7 +240,7 @@ func TestCandidatePortsOrderAndFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertOrder(t, got, []string{"/dev/cu.pi", "/dev/cu.other"}) // 2E8A first; non-USB dropped
+	assertOrder(t, got, []string{"/dev/cu.pi", "/dev/cu.other"}) // own ID first; non-USB and non-pod dropped
 }
 
 func TestCandidatePortsIncludesGlobbedTTY(t *testing.T) {
@@ -248,24 +248,25 @@ func TestCandidatePortsIncludesGlobbedTTY(t *testing.T) {
 	// tty.* dial-in variants (no VID). cu.<2E8A> first, then the rest by name.
 	withLister(t, func() ([]*enumerator.PortDetails, error) {
 		return []*enumerator.PortDetails{
-			{Name: "/dev/cu.usbmodem1", IsUSB: true, VID: "2E8A"},
-			{Name: "/dev/cu.SLAB", IsUSB: true, VID: "10C4"},
+			{Name: "/dev/cu.usbmodem1", IsUSB: true, VID: "1209", PID: "EC10"},
+			{Name: "/dev/cu.SLAB", IsUSB: true, VID: "10C4", Product: "BenchPod"},
 		}, nil
 	})
 	withGlobber(t,
-		"/dev/cu.usbmodem1", // dup of an enumerator entry -> deduped
-		"/dev/tty.usbmodem1",
-		"/dev/tty.usbserial-0001",
+		"/dev/cu.usbmodem1",       // dup of an enumerator entry -> deduped
+		"/dev/tty.usbmodem1",      // twin of an allowed port
+		"/dev/tty.SLAB",           // twin of an allowed port
+		"/dev/tty.usbserial-0001", // no allowed twin -> dropped
 	)
 	got, err := candidatePorts()
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertOrder(t, got, []string{
-		"/dev/cu.usbmodem1",       // 2E8A (prio 0)
-		"/dev/cu.SLAB",            // prio 1, sorted by name
-		"/dev/tty.usbmodem1",      // globbed-only (prio 1)
-		"/dev/tty.usbserial-0001", // globbed-only (prio 1)
+		"/dev/cu.usbmodem1",  // own ID (prio 0)
+		"/dev/cu.SLAB",       // prio 2, by name
+		"/dev/tty.SLAB",      // twin (prio 2)
+		"/dev/tty.usbmodem1", // twin (prio 2)
 	})
 }
 
@@ -529,8 +530,8 @@ func TestIsBenchPodVIDCoversBothPodGenerations(t *testing.T) {
 func TestCandidatePortsOrdersBothPodVIDsFirst(t *testing.T) {
 	withLister(t, func() ([]*enumerator.PortDetails, error) {
 		return []*enumerator.PortDetails{
-			{Name: "/dev/cu.usbserial-other", IsUSB: true, VID: "1234"},
-			{Name: "/dev/cu.usbmodem-stm", IsUSB: true, VID: "0483", PID: "5740"},
+			{Name: "/dev/cu.usbserial-other", IsUSB: true, VID: "1234", Product: "bench-pod x"},
+			{Name: "/dev/cu.usbmodem-stm", IsUSB: true, VID: "0483", PID: "5740", Product: "BenchPod"},
 		}, nil
 	})
 	withGlobber(t)
@@ -703,9 +704,9 @@ func TestParseSerialPodMACs(t *testing.T) {
 func TestCandidatePortsRanksOwnIDFirst(t *testing.T) {
 	withLister(t, func() ([]*enumerator.PortDetails, error) {
 		return []*enumerator.PortDetails{
-			{Name: "/dev/cu.usbmodem-a-other", IsUSB: true, VID: "1234", PID: "0001"},
-			{Name: "/dev/cu.usbmodem-b-st", IsUSB: true, VID: "0483", PID: "5740"},
-			{Name: "/dev/cu.usbmodem-c-pidcodes", IsUSB: true, VID: "1209", PID: "0002"},
+			{Name: "/dev/cu.usbmodem-a-other", IsUSB: true, VID: "1234", PID: "0001", Manufacturer: "EmbeddedCI"},
+			{Name: "/dev/cu.usbmodem-b-st", IsUSB: true, VID: "0483", PID: "5740", Manufacturer: "EmbeddedCI"},
+			{Name: "/dev/cu.usbmodem-c-pidcodes", IsUSB: true, VID: "1209", PID: "0002", Product: "BenchPod"},
 			{Name: "/dev/cu.usbmodem-z-pod", IsUSB: true, VID: "1209", PID: "ec10"},
 		}, nil
 	})
@@ -728,5 +729,33 @@ func TestPortPrio(t *testing.T) {
 		if got := portPrio(c.vid, c.pid); got != c.want {
 			t.Errorf("portPrio(%q,%q) = %d, want %d", c.vid, c.pid, got, c.want)
 		}
+	}
+}
+
+func TestIsPodPort(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		p    enumerator.PortDetails
+		want bool
+	}{
+		{"own ID", enumerator.PortDetails{IsUSB: true, VID: "1209", PID: "ec10"}, true},
+		{"4.0.4 and older on the ST ID", enumerator.PortDetails{IsUSB: true, VID: "0483", PID: "5740", Manufacturer: "EmbeddedCI", Product: "BenchPod"}, true},
+		{"product only, BenchPod", enumerator.PortDetails{IsUSB: true, VID: "0483", PID: "5740", Product: "BenchPod"}, true},
+		{"3.8.x product", enumerator.PortDetails{IsUSB: true, VID: "0483", PID: "5740", Product: "bench-pod STM32H563 CDC"}, true},
+		{"manufacturer only, trimmed and case-folded", enumerator.PortDetails{IsUSB: true, VID: "1209", PID: "0001", Manufacturer: " embeddedci "}, true},
+		{"pre-release 3.9.0", enumerator.PortDetails{IsUSB: true, VID: "1209", PID: "0001", Manufacturer: "EmbeddedCI", Product: "BenchPod"}, true},
+		{"tinySA", enumerator.PortDetails{IsUSB: true, VID: "0483", PID: "5740", Manufacturer: "tinysa.org", Product: "tinySA4"}, false},
+		{"ST VCP", enumerator.PortDetails{IsUSB: true, VID: "0483", PID: "5740", Product: "STM32 Virtual ComPort"}, false},
+		{"ST-Link", enumerator.PortDetails{IsUSB: true, VID: "0483", PID: "374B", Product: "STM32 STLink"}, false},
+		{"RP2350 VID, no strings", enumerator.PortDetails{IsUSB: true, VID: "2E8A", PID: "0009"}, false},
+		{"pid.codes, other pid", enumerator.PortDetails{IsUSB: true, VID: "1209", PID: "0002"}, false},
+		{"not USB", enumerator.PortDetails{IsUSB: false, VID: "1209", PID: "EC10"}, false},
+	} {
+		if got := isPodPort(&c.p); got != c.want {
+			t.Errorf("%s: isPodPort = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if isPodPort(nil) {
+		t.Error("nil port allowed")
 	}
 }
