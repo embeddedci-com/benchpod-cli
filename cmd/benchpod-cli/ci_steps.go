@@ -182,7 +182,7 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 		if sw := r.wiring.switched(); sw != "" {
 			// 3v3 and 1v8 are not flash power options: switch it on here, the flash then finds the target up.
 			req := map[string]any{"cmd": "target_power", "enabled": true}
-			if err := supplyRequest(req, sw, r.takesSupplyKey(ctx)); err != nil {
+			if err := supplyRequest(req, sw, r.podSupplyCaps(ctx)); err != nil {
 				return fmt.Errorf("power on (%s) before the flash: %w", supplyLabel(sw), err)
 			}
 			if _, err := r.pod.Command(ctx, req); err != nil {
@@ -210,21 +210,22 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 	return r.pod.Flash(ctx, fw)
 }
 
-// takesSupplyKey says whether the pod's firmware reads the `supply` key (else power commands
-// send efuse 1/2); asked once per run.
-func (r *ciRunner) takesSupplyKey(ctx context.Context) bool {
-	if r.supplyKey == nil {
-		raw, err := r.pod.Command(ctx, features.StatusRequest())
-		v := err == nil && podTakesSupplyKey(raw)
-		r.supplyKey = &v
+// podSupplyCaps says what the pod's firmware does with power commands; asked once per run.
+func (r *ciRunner) podSupplyCaps(ctx context.Context) supplyCaps {
+	if r.supplyCaps == nil {
+		var c supplyCaps
+		if raw, err := r.pod.Command(ctx, features.StatusRequest()); err == nil {
+			c = podSupplyCaps(raw)
+		}
+		r.supplyCaps = &c
 	}
-	return *r.supplyKey
+	return *r.supplyCaps
 }
 
 // powerRequest is target_power for the profile's supply.
 func (r *ciRunner) powerRequest(ctx context.Context, on bool) (map[string]any, error) {
 	req := map[string]any{"cmd": "target_power", "enabled": on}
-	if err := supplyRequest(req, r.wiring.supply(), r.takesSupplyKey(ctx)); err != nil {
+	if err := supplyRequest(req, r.wiring.supply(), r.podSupplyCaps(ctx)); err != nil {
 		return nil, err
 	}
 	return req, nil
@@ -540,7 +541,7 @@ func (r *ciRunner) measurePower(ctx context.Context, m *ci.MeasurePower, w io.Wr
 		return nil, fmt.Errorf("measure_power: the profile's supply is %s, which has no current monitor; measure it with an external current monitor, or power the board from the 5 V or external supply", supplyLabel(sw))
 	}
 	keyed := map[string]any{}
-	if err := supplyRequest(keyed, supply, r.takesSupplyKey(ctx)); err != nil {
+	if err := supplyRequest(keyed, supply, r.podSupplyCaps(ctx)); err != nil {
 		return nil, err
 	}
 	ms := int(m.Duration / time.Millisecond)

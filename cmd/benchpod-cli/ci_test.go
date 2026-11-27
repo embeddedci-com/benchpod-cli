@@ -849,24 +849,25 @@ func TestCILeaseLostStopsTheRunningStep(t *testing.T) {
 	}
 }
 
-// A pod with the supply_3v3_1v8 feature gets `supply`; older
-// firmware gets efuse 1/2, and refuses nothing it cannot express: 3v3/1v8 stop with a hint.
+// Firmware at the supply key revision gets `supply` (3v3/1v8 only on a pod with supply_3v3_1v8); older firmware gets efuse 1/2 and refuses nothing it cannot express: 3v3/1v8 stop with a hint.
 func TestCIPowerSendsSupplyOrEfuse(t *testing.T) {
 	for _, tc := range []struct {
 		featRev int
+		v4      bool
 		profile map[string]any
 		want    string // the commands before cleanup
 		errHas  string
 	}{
-		{4, map[string]any{"la_mv": 3300, "efuse": 2}, "target_power:2:1", ""},
-		{22, map[string]any{"la_mv": 3300, "efuse": 2}, "target_power:external:1", ""},
-		{22, map[string]any{"la_mv": 3300, "supply": "5v", "efuse": 1}, "target_power:5v:1", ""},
-		{22, map[string]any{"la_mv": 3300, "supply": "3v3"}, "target_power:3v3:1", ""},
-		{4, map[string]any{"la_mv": 3300, "supply": "1v8"}, "", "1.8 V supply needs pod firmware 4.0.7"},
+		{4, false, map[string]any{"la_mv": 3300, "efuse": 2}, "target_power:2:1", ""},
+		{22, false, map[string]any{"la_mv": 3300, "efuse": 2}, "target_power:external:1", ""}, // a v3 pod on new firmware
+		{22, true, map[string]any{"la_mv": 3300, "supply": "5v", "efuse": 1}, "target_power:5v:1", ""},
+		{22, true, map[string]any{"la_mv": 3300, "supply": "3v3"}, "target_power:3v3:1", ""},
+		{22, false, map[string]any{"la_mv": 3300, "supply": "3v3"}, "", "no 3.3 V supply"},
+		{4, false, map[string]any{"la_mv": 3300, "supply": "1v8"}, "", "1.8 V supply needs pod firmware 4.0.7"},
 	} {
 		f := newCIFixture(t, "version: 1\nsuite: s\ndut: d\nsteps:\n  - power_on: {}\n")
 		f.pod.featRev = tc.featRev
-		if tc.featRev >= 22 {
+		if tc.v4 {
 			f.pod.hw = []string{"supply_3v3_1v8"}
 		}
 		f.pod.profile = tc.profile

@@ -56,24 +56,38 @@ func supplyEfuse(s string) int {
 	return 0
 }
 
-// podTakesSupplyKey reports whether the pod has the supply_3v3_1v8 feature (firmware 4.0.7 and
-// later on a BenchPod v4): then power commands send supply. Otherwise they send efuse 1/2, which
-// every firmware takes for the 5 V and external supplies.
-func podTakesSupplyKey(statusReply json.RawMessage) bool {
-	ok, err := features.Has(statusReply, "supply_3v3_1v8")
-	return err == nil && ok
+// supplyKeyRevFallback is the features table revision that introduced the `supply` key, used
+// when the embedded table does not know the supply_3v3_1v8 feature that came with it.
+const supplyKeyRevFallback = 22
+
+// supplyCaps is what a pod's firmware does with power commands.
+type supplyCaps struct {
+	Key      bool // reads the supply key (features table revision of 4.0.7); else only efuse 1/2
+	Switched bool // has the switched 3v3 and 1v8 supplies (feature supply_3v3_1v8, BenchPod v4)
 }
 
-// supplyRequest sets the supply (or, for firmware before the supply key, the eFuse) of a power
-// command; takesKey is whether the firmware reads the supply key.
-func supplyRequest(req map[string]any, supply string, takesKey bool) error {
-	if takesKey {
+func podSupplyCaps(statusReply json.RawMessage) supplyCaps {
+	rev := supplyKeyRevFallback
+	if e, ok := features.Lookup("supply_3v3_1v8"); ok {
+		rev = e.Rev
+	}
+	sw, err := features.Has(statusReply, "supply_3v3_1v8")
+	return supplyCaps{Key: features.PodRevisionAtLeast(statusReply, rev), Switched: err == nil && sw}
+}
+
+// supplyRequest sets the supply of a power command: the supply key for firmware that reads it,
+// else efuse 1/2. 3v3 and 1v8 need a pod that has them.
+func supplyRequest(req map[string]any, supply string, caps supplyCaps) error {
+	n := supplyEfuse(supply)
+	if n == 0 && !caps.Switched {
+		if !caps.Key {
+			return fmt.Errorf("the %s supply needs pod firmware 4.0.7 or later on a BenchPod v4 (update the pod with `benchpod flash-self`)", supplyLabel(supply))
+		}
+		return fmt.Errorf("this pod has no %s supply (only the BenchPod v4 does)", supplyLabel(supply))
+	}
+	if caps.Key {
 		req["supply"] = supply
 		return nil
-	}
-	n := supplyEfuse(supply)
-	if n == 0 {
-		return fmt.Errorf("the %s supply needs pod firmware 4.0.7 or later (update the pod with `benchpod flash-self`)", supplyLabel(supply))
 	}
 	req["efuse"] = n
 	return nil
@@ -135,12 +149,12 @@ func supplyIsOn(ctx context.Context, pod ciPod, name string) bool {
 // switchSupplyOn switches a supply on over a direct connection: supply for a pod that has the
 // supply feature, else efuse 1/2.
 func switchSupplyOn(ctx context.Context, c *tcpclient.Client, supply string) error {
-	var takes bool
+	var caps supplyCaps
 	if raw, err := c.Command(ctx, features.StatusRequest()); err == nil {
-		takes = podTakesSupplyKey(raw)
+		caps = podSupplyCaps(raw)
 	}
 	req := map[string]any{"cmd": "target_power", "enabled": true}
-	if err := supplyRequest(req, supply, takes); err != nil {
+	if err := supplyRequest(req, supply, caps); err != nil {
 		return err
 	}
 	_, err := c.Command(ctx, req)

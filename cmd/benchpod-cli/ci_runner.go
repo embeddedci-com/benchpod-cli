@@ -70,10 +70,10 @@ type ciRunner struct {
 	pod    ciPod // traced
 	lease  ciLease
 	wiring *ciWiring
-	// supplyKey caches whether the pod's firmware reads the supply key (nil: not asked yet).
-	supplyKey *bool
-	fw        ciFlash
-	started   ciPodStatus
+	// supplyCaps caches what the pod's firmware does with power commands (nil: not asked yet).
+	supplyCaps *supplyCaps
+	fw         ciFlash
+	started    ciPodStatus
 
 	requiredFailed string // the id of the required step that failed, "" when none
 	stopReason     string // why the remaining steps were not run
