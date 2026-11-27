@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ type fakeBridge struct {
 	proxy    string // the pod's current proxy "host:port", "" = none
 	apiCalls int
 	console  []string // proxy addresses set over the console ("" = clear)
+	onSet    func()   // called after the first console call that sets a proxy
 }
 
 func withFakeBridge(t *testing.T, f *fakeBridge) {
@@ -38,9 +40,24 @@ func withFakeBridge(t *testing.T, f *fakeBridge) {
 	bridgeSetProxy = func(_ string, addr string) error {
 		f.console = append(f.console, addr)
 		f.proxy = addr
+		if addr != "" && f.onSet != nil {
+			f.onSet()
+		}
 		return nil
 	}
 	t.Cleanup(func() { localUSBLinks, bridgePodAPI, bridgeSetProxy = oldLinks, oldAPI, oldSet })
+}
+
+// freeBridgePort returns a port nothing listens on now. Fixed ports collide with the OS's ephemeral
+// ports (and with a listener of the test before) on a busy runner: "bind: address already in use".
+func freeBridgePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
 
 func runWatchFor(t *testing.T, d time.Duration, port int) {
@@ -57,7 +74,7 @@ func runWatchFor(t *testing.T, d time.Duration, port int) {
 func TestWatchBridgeNeverTouchesTheConsoleWhileIdle(t *testing.T) {
 	f := &fakeBridge{}
 	withFakeBridge(t, f)
-	runWatchFor(t, 100*time.Millisecond, 39128)
+	runWatchFor(t, 100*time.Millisecond, freeBridgePort(t))
 	if len(f.console) != 0 || f.apiCalls != 0 {
 		t.Fatalf("idle watch used the console %d times and the API %d times", len(f.console), f.apiCalls)
 	}
@@ -65,9 +82,10 @@ func TestWatchBridgeNeverTouchesTheConsoleWhileIdle(t *testing.T) {
 
 // The pod's proxy already points here (set by an earlier run): no console at all.
 func TestWatchBridgeKeepsAProxyThatIsAlreadyOurs(t *testing.T) {
-	f := &fakeBridge{links: []usbLink{{host: "127.0.0.1", pod: "127.0.0.2"}}, proxy: "127.0.0.1:39129"}
+	port := freeBridgePort(t)
+	f := &fakeBridge{links: []usbLink{{host: "127.0.0.1", pod: "127.0.0.2"}}, proxy: net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
 	withFakeBridge(t, f)
-	runWatchFor(t, 100*time.Millisecond, 39129)
+	runWatchFor(t, 100*time.Millisecond, port)
 	if len(f.console) != 0 {
 		t.Fatalf("console used %v", f.console)
 	}
@@ -77,8 +95,15 @@ func TestWatchBridgeKeepsAProxyThatIsAlreadyOurs(t *testing.T) {
 func TestWatchBridgeSetsTheProxyOnceAndClearsItOnStop(t *testing.T) {
 	f := &fakeBridge{links: []usbLink{{host: "127.0.0.1", pod: "127.0.0.2"}}}
 	withFakeBridge(t, f)
-	runWatchFor(t, 800*time.Millisecond, 39130)
-	if len(f.console) != 2 || f.console[0] != "127.0.0.1:39130" || f.console[1] != "" {
+	// Stop the watch once the proxy is set (event driven); the long deadline is only a safety net.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	f.onSet = cancel
+	port := freeBridgePort(t)
+	if err := watchBridge(ctx, &globalFlags{connection: "usb"}, port, false, 5*time.Millisecond, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.console) != 2 || f.console[0] != net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) || f.console[1] != "" {
 		t.Fatalf("console calls %q, want set once then clear", f.console)
 	}
 }
@@ -87,7 +112,7 @@ func TestWatchBridgeSetsTheProxyOnceAndClearsItOnStop(t *testing.T) {
 func TestWatchBridgeLeavesSomeoneElsesProxy(t *testing.T) {
 	f := &fakeBridge{links: []usbLink{{host: "127.0.0.1", pod: "127.0.0.2"}}, proxy: "proxy.corp:3128"}
 	withFakeBridge(t, f)
-	runWatchFor(t, 60*time.Millisecond, 39131)
+	runWatchFor(t, 60*time.Millisecond, freeBridgePort(t))
 	if len(f.console) != 0 || f.proxy != "proxy.corp:3128" {
 		t.Fatalf("console %q proxy %q", f.console, f.proxy)
 	}
@@ -102,7 +127,7 @@ func TestShortIDOf(t *testing.T) {
 // Without --watch the bridge stops with the reason instead of waiting.
 func TestBridgeWithoutWatchSaysWhyItCannotStart(t *testing.T) {
 	withFakeBridge(t, &fakeBridge{})
-	err := watchBridge(context.Background(), &globalFlags{connection: "usb"}, 39132, false, time.Millisecond, true)
+	err := watchBridge(context.Background(), &globalFlags{connection: "usb"}, freeBridgePort(t), false, time.Millisecond, true)
 	if err == nil || !strings.Contains(err.Error(), "clear-wifi") || !strings.Contains(err.Error(), "usb-reattach") {
 		t.Fatalf("err = %v", err)
 	}

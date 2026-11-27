@@ -44,6 +44,11 @@ type fakeUSBPod struct {
 	stageErr    error
 	cmds        []map[string]any
 	polls       int
+	// cancel is called when the host mode has been read cancelHostAt times, or the flash polled
+	// cancelFlashAt times (0 = never). Tests end a run with it instead of a real-time deadline, which
+	// fires at a random point on a loaded machine.
+	cancel                      context.CancelFunc
+	cancelHostAt, cancelFlashAt int
 }
 
 func okStatus(version, boardRev string, featuresRev int) string {
@@ -98,6 +103,9 @@ func (f *fakeUSBPod) Command(ctx context.Context, req map[string]any) (json.RawM
 		}
 		if f.mode == "host" {
 			f.hostSeen++
+			if f.cancel != nil && f.cancelHostAt > 0 && f.hostSeen == f.cancelHostAt {
+				f.cancel()
+			}
 		}
 		return json.RawMessage(f.report()), nil
 	case "usb_flash":
@@ -112,6 +120,9 @@ func (f *fakeUSBPod) Command(ctx context.Context, req map[string]any) (json.RawM
 			return json.RawMessage(`{"running":true}`), nil
 		}
 		f.polls++
+		if f.cancel != nil && f.cancelFlashAt > 0 && f.polls == f.cancelFlashAt {
+			f.cancel()
+		}
 		st := f.flashResult
 		if f.flashRuns > 0 {
 			f.flashRuns--
@@ -641,8 +652,9 @@ func TestRunUSBFlashNoDeviceTimesOut(t *testing.T) {
 	fastUSB(t)
 	pod := newFakeUSBPod(t) // no device
 	var out, prog bytes.Buffer
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	pod.cancel, pod.cancelHostAt = cancel, 20 // ends the wait after a fixed number of polls, not after a time
 	err := runUSBFlash(ctx, pod, usbFlashOpts{file: "a.uf2", hostSecs: 100}, []byte{1}, &out, &prog)
 	if err == nil || !strings.Contains(err.Error(), "no USB device enumerated") || !strings.Contains(err.Error(), "pull-up") {
 		t.Errorf("err = %v", err)
@@ -657,8 +669,9 @@ func TestRunUSBFlashAbortsWhenCancelled(t *testing.T) {
 	pod := newFakeUSBPod(t)
 	pod.device = usbDev(0x2E8A, 3, "Pico", usbIface(8, 6, 80, "msc"))
 	pod.flashRuns = 1 << 30
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	pod.cancel, pod.cancelFlashAt = cancel, 20
 	err := runUSBFlash(ctx, pod, usbFlashOpts{file: "a.uf2", hostSecs: 100}, []byte{1}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "aborted") {
 		t.Fatalf("err = %v", err)

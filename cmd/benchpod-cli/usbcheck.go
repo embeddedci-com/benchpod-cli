@@ -349,17 +349,23 @@ func runUSBCheck(ctx context.Context, pod podCommander, o usbCheckOpts, out, pro
 // printed when the phase changes and at each 10 percent. On cancel it aborts the check.
 func usbCheckWait(ctx context.Context, c podCommander, poll time.Duration, say func(string, ...any)) (*usbCheckStatus, json.RawMessage, error) {
 	lastPhase, lastPct := "", -1
+	abort := func() (*usbCheckStatus, json.RawMessage, error) {
+		actx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, _ = c.Command(actx, map[string]any{"cmd": "usb_check", "abort": true})
+		cancel()
+		return nil, nil, fmt.Errorf("check: %w (the check was aborted)", ctx.Err())
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			actx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, _ = c.Command(actx, map[string]any{"cmd": "usb_check", "abort": true})
-			cancel()
-			return nil, nil, fmt.Errorf("check: %w (the check was aborted)", ctx.Err())
+			return abort()
 		case <-time.After(poll):
 		}
 		st, raw, err := usbCheckRead(ctx, c, map[string]any{"cmd": "usb_check"})
 		if err != nil {
+			if ctx.Err() != nil { // cancelled during the poll: still abort the check on the pod
+				return abort()
+			}
 			return nil, nil, err
 		}
 		if !st.Running && st.HaveResult {
