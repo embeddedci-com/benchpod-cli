@@ -320,7 +320,7 @@ leave out from the profile named by `--wiring-profile`, else the pod's default:
 | `flash`     | `--nreset`   | `swd_nreset`  |
 | `flash`     | `--target`   | `swd_target`  |
 | `spi-flash` | `--sck`, `--mosi`, `--miso`, `--cs` | `spi_sclk`, `spi_mosi`, `spi_miso`, `spi_cs` |
-| `detect`    | (none: no pin flags) | `swd_swclk`, `swd_swdio`, the JTAG fields, `efuse`, `uart_rx`, `uart_tx` and the signals named in [`benchpod detect`](#benchpod-detect) |
+| `detect`    | (none: no pin flags) | `swd_swclk`, `swd_swdio`, the JTAG fields, `supply`, `uart_rx`, `uart_tx` and the signals named in [`benchpod detect`](#benchpod-detect) |
 
 Flags always win. The log says which values came from the profile (`[benchpod] flash: SWCLK
 LA11, SWDIO LA12 from the pod's wiring profile; ...`) or that the flags were used. Firmware
@@ -827,7 +827,7 @@ benchpod ci upload embeddedci-runs/<run>      # a run made offline
 5. Runs the steps in order. A step marked `required: true` that fails stops the run (the
    steps after it are recorded as skipped); every other step runs whatever happened before.
 6. Cleans up, always, also after a failure or Ctrl-C: by default DAC output stopped, both
-   target-power rails off, emulated sensors stopped, pull resistors off.
+   target-power supplies off, emulated sensors stopped, pull resistors off.
 7. Checks the run's health (the pod still answers and did not reboot, the lease held),
    writes the run folder and prints a summary with the failed cases.
 
@@ -970,11 +970,11 @@ and `expect`:
 | Step | What it does | Metrics |
 |---|---|---|
 | `flash: {}` | Flashes the firmware. | |
-| `power_on: {}` | Sets the profile's I/O voltage (only while the rail is off), then turns on the profile's rail (eFuse 1 or 2, or on a digital board v4 a J1 supply, see [`benchpod wiring`](#benchpod-wiring)). | |
-| `power_off: {}` | Turns the profile's rail off. | |
+| `power_on: {}` | Sets the profile's I/O voltage (only while the supply is off), then turns on the profile's supply (`5v`, `external`, or on a BenchPod v4 `3v3` or `1v8`, see [`benchpod wiring`](#benchpod-wiring)). | |
+| `power_off: {}` | Turns the profile's supply off. | |
 | `power_cycle: {until, timeout, off_ms, port, dtr, rts, baud}` | Power off, wait `off_ms` (default 500), power on; with `until` (a regex) it reads the DUT's UART (the profile's `uart_rx`/`uart_tx`/`uart_baud`) until it matches within `timeout` (default 10s). `port: usb` reads the board's USB serial port instead (see below). | `boot_ms`: power on to the match |
 | `uart_expect: {until, send, timeout, port, dtr, rts, baud}` | Sends `send` (optional) to the DUT's UART and waits up to `timeout` (default 5s) for `until`. `port: usb` as above. | `match_ms` |
-| `measure_power: {duration}` | Records the profile's rail for `duration` (default 2s). | `mean_ma`, `peak_ma`, `min_ma`, `mean_v` |
+| `measure_power: {duration}` | Records the profile's supply for `duration` (default 2s). | `mean_ma`, `peak_ma`, `min_ma`, `mean_v` |
 | `wait: 2s` | Waits. | |
 | `pytest: {path, args, python}` | Runs pytest (`pytest: tests` is short for `{path: tests}`). | the tests' `measure()` values |
 | `run: <command>` | Runs a shell command; `results: junit:<path>` or `results: gotest-json` reads its cases. | numeric JUnit properties |
@@ -1292,14 +1292,14 @@ Connectivity check over the network or through embeddedci.com. No flags.
 A short summary of the pod over the network or through embeddedci.com
 (`--connection embeddedci:<name>`): firmware version (and whether a newer
 release exists, when GitHub answers within a few seconds), gateware, board, the board
-I/O (LA) voltage or "not set", target power (the internal 5 V and external eFuses),
-the power draw (each rail that is on and, on boards with the pod's own current monitor,
+I/O (LA) voltage or "not set", the supplies (5 V and external, on a BenchPod v4 also 3.3 V and 1.8 V, each on or off),
+the power draw (each supply that is on and, on boards with the pod's own current monitor,
 the pod's draw and the total it takes from USB),
 the network address and link, the cloud registration (and, when this machine is
 signed in, whether the pod is on your account), and a cloud job's lease when one
 holds the pod. With firmware 3.9.0+ a `USB` line shows the pod's USB network address
 and warns when the USB port powering the pod offers only default USB power (500 mA),
-which may not carry the pod plus a DUT on the internal 5 V rail. On a two-board pod whose
+which may not carry the pod plus a DUT on the 5 V supply. On a two-board pod whose
 digital board and analog module use different flat-cable pinouts, a `DAC` line says
 `off: board/module pinout mismatch` (the pod keeps the DAC off and refuses DAC commands with
 `BP0080`). Over USB it asks over the pod's USB network adapter when that is up, else it prints
@@ -1311,15 +1311,16 @@ BenchPod at 192.168.1.220:8080
   Gateware      48
   Board         stm32h563 v3
   I/O voltage   3.3 V
-  Target power  off
+  Supplies      5 V off, external off
   Network       192.168.1.220 (ready), Wi-Fi connected
   MAC           Ethernet 02:35:c7:76:b7:9b, Wi-Fi 7c:e8:b1:c5:ca:6c
   Cloud         registered, connected, on your account as benchpod-baea06
 ```
 
-The `J1 supplies` line appears on the digital board v4 (firmware with feature `dut_rails`): it
-shows whether J1 pin 17 (+3.3 V) and pin 18 (+1.8 V) are on. Both come on at boot; scripts and
-the MCP server switch them (`bp.j1_power`, `power_on` with `j1_rail`).
+The `Supplies` line lists every target power supply: `5 V`, `external` and, on a BenchPod v4
+(firmware with feature `supply_3v3_1v8`), `3.3 V` (J1 pin 17) and `1.8 V` (J1 pin 18), for
+example `5 V on, external off, 3.3 V on, 1.8 V on`. The 3.3 V and 1.8 V supplies come on at boot;
+scripts and the MCP server switch them (`power_on` with `supply`).
 
 The `MAC` line (firmware after 3.10.7) has the Ethernet MAC and, on a pod with Wi-Fi, the MAC it
 uses on Wi-Fi, or `not known yet` until a `benchpod scan-wifi` or a join tells the pod. Through
@@ -1604,8 +1605,8 @@ embeddedci.com; `la voltage` also works over USB.
 
 Show or set the LA bank's I/O voltage, which must match the DUT's: `1.8V` or `3.3V`
 (also `1800mV` or `3.3`: a bare number is volts), or `5V` on a pod with the digital board v4
-([5 V I/O](https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io): pin 21 goes to 5 V,
-and the output then shows pin 21). Leave it out to show the setting. The pod refuses
+([5 V I/O](https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io): the I/O reference (VREF OUT, J1 pin 21)
+goes to 5 V, and the output then shows VREF OUT). Leave it out to show the setting. The pod refuses
 LA capture, UART, SWD flash, pull-ups and sensor emulation until it is set;
 1.8 V needs a v3 pod, and the pod refuses a change while an LA pin is in use. Works
 over the network, over USB and through embeddedci.com. No flags.
@@ -1785,7 +1786,7 @@ the chip (manufacturer and die ID where it has them), resets and configures it f
 conversion, and prints the current through the shunt, the bus voltage and the power; `--seconds N`
 measures for N seconds and prints the mean, minimum and maximum. With 10 ohm an INA226 resolves
 0.25 µA up to about 8 mA. The LA voltage must be 3.3 V or 5 V (the chips do not run at 1.8 V). The SDK
-(`bp.expansion("ina226", shunt_ohm=10)` with `measure_power(monitor="ext")`) and the MCP server's
+(`bp.expansion("ina226", shunt_ohm=10)` with `measure_power(monitor=True)`, or `monitor="<name>"` with several) and the MCP server's
 `expansion` tool keep the monitor attached; the CLI resets and reads it once per run and leaves it
 running.
 
@@ -2081,7 +2082,7 @@ Check the USB firmware of the board on the pod's USB host port: what a computer 
 | `abort`     | Stops a running check; the bus and eFuse 1 are put back. |
 
 `enumerate`, `power`, `suspend` and `replug` switch eFuse 1 or measure its current, so wire the
-board's USB VBUS to eFuse 1 (the internal 5 V rail) and switch it on first (the web app, the SDK's
+board's USB VBUS to eFuse 1 (the 5 V supply) and switch it on first (the web app, the SDK's
 `bp.power_on`, or a `power_on` step of `benchpod ci`); the currents are the board's own draw. If USB host mode is off, `usb-check` starts it and
 says so, waits for the board, shows the progress and prints the result. It exits non-zero when the
 check fails or stops early, aborts the check on Ctrl-C or when the deadline runs out, and leaves
@@ -2153,7 +2154,7 @@ built into the CLI (a copy of the SDK's `detect_ids.json`, refreshed by
 
 `swd`, `jtag` and `usb` only read. The programmer and ESP32 probes put the chip into programming
 mode and reset it ("invasive"); `--no-invasive` leaves them out. Nothing is probed while target
-power is off (the profile's `efuse` rail, else either rail), and a pin that another function
+power is off (the profile's supply, else the 5 V or external one), and a pin that another function
 owns (a UART, a GPIO, a sensor: see `benchpod la pins`) is skipped. SWD and JTAG on a pod without
 the `dap_id` feature are listed as skipped with "needs pod firmware with dap_id"; update the pod
 with `benchpod flash-self`.
@@ -2578,7 +2579,7 @@ Set the LAN policy (cloud with an owner or admin role, or USB).
 ### `benchpod wiring`
 
 The wiring profiles stored on the pod: which DUT signal is on which LA channel, the I/O voltage,
-the power rail. A pod with current firmware keeps up to 16 named profiles (4096 bytes of JSON each,
+the target power supply. A pod with current firmware keeps up to 16 named profiles (4096 bytes of JSON each,
 16 KB in all), one of them its default; the SDK, the MCP server, the web app and these commands all
 see the same ones. Works over the network and through embeddedci.com. Without a subcommand it prints
 the default profile (or `--wiring-profile`). Commands that take pins fill in the ones you leave out
@@ -2586,13 +2587,15 @@ from that profile. Older firmware keeps one profile on embeddedci.com instead; t
 say to update the pod.
 
 A profile is schema version 2: what it does not set is undefined (that pin is not wired, no I/O
-voltage, no rail), and a command that needs it says which flag to pass. No flags.
+voltage, no supply), and a command that needs it says which flag to pass. No flags.
 
-The profile's power rail is its `efuse` key: `1` (internal 5 V), `2` (external), and on a digital
-board v4 `"j1_3v3"` or `"j1_1v8"`, the switched J1 pins 17 (+3.3 V) and 18 (+1.8 V). The pod refuses
-the J1 rails on a board without them when you save (`BP0089`). `benchpod ci` follows the profile's
-rail: `power_on`, `power_off`, `power_cycle` and the flash's power-up switch that pin. A J1 supply has
-no current monitor, so a `measure_power` step on a profile with a J1 rail fails and says so.
+The profile's target power output is its `supply` key: `"5v"` (the pod's 5 V), `"external"` (your
+own supply), and on a BenchPod v4 `"3v3"` or `"1v8"` (the switched J1 pins 17 and 18). Profiles
+from older firmware have an `efuse` key (`1` is `5v`, `2` is `external`), which is still read. The
+pod refuses `3v3` and `1v8` on a board without them when you save (`BP0089`). `benchpod ci` follows
+the profile's supply: `power_on`, `power_off`, `power_cycle` and the flash's power-up switch it, with
+`supply` (firmware 4.0.7 and later) or `efuse` (older firmware). The 3.3 V and 1.8 V supplies have no
+current monitor, so a `measure_power` step on a profile with one of them fails and says so.
 
 ### `benchpod wiring list`
 
