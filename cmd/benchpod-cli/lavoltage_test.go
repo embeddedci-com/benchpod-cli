@@ -120,9 +120,9 @@ func TestLAVoltageSavesNothingWhenThePodStoresProfiles(t *testing.T) {
 	}
 }
 
-// Digital board v4: 5 V mode shows pin 21, does not warn that the bank (3.3 V) differs, and
-// warns when pin 21 sits above its setting. Older boards send no vref_out and print as before.
-func TestLAVoltagePin21(t *testing.T) {
+// Digital board v4: 5 V mode shows VREF OUT, does not warn that the bank (3.3 V) differs, and
+// warns when VREF OUT sits above its setting. Older boards send no vref_out and print as before.
+func TestLAVoltageVrefOut(t *testing.T) {
 	stubLAVoltageProfile(t, "", false, nil)
 	addr, _ := fakeLANPod(t, `{"status":"ok","data":{"mv":5000,"st":1,"readback_mv":3300,`+
 		`"vref_out":{"source":"5v","set_mv":5000,"mv":4920,"state":"ok","up":true}}}`)
@@ -130,7 +130,7 @@ func TestLAVoltagePin21(t *testing.T) {
 	if err := runLAVoltage(&globalFlags{connection: addr}, 5000, &out, &warn); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "is now 5 V") || !strings.Contains(out.String(), "J1 pin 21 (pull-up rail): 4.92 V, set to 5 V (ok)") {
+	if !strings.Contains(out.String(), "is now 5 V") || !strings.Contains(out.String(), "I/O reference (VREF OUT): 4.92 V, set to 5 V (ok)") {
 		t.Errorf("out = %q", out.String())
 	}
 	if warn.String() != "" {
@@ -154,7 +154,7 @@ func TestLAVoltagePin21(t *testing.T) {
 	if err := runLAVoltage(&globalFlags{connection: addr}, 0, &out, &warn); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "pin 21") || warn.String() != "" {
+	if strings.Contains(out.String(), "VREF OUT") || warn.String() != "" {
 		t.Errorf("older board: out %q warn %q", out.String(), warn.String())
 	}
 }

@@ -183,8 +183,10 @@ type podWiring struct {
 	SwdSwdio  *int   `json:"swd_swdio"`
 	SwdNreset *bool  `json:"swd_nreset"`
 	SwdTarget string `json:"swd_target"`
-	// Efuse is the target-power rail the profile uses (1 internal 5 V, 2 external); nil = not set.
-	Efuse *int `json:"efuse"`
+	// Supply is the target-power supply the profile uses ("5v", "external", "3v3", "1v8"); nil =
+	// not set. Efuse (1 = 5v, 2 = external) is the older key.
+	Supply *string `json:"supply"`
+	Efuse  *int    `json:"efuse"`
 	// DebugPort is "swd" or "jtag" when the profile fixes the debug port; nil = automatic.
 	DebugPort *string `json:"debug_port"`
 	// JTAG pins (firmware feature jtag); JtagTrst is optional.
@@ -208,6 +210,18 @@ type podWiring struct {
 		Name string `json:"name"`
 		LA   int    `json:"la"`
 	} `json:"signals"`
+}
+
+// supply is the profile's target-power supply, from the supply key, else the legacy efuse key;
+// "" when it sets none.
+func (w *podWiring) supply() string {
+	if w.Supply != nil && isSupply(*w.Supply) {
+		return *w.Supply
+	}
+	if w.Efuse != nil {
+		return legacySupply(*w.Efuse)
+	}
+	return ""
 }
 
 // channel is the LA channel a wiring name stands for: a role ("i2c_sda", "spi_cs") or a signal

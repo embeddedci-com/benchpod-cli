@@ -124,7 +124,7 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 	}
 	req := serverapi.FlashRequest{
 		JobID: art.JobID, PackID: art.PackID, ArtifactName: art.Name, Target: f.target,
-		LoadAddr: f.loadAddr, SWCLK: pins.swclk, SWDIO: pins.swdio, NReset: f.nreset, Efuse: f.targetPower,
+		LoadAddr: f.loadAddr, SWCLK: pins.swclk, SWDIO: pins.swdio, NReset: f.nreset, Efuse: supplyEfuse(f.targetPower),
 	}
 	if pins.jtag {
 		req.JTAGPins = jtagRequestPins(pins)
@@ -144,7 +144,7 @@ func (f *flashFlags) flashOnServer(g *globalFlags, spec ConnSpec, art *serverapi
 // flashOnCloudRoute is flashOnServer for a GitHub Actions token: POST /api/cloud/devices/flash
 // with the pod's name and the build's selector (or its artifact, when one was resolved).
 func (f *flashFlags) flashOnCloudRoute(ctx context.Context, api *serverapi.Client, cred string, spec ConnSpec, art *serverapi.BuildArtifact, pins dapPins) error {
-	req := serverapi.CloudFlashRequest{Target: f.target, LoadAddr: f.loadAddr, SWCLK: pins.swclk, SWDIO: pins.swdio, NReset: f.nreset, Efuse: f.targetPower}
+	req := serverapi.CloudFlashRequest{Target: f.target, LoadAddr: f.loadAddr, SWCLK: pins.swclk, SWDIO: pins.swdio, NReset: f.nreset, Efuse: supplyEfuse(f.targetPower)}
 	if pins.jtag {
 		req.JTAGPins = jtagRequestPins(pins)
 	}

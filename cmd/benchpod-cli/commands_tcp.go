@@ -329,7 +329,7 @@ func newLAPullCmd(g *globalFlags) *cobra.Command {
 			"Digital board v4: every pin, LA1-LA14, pulls up or down with a 10k, a 2.2k or both (about\n" +
 			"1.8k). The pod picks the strength from the pin's function (2.2k for I2C, one-wire UART, open\n" +
 			"drain and outputs in 5 V mode, else 10k); the reply's strength says which. The pull-ups go to\n" +
-			"J1 pin 21, so they work at 1.8, 3.3 and 5 V; while pin 21 is down they are off (BP0029).",
+			"the I/O reference (VREF OUT, J1 pin 21), so they work at 1.8, 3.3 and 5 V; while it is down they are off (BP0029).",
 		Example: "  benchpod la pull 1 up\n  benchpod la pull 7 down\n  benchpod la pull 7 off",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {

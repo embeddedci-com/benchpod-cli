@@ -133,13 +133,19 @@ func TestDescribePowerDraw(t *testing.T) {
 	tp := &targetPower{}
 	tp.Efuse1.Enabled = true
 	got := describePowerDraw(d, tp)
-	for _, want := range []string{"internal 5 V rail 142 mA", "pod 231 mA", "total from USB 373 mA"} {
+	for _, want := range []string{"5 V supply 142 mA", "pod 231 mA", "total from USB 373 mA"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%q lacks %q", got, want)
 		}
 	}
 	if strings.Contains(got, "external") {
-		t.Errorf("an off rail is listed: %q", got)
+		t.Errorf("an off supply is listed: %q", got)
+	}
+	// The supplies map wins over the legacy keys.
+	d2 := powerDraw{Supplies: map[string]powerRail{"external": {OK: true, BusMV: 12000, CurrentUA: 50000}}}
+	tp2 := &targetPower{Supplies: map[string]supplyState{"external": {Enabled: true}}}
+	if got := describePowerDraw(d2, tp2); got != "external supply 50 mA at 12 V" {
+		t.Errorf("supplies map: %q", got)
 	}
 	if got := describePowerDraw(powerDraw{}, nil); got != "" {
 		t.Errorf("nothing readable: %q", got)

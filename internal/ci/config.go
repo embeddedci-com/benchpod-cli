@@ -124,11 +124,13 @@ func (f *Firmware) Uploaded() bool {
 
 // FlashOverrides are `firmware.flash`: settings that override the wiring profile's for the flash.
 type FlashOverrides struct {
-	Target            string
-	SWCLK, SWDIO      string
-	NReset            *bool
-	LoadAddress       string
-	TargetPower       int
+	Target       string
+	SWCLK, SWDIO string
+	NReset       *bool
+	LoadAddress  string
+	TargetPower  string // a supply: 5v, external, 3v3 or 1v8 ("" leaves it to the wiring profile)
+	// TargetPowerLegacy says target_power was given as 1, 2 or internal (deprecated).
+	TargetPowerLegacy bool
 	Verify            *bool
 	Reset             *bool
 	ConnectUnderReset *bool
@@ -752,12 +754,16 @@ func (p *parser) parseFlash(n *yaml.Node, o *FlashOverrides) {
 		case "load_address":
 			o.LoadAddress = p.str(v, what)
 		case "target_power":
-			if n, ok := p.intValue(v, what); ok {
-				if n != 1 && n != 2 {
-					p.errf(v.Line, "%s must be 1 (internal 5 V) or 2 (external)", what)
-				}
-				o.TargetPower = n
+			if v.Kind != yaml.ScalarNode {
+				p.errf(v.Line, "%s must be one of %s", what, SupplyValues)
+				break
 			}
+			sup, legacy, ok := NormalizeSupply(v.Value)
+			if !ok {
+				p.errf(v.Line, "%s must be one of %s, got %q", what, SupplyValues, v.Value)
+				break
+			}
+			o.TargetPower, o.TargetPowerLegacy = sup, legacy
 		case "verify":
 			o.Verify = optBool(v, what)
 		case "reset":

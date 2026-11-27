@@ -29,7 +29,7 @@ func TestStatusSummaryIsReadable(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"3.8.0 (v3.9.0 is available", "Gateware      48", "I/O voltage   not set (run `benchpod la voltage 3.3V`",
-		"Target power  internal 5 V on", "192.168.1.221 (ready), Wi-Fi off",
+		"Supplies      5 V on, external off", "192.168.1.221 (ready), Wi-Fi off",
 		"registered, connected, on your account as bench-01", "held by cloud job ci-run-42 (37 s left)",
 	} {
 		if !strings.Contains(got, want) {
@@ -142,35 +142,40 @@ func TestStatusShowsADACPinoutMismatch(t *testing.T) {
 	}
 }
 
-func TestDescribeJ1Rails(t *testing.T) {
-	var none targetPower
-	if got := describeJ1Rails(none); got != "" {
-		t.Errorf("a board without switchable J1 supplies shows %q", got)
-	}
-	var p targetPower
-	if err := json.Unmarshal([]byte(`{"efuse1":{"enabled":false},"efuse2":{"enabled":false},"j1_rails":{"v3v3":true,"v1v8":false}}`), &p); err != nil {
+func TestDescribeSupplies(t *testing.T) {
+	var old targetPower
+	if err := json.Unmarshal([]byte(`{"efuse1":{"enabled":true},"efuse2":{"enabled":false,"fault":true}}`), &old); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := describeJ1Rails(p), "pin 17 3.3 V on, pin 18 1.8 V off"; got != want {
-		t.Errorf("describeJ1Rails = %q, want %q", got, want)
+	if got, want := describeTargetPower(old), "5 V on, external FAULT"; got != want {
+		t.Errorf("efuse keys: %q, want %q", got, want)
+	}
+	var p targetPower
+	if err := json.Unmarshal([]byte(`{"efuse1":{"enabled":false},"efuse2":{"enabled":false},"supplies":{"5v":{"enabled":false},"external":{"enabled":false},"3v3":{"enabled":true},"1v8":{"enabled":true}}}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := describeTargetPower(p), "5 V off, external off, 3.3 V on, 1.8 V on"; got != want {
+		t.Errorf("supplies = %q, want %q", got, want)
 	}
 }
 
-func TestCIWiringJ1Rail(t *testing.T) {
+func TestCIWiringSupply(t *testing.T) {
 	for _, tc := range []struct {
-		raw  map[string]any
-		j1   string
-		rail int
+		raw    map[string]any
+		supply string
+		rail   int
 	}{
-		{map[string]any{"efuse": "j1_3v3"}, "j1_3v3", 1},
-		{map[string]any{"efuse": "j1_1v8"}, "j1_1v8", 1},
-		{map[string]any{"efuse": float64(2)}, "", 2},
-		{map[string]any{"efuse": "j1_5v"}, "", 1},
-		{nil, "", 1},
+		{map[string]any{"supply": "3v3"}, "3v3", 1},
+		{map[string]any{"supply": "1v8"}, "1v8", 1},
+		{map[string]any{"supply": "external", "efuse": float64(2)}, "external", 2},
+		{map[string]any{"efuse": float64(2)}, "external", 2},
+		{map[string]any{"efuse": float64(1)}, "5v", 1},
+		{map[string]any{"supply": "j1_3v3"}, "5v", 1},
+		{nil, "5v", 1},
 	} {
 		w := &ciWiring{Raw: tc.raw}
-		if got := w.j1Rail(); got != tc.j1 {
-			t.Errorf("%v: j1Rail = %q, want %q", tc.raw, got, tc.j1)
+		if got := w.supply(); got != tc.supply {
+			t.Errorf("%v: supply = %q, want %q", tc.raw, got, tc.supply)
 		}
 		if got := w.rail(); got != tc.rail {
 			t.Errorf("%v: rail = %d, want %d", tc.raw, got, tc.rail)

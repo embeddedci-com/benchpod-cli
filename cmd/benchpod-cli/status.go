@@ -181,11 +181,13 @@ func describeUSB(u podUSB) string {
 	return strings.Join(parts, "; ")
 }
 
-// powerDraw is the firmware's `power_status` reply: the rails' monitors and, on boards with the
+// powerDraw is the firmware's `power_status` reply: the supplies' monitors and, on boards with the
 // pod's own current monitor (0x41), the pod's draw and the total from its 5 V input.
 type powerDraw struct {
-	Internal powerRail `json:"internal"`
-	External powerRail `json:"external"`
+	// Supplies is keyed by supply ("5v", "external"); Internal and External are the older keys.
+	Supplies map[string]powerRail `json:"supplies"`
+	Internal powerRail            `json:"internal"`
+	External powerRail            `json:"external"`
 	Pod      *struct {
 		powerRail
 		TotalUA *int `json:"total_ua"`
@@ -202,11 +204,18 @@ type powerRail struct {
 func describePowerDraw(d powerDraw, tp *targetPower) string {
 	ma := func(ua int) string { return fmt.Sprintf("%d mA", (ua+500)/1000) }
 	var parts []string
-	if d.Internal.OK && (tp == nil || bool(tp.Efuse1.Enabled)) {
-		parts = append(parts, fmt.Sprintf("internal 5 V rail %s at %s", ma(d.Internal.CurrentUA), formatMV(d.Internal.BusMV)))
+	on := func(name string) bool {
+		if tp == nil {
+			return true
+		}
+		s, _ := tp.supplyState(name)
+		return bool(s.Enabled)
 	}
-	if d.External.OK && (tp == nil || bool(tp.Efuse2.Enabled)) {
-		parts = append(parts, fmt.Sprintf("external rail %s at %s", ma(d.External.CurrentUA), formatMV(d.External.BusMV)))
+	if i := d.supplyPower("5v"); i.OK && on("5v") {
+		parts = append(parts, fmt.Sprintf("5 V supply %s at %s", ma(i.CurrentUA), formatMV(i.BusMV)))
+	}
+	if e := d.supplyPower("external"); e.OK && on("external") {
+		parts = append(parts, fmt.Sprintf("external supply %s at %s", ma(e.CurrentUA), formatMV(e.BusMV)))
 	}
 	if d.Pod != nil && d.Pod.OK {
 		parts = append(parts, "pod "+ma(d.Pod.CurrentUA))
@@ -217,10 +226,12 @@ func describePowerDraw(d powerDraw, tp *targetPower) string {
 	return strings.Join(parts, ", ")
 }
 
-// targetPower is the firmware's `target_status` reply: eFuse 1 is the internal 5 V rail, eFuse 2
-// the external supply.
+// targetPower is the firmware's `target_status` reply. Supplies is keyed by supply ("5v",
+// "external", and on a BenchPod v4 "3v3" and "1v8"); Efuse1 (the 5 V supply) and Efuse2 (the
+// external one) are the keys of firmware before the supplies map.
 type targetPower struct {
-	Efuse1 struct {
+	Supplies map[string]supplyState `json:"supplies"`
+	Efuse1   struct {
 		Enabled flexBool `json:"enabled"`
 		Fault   flexBool `json:"fault"`
 	} `json:"efuse1"`
@@ -228,12 +239,6 @@ type targetPower struct {
 		Enabled flexBool `json:"enabled"`
 		Fault   flexBool `json:"fault"`
 	} `json:"efuse2"`
-	// J1Rails is the switched supply pins on J1 of the digital board v4 (pin 17 +3.3 V, pin 18
-	// +1.8 V); nil on boards where both are always on.
-	J1Rails *struct {
-		V3V3 flexBool `json:"v3v3"`
-		V1V8 flexBool `json:"v1v8"`
-	} `json:"j1_rails"`
 }
 
 // flexBool reads a firmware 4.0 boolean (true/false) and, for status against firmware 3.x (which
@@ -338,10 +343,7 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 		row("I/O voltage", "not set (run `benchpod la voltage 3.3V` or 1.8V; LA, UART and flash need it)")
 	}
 	if s.power != nil {
-		row("Target power", describeTargetPower(*s.power))
-		if j := describeJ1Rails(*s.power); j != "" {
-			row("J1 supplies", j)
-		}
+		row("Supplies", describeTargetPower(*s.power))
 	}
 	if s.draw != nil {
 		if d := describePowerDraw(*s.draw, s.power); d != "" {
@@ -369,41 +371,25 @@ func printStatusSummary(out io.Writer, s statusSummary) {
 	}
 }
 
+// describeTargetPower is the Supplies row: every supply the pod reports with its state ("5 V on,
+// external off, 3.3 V on, 1.8 V on"); the 3.3 V and 1.8 V supplies only on a BenchPod v4.
 func describeTargetPower(p targetPower) string {
-	rail := func(name string, enabled, fault flexBool) string {
+	var parts []string
+	for _, name := range []string{"5v", "external", "3v3", "1v8"} {
+		st, ok := p.supplyState(name)
+		if !ok {
+			continue
+		}
+		state := "off"
 		switch {
-		case bool(fault):
-			return name + " FAULT"
-		case bool(enabled):
-			return name + " on"
+		case bool(st.Fault):
+			state = "FAULT"
+		case bool(st.Enabled):
+			state = "on"
 		}
-		return ""
+		parts = append(parts, supplyLabel(name)+" "+state)
 	}
-	var on []string
-	for _, r := range []string{rail("internal 5 V", p.Efuse1.Enabled, p.Efuse1.Fault), rail("external", p.Efuse2.Enabled, p.Efuse2.Fault)} {
-		if r != "" {
-			on = append(on, r)
-		}
-	}
-	if len(on) == 0 {
-		return "off"
-	}
-	return strings.Join(on, ", ")
-}
-
-// describeJ1Rails is the J1 supplies row of a digital board v4 ("pin 17 3.3 V on, pin 18 1.8 V
-// off"); "" on boards where both pins are always on.
-func describeJ1Rails(p targetPower) string {
-	if p.J1Rails == nil {
-		return ""
-	}
-	state := func(on flexBool) string {
-		if on {
-			return "on"
-		}
-		return "off"
-	}
-	return fmt.Sprintf("pin 17 3.3 V %s, pin 18 1.8 V %s", state(p.J1Rails.V3V3), state(p.J1Rails.V1V8))
+	return strings.Join(parts, ", ")
 }
 
 // describeMACs is the MAC row, for a network that hands out addresses only to registered

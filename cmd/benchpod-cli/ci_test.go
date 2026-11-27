@@ -36,6 +36,7 @@ type fakeCIPod struct {
 	refuse    map[string]error
 	profile   map[string]any
 	featRev   int // status features_rev (0: 4)
+	hw        []string
 }
 
 func newFakeCIPod() *fakeCIPod {
@@ -50,7 +51,11 @@ func (p *fakeCIPod) cmds() []string {
 	for _, r := range p.reqs {
 		s := r["cmd"].(string)
 		if s == "target_power" {
-			s += fmt.Sprintf(":%v:%v", r["efuse"], map[any]int{true: 1, false: 0}[r["enabled"]])
+			which := r["efuse"]
+			if v, ok := r["supply"]; ok {
+				which = v
+			}
+			s += fmt.Sprintf(":%v:%v", which, map[any]int{true: 1, false: 0}[r["enabled"]])
 		}
 		out = append(out, s)
 	}
@@ -70,7 +75,7 @@ func (p *fakeCIPod) Command(_ context.Context, req map[string]any) (json.RawMess
 		if p.statusErr != nil {
 			return nil, p.statusErr
 		}
-		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": max(p.featRev, 4), "la_vccio_mv": 3300, "api": 2, "min_client_api": 2}
+		st := map[string]any{"version": p.version, "board_rev": "v3", "analog": true, "gateware": 58, "features_rev": max(p.featRev, 4), "hw": p.hw, "la_vccio_mv": 3300, "api": 2, "min_client_api": 2}
 		p.mu.Lock()
 		if len(p.uptimes) > 0 {
 			st["uptime_ms"] = p.uptimes[0]
@@ -841,5 +846,41 @@ func TestCILeaseLostStopsTheRunningStep(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(f.pod.cmds(), ","), "dac_stop") {
 		t.Errorf("no cleanup: %v", f.pod.cmds())
+	}
+}
+
+// Firmware at the supply key revision gets `supply` (3v3/1v8 only on a pod with supply_3v3_1v8); older firmware gets efuse 1/2 and refuses nothing it cannot express: 3v3/1v8 stop with a hint.
+func TestCIPowerSendsSupplyOrEfuse(t *testing.T) {
+	for _, tc := range []struct {
+		featRev int
+		v4      bool
+		profile map[string]any
+		want    string // the commands before cleanup
+		errHas  string
+	}{
+		{4, false, map[string]any{"la_mv": 3300, "efuse": 2}, "target_power:2:1", ""},
+		{22, false, map[string]any{"la_mv": 3300, "efuse": 2}, "target_power:external:1", ""}, // a v3 pod on new firmware
+		{22, true, map[string]any{"la_mv": 3300, "supply": "5v", "efuse": 1}, "target_power:5v:1", ""},
+		{22, true, map[string]any{"la_mv": 3300, "supply": "3v3"}, "target_power:3v3:1", ""},
+		{22, false, map[string]any{"la_mv": 3300, "supply": "3v3"}, "", "no 3.3 V supply"},
+		{4, false, map[string]any{"la_mv": 3300, "supply": "1v8"}, "", "1.8 V supply needs pod firmware 4.0.7"},
+	} {
+		f := newCIFixture(t, "version: 1\nsuite: s\ndut: d\nsteps:\n  - power_on: {}\n")
+		f.pod.featRev = tc.featRev
+		if tc.v4 {
+			f.pod.hw = []string{"supply_3v3_1v8"}
+		}
+		f.pod.profile = tc.profile
+		exit, _ := f.run()
+		cmds := strings.Join(f.pod.cmds(), ",")
+		if tc.errHas != "" {
+			if exit.code == ci.ExitPassed || !strings.Contains(exit.msg+f.stderr.String()+f.stdout.String(), tc.errHas) {
+				t.Errorf("rev %d %v: exit %+v, out %q %q", tc.featRev, tc.profile, exit, f.stdout.String(), f.stderr.String())
+			}
+			continue
+		}
+		if !strings.Contains(cmds, tc.want) {
+			t.Errorf("rev %d %v: commands %s lack %s", tc.featRev, tc.profile, cmds, tc.want)
+		}
 	}
 }

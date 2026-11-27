@@ -51,7 +51,7 @@ func TestFlashBuildOverCloudRunsOnTheServer(t *testing.T) {
 	f.start(t)
 	g := &globalFlags{connection: "embeddedci:bench-1"}
 	err := runFlash(g, &flashFlags{swclk: "11", swdio: "12", nreset: true, nresetSet: true,
-		repo: "acme/fw", ref: "main", targetPower: 1, noConnectUnderReset: true})
+		repo: "acme/fw", ref: "main", targetPower: "5v", noConnectUnderReset: true})
 	if err != nil {
 		t.Fatalf("runFlash: %v", err)
 	}
