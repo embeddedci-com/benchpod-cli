@@ -2781,6 +2781,27 @@ benchpod log-level          # Console log level of the pod at ...: info
 benchpod log-level debug
 ```
 
+### `benchpod reboot`
+
+Restart the pod. A soft reboot (the default) restarts its processor: the DAC and control
+loop stop, the DUT supplies switch off, and the pod keeps its settings. A hard reboot
+(`--hard`) would power-cycle the pod, but no pod has that circuit yet, so the pod refuses
+with `BP0093`; unplug its power instead. The command waits until the pod answers again and
+prints one line. A reply or a dropped connection right after sending counts as success.
+Works over Ethernet, Wi-Fi, `usb`, `usb:<name>` and `embeddedci:<name>`. Needs a firmware
+with the `reboot` command.
+
+| Flag        | Default | Purpose                                                      |
+|-------------|---------|--------------------------------------------------------------|
+| `--soft`    | (on)    | Restart the processor. Cannot be combined with `--hard`.     |
+| `--hard`    |         | Power-cycle the pod. Refused with `BP0093` on every pod today. |
+| `--no-wait` |         | Return as soon as the pod has taken the reboot.              |
+
+```bash
+benchpod reboot            # Pod at 192.168.1.150:8080 rebooted (soft), firmware 4.0.7.
+benchpod reboot --no-wait  # Reboot (soft) sent to the pod at 192.168.1.150:8080.
+```
+
 ### `benchpod sig-policy`
 
 Show the pod's signature policy (always `required` from firmware 4.0) and how many release
