@@ -153,7 +153,7 @@ func TestCloudPingStatusAndLAVoltage(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("status: exit %d", code)
 	}
-	for _, want := range []string{"BenchPod bench-1 on embeddedci.com", "4.0.0", "3.3 V", "internal 5 V on", "on your account as bench-1"} {
+	for _, want := range []string{"BenchPod bench-1 on embeddedci.com", "4.0.0", "3.3 V", "5 V on, external off", "on your account as bench-1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output lacks %q:\n%s", want, out)
 		}

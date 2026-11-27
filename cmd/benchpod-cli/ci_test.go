@@ -50,7 +50,11 @@ func (p *fakeCIPod) cmds() []string {
 	for _, r := range p.reqs {
 		s := r["cmd"].(string)
 		if s == "target_power" {
-			s += fmt.Sprintf(":%v:%v", r["efuse"], map[any]int{true: 1, false: 0}[r["enabled"]])
+			which := r["efuse"]
+			if v, ok := r["supply"]; ok {
+				which = v
+			}
+			s += fmt.Sprintf(":%v:%v", which, map[any]int{true: 1, false: 0}[r["enabled"]])
 		}
 		out = append(out, s)
 	}
@@ -841,5 +845,37 @@ func TestCILeaseLostStopsTheRunningStep(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(f.pod.cmds(), ","), "dac_stop") {
 		t.Errorf("no cleanup: %v", f.pod.cmds())
+	}
+}
+
+// Firmware that reads the supply key (features table revision of 4.0.7) gets `supply`; older
+// firmware gets efuse 1/2, and refuses nothing it cannot express: 3v3/1v8 stop with a hint.
+func TestCIPowerSendsSupplyOrEfuse(t *testing.T) {
+	for _, tc := range []struct {
+		featRev int
+		profile map[string]any
+		want    string // the commands before cleanup
+		errHas  string
+	}{
+		{4, map[string]any{"la_mv": 3300, "efuse": 2}, "target_power:2:1", ""},
+		{22, map[string]any{"la_mv": 3300, "efuse": 2}, "target_power:external:1", ""},
+		{22, map[string]any{"la_mv": 3300, "supply": "5v", "efuse": 1}, "target_power:5v:1", ""},
+		{22, map[string]any{"la_mv": 3300, "supply": "3v3"}, "target_power:3v3:1", ""},
+		{4, map[string]any{"la_mv": 3300, "supply": "1v8"}, "", "1.8 V supply needs pod firmware 4.0.7"},
+	} {
+		f := newCIFixture(t, "version: 1\nsuite: s\ndut: d\nsteps:\n  - power_on: {}\n")
+		f.pod.featRev = tc.featRev
+		f.pod.profile = tc.profile
+		exit, _ := f.run()
+		cmds := strings.Join(f.pod.cmds(), ",")
+		if tc.errHas != "" {
+			if exit.code == ci.ExitPassed || !strings.Contains(exit.msg+f.stderr.String()+f.stdout.String(), tc.errHas) {
+				t.Errorf("rev %d %v: exit %+v, out %q %q", tc.featRev, tc.profile, exit, f.stdout.String(), f.stderr.String())
+			}
+			continue
+		}
+		if !strings.Contains(cmds, tc.want) {
+			t.Errorf("rev %d %v: commands %s lack %s", tc.featRev, tc.profile, cmds, tc.want)
+		}
 	}
 }

@@ -69,7 +69,7 @@ func newDetectCmd(g *globalFlags) *cobra.Command {
 			"  esp32  an ESP32 over its UART ROM loader: needs uart_rx, uart_tx and a BOOT, IO0 or IO9 signal\n\n" +
 			"swd, jtag and usb only read. The programmer and ESP32 probes put the chip into programming mode\n" +
 			"and reset it; --no-invasive leaves them out. Nothing is probed while target power is off (the\n" +
-			"profile's efuse rail), and a pin another function owns (a UART, a GPIO, a sensor) is skipped.\n\n" +
+			"profile's supply), and a pin another function owns (a UART, a GPIO, a sensor) is skipped.\n\n" +
 			"Each finding is one line: method, chip (vendor, core), the ID and the confidence: high (an exact\n" +
 			"table match), medium (vendor and core, not the part) or low (only a debug port answered).\n" +
 			"A method that was not probed is listed with the reason.\n\n" +
@@ -293,7 +293,7 @@ func detectTarget(ctx context.Context, pod podCommander, w *podWiring, o detectO
 	return d.res, nil
 }
 
-// targetPowered: the profile's efuse rail is on, or (no rail in the profile) either one is.
+// targetPowered: the profile's supply is on, or (no supply in the profile) the 5 V or the external one is.
 func (d *detector) targetPowered() (bool, error) {
 	raw, err := d.pod.Command(d.ctx, map[string]any{"cmd": "target_status"})
 	if err != nil {
@@ -306,13 +306,13 @@ func (d *detector) targetPowered() (bool, error) {
 	if err := json.Unmarshal(raw, &tp); err != nil {
 		return false, fmt.Errorf("detect: unexpected target_status reply %s", strings.TrimSpace(string(raw)))
 	}
-	switch {
-	case d.w.Efuse != nil && *d.w.Efuse == 1:
-		return bool(tp.Efuse1.Enabled), nil
-	case d.w.Efuse != nil && *d.w.Efuse == 2:
-		return bool(tp.Efuse2.Enabled), nil
+	if name := d.w.supply(); name != "" {
+		s, _ := tp.supplyState(name)
+		return bool(s.Enabled), nil
 	}
-	return bool(tp.Efuse1.Enabled || tp.Efuse2.Enabled), nil
+	a, _ := tp.supplyState("5v")
+	b, _ := tp.supplyState("external")
+	return bool(a.Enabled || b.Enabled), nil
 }
 
 func (d *detector) loadOwners() {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -177,11 +178,15 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 	}
 	fw := r.fw
 	if fw.Overrides.TargetPower == 0 {
-		// The target must be powered to answer SWD: the profile's rail, as the SDK's flash does.
-		if j1 := r.wiring.j1Rail(); j1 != "" {
-			// A J1 supply is not a flash power option: switch it on here, the flash then finds the target up.
-			if _, err := r.pod.Command(ctx, map[string]any{"cmd": "target_power", "rail": j1, "enabled": true}); err != nil {
-				return fmt.Errorf("power on (%s) before the flash: %w", j1, err)
+		// The target must be powered to answer SWD: the profile's supply, as the SDK's flash does.
+		if sw := r.wiring.switched(); sw != "" {
+			// 3v3 and 1v8 are not flash power options: switch it on here, the flash then finds the target up.
+			req := map[string]any{"cmd": "target_power", "enabled": true}
+			if err := supplyRequest(req, sw, r.takesSupplyKey(ctx)); err != nil {
+				return fmt.Errorf("power on (%s) before the flash: %w", supplyLabel(sw), err)
+			}
+			if _, err := r.pod.Command(ctx, req); err != nil {
+				return fmt.Errorf("power on (%s supply) before the flash: %w", supplyLabel(sw), err)
 			}
 		} else {
 			fw.Overrides.TargetPower = r.wiring.rail()
@@ -205,18 +210,37 @@ func (r *ciRunner) flashStep(ctx context.Context, s *ci.Step, w io.Writer) error
 	return r.pod.Flash(ctx, fw)
 }
 
-// powerOn applies the profile's I/O voltage (only while the rail is off), then switches the
-// profile's rail on, naming the profile so the pod records it.
+// takesSupplyKey says whether the pod's firmware reads the `supply` key (else power commands
+// send efuse 1/2); asked once per run.
+func (r *ciRunner) takesSupplyKey(ctx context.Context) bool {
+	if r.supplyKey == nil {
+		raw, err := r.pod.Command(ctx, features.StatusRequest())
+		v := err == nil && podTakesSupplyKey(raw)
+		r.supplyKey = &v
+	}
+	return *r.supplyKey
+}
+
+// powerRequest is target_power for the profile's supply.
+func (r *ciRunner) powerRequest(ctx context.Context, on bool) (map[string]any, error) {
+	req := map[string]any{"cmd": "target_power", "enabled": on}
+	if err := supplyRequest(req, r.wiring.supply(), r.takesSupplyKey(ctx)); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+// powerOn applies the profile's I/O voltage (only while the supply is off), then switches the
+// profile's supply on, naming the profile so the pod records it.
 func (r *ciRunner) powerOn(ctx context.Context, w io.Writer) error {
-	j1 := r.wiring.j1Rail()
-	rail := r.wiring.rail()
+	supply := r.wiring.supply()
 	if mv := r.wiring.intKey("la_mv", 0); mv > 0 {
 		st, _, err := readPodStatus(ctx, r.pod)
 		if err != nil {
 			return err
 		}
 		if st.LAVccioMV != mv {
-			if r.railOn(ctx, rail, j1) {
+			if supplyIsOn(ctx, r.pod, supply) {
 				return fmt.Errorf("the board is powered with I/O at %d mV and the wiring profile wants %d mV: power it off first", st.LAVccioMV, mv)
 			}
 			if _, err := r.pod.Command(ctx, map[string]any{"cmd": "la_voltage", "mv": mv}); err != nil {
@@ -225,58 +249,30 @@ func (r *ciRunner) powerOn(ctx context.Context, w io.Writer) error {
 			fmt.Fprintf(w, "I/O voltage %d mV from the wiring profile\n", mv)
 		}
 	}
-	req := map[string]any{"cmd": "target_power", "efuse": rail, "enabled": true}
-	if j1 != "" {
-		// A J1 supply (digital board v4): the profile's rail, named as the pod names it.
-		req = map[string]any{"cmd": "target_power", "rail": j1, "enabled": true}
-		if _, err := r.pod.Command(ctx, req); err != nil {
-			return fmt.Errorf("power on (%s): %w", j1, err)
-		}
-		fmt.Fprintf(w, "power on, %s (J1)\n", j1)
-		return nil
+	req, err := r.powerRequest(ctx, true)
+	if err != nil {
+		return fmt.Errorf("power on (%s): %w", supplyLabel(supply), err)
 	}
-	if r.wiring.Name != "" {
+	if r.wiring.Name != "" && r.wiring.switched() == "" {
 		req["profile"] = r.wiring.Name
 	}
 	if _, err := r.pod.Command(ctx, req); err != nil {
-		return fmt.Errorf("power on (eFuse %d): %w", rail, err)
+		return fmt.Errorf("power on (%s supply): %w", supplyLabel(supply), err)
 	}
-	fmt.Fprintf(w, "power on, eFuse %d\n", rail)
+	fmt.Fprintf(w, "power on, %s supply\n", supplyLabel(supply))
 	return nil
 }
 
 func (r *ciRunner) powerOff(ctx context.Context, w io.Writer) error {
-	if j1 := r.wiring.j1Rail(); j1 != "" {
-		if _, err := r.pod.Command(ctx, map[string]any{"cmd": "target_power", "rail": j1, "enabled": false}); err != nil {
-			return fmt.Errorf("power off (%s): %w", j1, err)
-		}
-		fmt.Fprintf(w, "power off, %s (J1)\n", j1)
-		return nil
-	}
-	rail := r.wiring.rail()
-	if _, err := r.pod.Command(ctx, map[string]any{"cmd": "target_power", "efuse": rail, "enabled": false}); err != nil {
-		return fmt.Errorf("power off (eFuse %d): %w", rail, err)
-	}
-	fmt.Fprintf(w, "power off, eFuse %d\n", rail)
-	return nil
-}
-
-func (r *ciRunner) railOn(ctx context.Context, rail int, j1 string) bool {
-	raw, err := r.pod.Command(ctx, map[string]any{"cmd": "target_status"})
+	req, err := r.powerRequest(ctx, false)
 	if err != nil {
-		return false
+		return fmt.Errorf("power off (%s): %w", supplyLabel(r.wiring.supply()), err)
 	}
-	var tp targetPower
-	if json.Unmarshal(raw, &tp) != nil {
-		return false
+	if _, err := r.pod.Command(ctx, req); err != nil {
+		return fmt.Errorf("power off (%s supply): %w", supplyLabel(r.wiring.supply()), err)
 	}
-	if j1 != "" {
-		return tp.J1Rails != nil && ((j1 == "j1_3v3" && bool(tp.J1Rails.V3V3)) || (j1 == "j1_1v8" && bool(tp.J1Rails.V1V8)))
-	}
-	if rail == 2 {
-		return bool(tp.Efuse2.Enabled)
-	}
-	return bool(tp.Efuse1.Enabled)
+	fmt.Fprintf(w, "power off, %s supply\n", supplyLabel(r.wiring.supply()))
+	return nil
 }
 
 // uartRequest is uart_proxy_start on the profile's UART.
@@ -532,16 +528,27 @@ func nestedStats(data json.RawMessage) json.RawMessage {
 	return data
 }
 
+func powerProfileOneShot(keyed map[string]any, ms int) map[string]any {
+	req := map[string]any{"cmd": "power_profile", "duration_ms": ms, "sample_rate_hz": 500, "keep_samples": 0}
+	maps.Copy(req, keyed)
+	return req
+}
+
 func (r *ciRunner) measurePower(ctx context.Context, m *ci.MeasurePower, w io.Writer) (map[string]float64, error) {
-	if j1 := r.wiring.j1Rail(); j1 != "" {
-		return nil, fmt.Errorf("measure_power: the profile's rail is %s (a J1 supply), which has no current monitor; measure it with an external current monitor, or power the board from the internal or external rail", j1)
+	supply := r.wiring.supply()
+	if sw := r.wiring.switched(); sw != "" {
+		return nil, fmt.Errorf("measure_power: the profile's supply is %s, which has no current monitor; measure it with an external current monitor, or power the board from the 5 V or external supply", supplyLabel(sw))
 	}
-	rail := r.wiring.rail()
+	keyed := map[string]any{}
+	if err := supplyRequest(keyed, supply, r.takesSupplyKey(ctx)); err != nil {
+		return nil, err
+	}
 	ms := int(m.Duration / time.Millisecond)
 	var stats *powerStats
 	if r.pod.Transport() == "cloud" {
 		// The cloud command channel takes start/stop, not the one-shot (it waits on a stream).
-		start := map[string]any{"cmd": "power_profile", "action": "start", "efuse": rail, "sample_rate_hz": 500, "keep_samples": 0, "max_duration_ms": ms + 10000}
+		start := map[string]any{"cmd": "power_profile", "action": "start", "sample_rate_hz": 500, "keep_samples": 0, "max_duration_ms": ms + 10000}
+		maps.Copy(start, keyed)
 		if _, err := r.pod.Command(ctx, start); err != nil {
 			return nil, fmt.Errorf("power_profile start: %w", err)
 		}
@@ -558,7 +565,7 @@ func (r *ciRunner) measurePower(ctx context.Context, m *ci.MeasurePower, w io.Wr
 		}
 		stats = st
 	} else {
-		lines, err := r.pod.Chunks(ctx, map[string]any{"cmd": "power_profile", "efuse": rail, "duration_ms": ms, "sample_rate_hz": 500, "keep_samples": 0})
+		lines, err := r.pod.Chunks(ctx, powerProfileOneShot(keyed, ms))
 		if err != nil {
 			return nil, fmt.Errorf("power_profile: %w", err)
 		}
@@ -579,9 +586,9 @@ func (r *ciRunner) measurePower(ctx context.Context, m *ci.MeasurePower, w io.Wr
 	if stats.AvgMV != nil {
 		out["mean_v"] = *stats.AvgMV / 1000
 	}
-	fmt.Fprintf(w, "eFuse %d over %s: mean %.3f mA, %d samples\n", rail, m.Duration, out["mean_ma"], stats.N)
+	fmt.Fprintf(w, "%s supply over %s: mean %.3f mA, %d samples\n", supplyLabel(supply), m.Duration, out["mean_ma"], stats.N)
 	if stats.Fault {
-		return out, failCheck("the eFuse %d reported a fault during the measurement (an overcurrent or a short)", rail)
+		return out, failCheck("the %s supply reported a fault during the measurement (an overcurrent or a short)", supplyLabel(supply))
 	}
 	return out, nil
 }

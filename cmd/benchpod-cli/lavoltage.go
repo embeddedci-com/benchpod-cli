@@ -31,9 +31,9 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 			"sensor emulation until it is set. 1.8V needs a v3 pod, and the pod refuses a\n" +
 			"change while any LA pin is in use.\n\n" +
 			"VOLTAGE is 1.8V or 3.3V (also 1800mV, or 3.3: a bare number is volts).\n\n" +
-			"5V (5.0, 5000) works on a pod with the digital board v4: pin 21, the pull-up rail,\n" +
-			"goes to 5V and outputs reach 5V through their pull-ups (benchpod la pull PIN up). The\n" +
-			"output then shows pin 21. BP0028: 5V did not come up. Other pods refuse 5000. Details:\n" +
+			"5V (5.0, 5000) works on a pod with the digital board v4: the I/O reference (VREF OUT,\n" +
+			"J1 pin 21), the pull-up rail, goes to 5V and outputs reach 5V through their pull-ups\n" +
+			"(benchpod la pull PIN up). The output then shows VREF OUT. BP0028: 5V did not come up. Other pods refuse 5000. Details:\n" +
 			"https://embeddedci.com/docs/benchpod-targets/5v-rs485#5v-io\n\n" +
 			"Omit VOLTAGE to show the current setting. Works over the network, over USB (--connection usb) and through\n" +
 			"embeddedci.com (--connection embeddedci:<name>).\n\n" +
@@ -68,11 +68,11 @@ func newLAVoltageCmd(g *globalFlags) *cobra.Command {
 type laVoltageReply struct {
 	MV         int `json:"mv"`
 	ReadbackMV int `json:"readback_mv"`
-	// VrefOut is J1 pin 21 on the digital board v4 (nil on other boards).
+	// VrefOut is the I/O reference (VREF OUT) on the digital board v4 (nil on other boards).
 	VrefOut *vrefOut `json:"vref_out,omitempty"`
 }
 
-// vrefOut is pin 21 in the la_voltage reply (digital board v4).
+// vrefOut is VREF OUT in the la_voltage reply (digital board v4).
 type vrefOut struct {
 	Source string `json:"source"` // "bank" or "5v"
 	SetMV  int    `json:"set_mv"`
@@ -81,21 +81,21 @@ type vrefOut struct {
 	Up     bool   `json:"up"`
 }
 
-// pin21Text is pin 21's line and, when it is not ok, a warning ("" when there is none).
-func pin21Text(v *vrefOut) (line, warning string) {
+// vrefOutText is the VREF OUT line and, when it is not ok, a warning ("" when there is none).
+func vrefOutText(v *vrefOut) (line, warning string) {
 	measured := "no reading"
 	if v.MV >= 0 {
 		measured = formatMV(v.MV)
 	}
-	line = fmt.Sprintf("J1 pin 21 (pull-up rail): %s, set to %s (%s)", measured, formatMV(v.SetMV), v.State)
+	line = fmt.Sprintf("I/O reference (VREF OUT): %s, set to %s (%s)", measured, formatMV(v.SetMV), v.State)
 	switch v.State {
 	case "high":
-		warning = "pin 21 is above its setting: a DUT signal above the I/O voltage lifts it through the pull " +
+		warning = "the I/O reference (VREF OUT) is above its setting: a DUT signal above the I/O voltage lifts it through the pull " +
 			"resistors. Select 5V (benchpod la voltage 5.0) or remove the signal."
 	case "low":
-		warning = "pin 21 is below its setting: something on it draws too much current."
+		warning = "the I/O reference (VREF OUT) is below its setting: something on it draws too much current."
 	case "short":
-		warning = "pin 21 is shorted or held down: the pull resistors are off until it is back."
+		warning = "the I/O reference (VREF OUT) is shorted or held down: the pull resistors are off until it is back."
 	}
 	return line, warning
 }
@@ -119,7 +119,7 @@ func runLAVoltage(g *globalFlags, mv int, out, warn io.Writer) error {
 		fmt.Fprintf(warn, "Warning: the bank's power mux reports %s, not %s\n", formatMV(rep.ReadbackMV), formatMV(rep.MV))
 	}
 	if rep.VrefOut != nil {
-		line, w := pin21Text(rep.VrefOut)
+		line, w := vrefOutText(rep.VrefOut)
 		fmt.Fprintln(out, line)
 		if w != "" {
 			fmt.Fprintln(warn, "Warning: "+w)

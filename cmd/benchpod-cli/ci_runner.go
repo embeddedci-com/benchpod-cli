@@ -62,16 +62,18 @@ type ciRunner struct {
 
 	stdout, stderr io.Writer
 
-	dir     string // the run folder (absolute)
-	t0      time.Time
-	run     *ci.Run
-	rec     *ci.Recorder
-	conn    *ciConnected
-	pod     ciPod // traced
-	lease   ciLease
-	wiring  *ciWiring
-	fw      ciFlash
-	started ciPodStatus
+	dir    string // the run folder (absolute)
+	t0     time.Time
+	run    *ci.Run
+	rec    *ci.Recorder
+	conn   *ciConnected
+	pod    ciPod // traced
+	lease  ciLease
+	wiring *ciWiring
+	// supplyKey caches whether the pod's firmware reads the supply key (nil: not asked yet).
+	supplyKey *bool
+	fw        ciFlash
+	started   ciPodStatus
 
 	requiredFailed string // the id of the required step that failed, "" when none
 	stopReason     string // why the remaining steps were not run
@@ -322,18 +324,31 @@ func (w *ciWiring) strKey(key string) string {
 	return s
 }
 
-// rail is the profile's target-power eFuse (1 internal, 2 external).
+// supply is the profile's target-power supply ("5v", "external", "3v3" or "1v8"): its supply
+// key, else the legacy efuse key (1 or 2); "5v" when it sets none.
+func (w *ciWiring) supply() string {
+	if s := w.strKey("supply"); isSupply(s) {
+		return s
+	}
+	if s := legacySupply(w.intKey("efuse", 1)); s != "" {
+		return s
+	}
+	return "5v"
+}
+
+// rail is the eFuse number (1 or 2) of the profile's supply, for steps that need one (the flash
+// power-up); 1 for the supplies without an eFuse.
 func (w *ciWiring) rail() int {
-	if r := w.intKey("efuse", 1); r == 1 || r == 2 {
-		return r
+	if n := supplyEfuse(w.supply()); n != 0 {
+		return n
 	}
 	return 1
 }
 
-// j1Rail is the profile's target-power rail when it is a J1 supply of the digital board v4
-// ("j1_3v3" or "j1_1v8", profile key efuse), else "".
-func (w *ciWiring) j1Rail() string {
-	if s := w.strKey("efuse"); s == "j1_3v3" || s == "j1_1v8" {
+// switched is the profile's supply when it is one of the J1 supplies without an eFuse (3v3, 1v8),
+// else "".
+func (w *ciWiring) switched() string {
+	if s := w.supply(); supplyEfuse(s) == 0 {
 		return s
 	}
 	return ""
@@ -586,9 +601,10 @@ func (r *ciRunner) cleanup() {
 			_, err := pod.Command(ctx, map[string]any{"cmd": "dac_stop"})
 			note(a, err)
 		case ci.CleanupPowerOff:
-			for _, efuse := range []int{1, 2} {
-				_, err := pod.Command(ctx, map[string]any{"cmd": "target_power", "efuse": efuse, "enabled": false})
-				note(fmt.Sprintf("%s efuse %d", a, efuse), err)
+			// The 5 V and external supplies, by their legacy efuse number (every firmware takes it).
+			for _, supply := range []string{"5v", "external"} {
+				_, err := pod.Command(ctx, map[string]any{"cmd": "target_power", "efuse": supplyEfuse(supply), "enabled": false})
+				note(fmt.Sprintf("%s %s supply", a, supplyLabel(supply)), err)
 			}
 		case ci.CleanupSensorsOff:
 			_, err := pod.Command(ctx, map[string]any{"cmd": "sensor_stop", "all": true})

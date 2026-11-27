@@ -146,3 +146,10 @@ func factHolds(st status, top map[string]any, req string) bool {
 	}
 	return false
 }
+
+// PodRevisionAtLeast reports whether the pod's table revision (status features_rev) is at least
+// rev. It gates a wire change that came with a table revision but has no feature of its own.
+func PodRevisionAtLeast(statusReply json.RawMessage, rev int) bool {
+	var st status
+	return json.Unmarshal(statusReply, &st) == nil && st.FeaturesRev >= rev
+}
