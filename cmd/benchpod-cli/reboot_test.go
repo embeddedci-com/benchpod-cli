@@ -141,8 +141,10 @@ func TestRebootHardRefused(t *testing.T) {
 	if exitCode(err) != exitRefused {
 		t.Fatalf("exit code %d for %v", exitCode(err), err)
 	}
-	if !strings.Contains(err.Error(), "BP0093") && !strings.Contains(err.Error(), "power-cycle") {
-		t.Fatalf("error %q does not name the refusal", err)
+	for _, want := range []string{"This pod cannot power-cycle itself", "run benchpod reboot without --hard"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q lacks %q", err, want)
+		}
 	}
 	if reqs := pod.requests(); len(reqs) == 0 || !strings.Contains(reqs[0], `"mode":"hard"`) {
 		t.Fatalf("requests %v", reqs)
