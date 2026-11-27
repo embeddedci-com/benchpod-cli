@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/embeddedci-com/benchpod-cli/internal/expansion"
 	"github.com/spf13/cobra"
@@ -22,19 +23,32 @@ func newExpansionCmd(g *globalFlags) *cobra.Command {
 	var addrs, sda, scl, pullups string
 	var hz int
 	var asJSON bool
+	var mf monitorFlags
 	cmd := &cobra.Command{
 		Use:   "expansion [chip]",
-		Short: "List the GPIO expander chips, or read an I2C expander's pins (direction and level)",
+		Short: "List the GPIO expander and INA current monitor chips, or read one (pins, or a µA current)",
 		Long: "Without a chip, list the GPIO expander boards the SDK drives (bp.expansion in\n" +
 			"Python, the expansion tool of the MCP server). With an I2C chip, read every pin\n" +
 			"of it through the pod's I2C master: direction and live level, pins named EXT1..EXTn\n" +
 			"as the SDK names them. It only reads; nothing on the chip changes. An open\n" +
 			"`benchpod i2c start` session is used as it is; otherwise one is opened on --sda and\n" +
 			"--scl (default: the wiring profile's i2c_sda and i2c_scl) and closed afterwards.\n" +
-			"With --pullups pod the pull-ups must be on (`benchpod la pull 1 up`).",
+			"With --pullups pod the pull-ups must be on (`benchpod la pull 1 up`).\n\n" +
+			"An INA current monitor (ina226, ina228, ina238, ina219, ina260, ina3221) measures µA\n" +
+			"currents instead: wire a shunt in series between the pod's target-power output and the\n" +
+			"DUT and the chip across it (bus pin on the DUT side), then give --shunt (ohms). It is\n" +
+			"probed by ID, reset, configured for continuous conversion and read: the current, bus\n" +
+			"voltage and power, or with --seconds N the mean, min and max. With 10 ohm an INA226\n" +
+			"resolves 0.25 µA up to about 8 mA. The LA voltage must be 3.3 V or 5 V (not 1.8 V).\n" +
+			"Entries of the wiring profile's `monitors` key for the chip supply what the flags leave\n" +
+			"out (address, shunt, channel, averaging, conversion time, max current, SDA/SCL, name):\n" +
+			"without --addr every matching entry is read.",
 		Example: "  benchpod expansion\n" +
 			"  benchpod expansion tca9555 --addr 0x20 --sda 1 --scl 2\n" +
-			"  benchpod expansion mcp23017 --addr 0x20,0x21 --pullups external",
+			"  benchpod expansion mcp23017 --addr 0x20,0x21 --pullups external\n" +
+			"  benchpod expansion ina226 --shunt 10 --sda 1 --scl 2\n" +
+			"  benchpod expansion ina226                    # the profile's monitors entries\n" +
+			"  benchpod expansion ina228 --shunt 10 --max-current 0.001 --seconds 5 --json",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			out, closeOut, err := resolveOutput(g.outputFilename)
@@ -59,13 +73,32 @@ func newExpansionCmd(g *globalFlags) *cobra.Command {
 			if pullups != "pod" && pullups != "external" {
 				return usageErrorf("--pullups must be pod or external")
 			}
+			var jobs []monitorJob
+			var entrySDA, entrySCL string // the monitors entry's pins: used only when a session is opened
+			resolver := &pinResolver{g: g}
+			if chip.Kind == "current" {
+				if mf.channel != 0 && (mf.channel < 1 || mf.channel > chip.Channels) {
+					return usageErrorf("--channel is 1 to %d for the %s", chip.Channels, chip.Name)
+				}
+				if mf.seconds < 0 || mf.seconds > 600 {
+					return usageErrorf("--seconds must be 0 to 600")
+				}
+				if jobs, err = monitorJobs(chip, list, addrs != "", mf, resolver.wiring()); err != nil {
+					return err
+				}
+				if jobs[0].sda != 0 && jobs[0].scl != 0 {
+					entrySDA, entrySCL = fmt.Sprint(jobs[0].sda), fmt.Sprint(jobs[0].scl)
+				}
+			} else if mf.shunt != 0 || mf.channel != 0 || mf.seconds != 0 || mf.averaging != 0 || mf.convTime != 0 || mf.maxCurrent != 0 {
+				return usageErrorf("--shunt, --channel, --seconds, --averaging, --conversion-time and --max-current are for the INA current monitors")
+			}
 			if hz == 0 {
 				hz = chip.MaxHz
 			}
 			if hz < 10000 || hz > chip.MaxHz {
 				return usageErrorf("--hz must be 10000 to %d for the %s", chip.MaxHz, chip.Name)
 			}
-			ctx, cancel, t, err := g.podClient("expansion", i2cTimeout)
+			ctx, cancel, t, err := g.podClient("expansion", i2cTimeout+time.Duration(mf.seconds*float64(time.Second)))
 			if err != nil {
 				return err
 			}
@@ -79,7 +112,10 @@ func newExpansionCmd(g *globalFlags) *cobra.Command {
 					return usageErrorf("an I2C session is open on SDA LA%d, SCL LA%d: leave out --sda/--scl to use it, or `benchpod i2c stop` first", st.SDA, st.SCL)
 				}
 			} else {
-				if st, err = startExpansionBus(ctx, g, t, sda, scl, hz, pullups); err != nil {
+				if sda == "" && scl == "" {
+					sda, scl = entrySDA, entrySCL
+				}
+				if st, err = startExpansionBus(ctx, resolver, t, sda, scl, hz, pullups, "expansion"); err != nil {
 					return err
 				}
 				defer func() {
@@ -102,6 +138,9 @@ func newExpansionCmd(g *globalFlags) *cobra.Command {
 					return nil, nil
 				}
 				return base64.RawURLEncoding.DecodeString(strings.TrimRight(*rep.Rx, "="))
+			}
+			if chip.Kind == "current" {
+				return runMonitors(ctx, out, chip, jobs, mf.seconds, st, asJSON, xfer)
 			}
 			pins, err := expansion.ReadI2C(chip, list, xfer)
 			if err != nil {
@@ -134,6 +173,12 @@ func newExpansionCmd(g *globalFlags) *cobra.Command {
 	cmd.Flags().IntVar(&hz, "hz", 0, "SCL rate in Hz when a session is opened (default: the chip's limit, 400 kHz or 100 kHz)")
 	cmd.Flags().StringVar(&pullups, "pullups", "pod", "pod (the pod's pull-ups on LA1-LA6, which must be on: benchpod la pullup 1 on) or external (the breakout's)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	cmd.Flags().Float64Var(&mf.shunt, "shunt", 0, "INA monitors: the shunt resistor in ohms (default: shunt_ohm of the profile's monitors entry; required without one, except for the INA260)")
+	cmd.Flags().IntVar(&mf.channel, "channel", 0, "ina3221: channel 1-3 (default 1)")
+	cmd.Flags().Float64Var(&mf.seconds, "seconds", 0, "INA monitors: measure this many seconds (mean, min, max); 0 is one reading")
+	cmd.Flags().IntVar(&mf.averaging, "averaging", 0, "INA monitors: conversions averaged per result: 1, 4, 16, 64, 128, 256, 512, 1024 (ina219: 1-128, powers of two); default 16")
+	cmd.Flags().DurationVar(&mf.convTime, "conversion-time", 0, "INA monitors: per shunt and bus conversion, the nearest the chip has: 1.1ms (default); 50us to 8.2ms")
+	cmd.Flags().Float64Var(&mf.maxCurrent, "max-current", 0, "INA monitors: largest current expected in amps (0.001 = 1 mA): ina219, ina228 and ina238 pick the narrowest range covering it")
 	return cmd
 }
 
@@ -160,8 +205,7 @@ func parseExpansionAddrs(chip expansion.Chip, s string) ([]int, error) {
 	return out, nil
 }
 
-func startExpansionBus(ctx context.Context, g *globalFlags, t *podTarget, sda, scl string, hz int, pullups string) (i2cSession, error) {
-	r := &pinResolver{g: g}
+func startExpansionBus(ctx context.Context, r *pinResolver, t *podTarget, sda, scl string, hz int, pullups, what string) (i2cSession, error) {
 	if sda == "" || scl == "" {
 		if w := r.wiring(); w != nil {
 			pinFromWiring(&sda, w.I2cSda)
@@ -183,14 +227,14 @@ func startExpansionBus(ctx context.Context, g *globalFlags, t *podTarget, sda, s
 		return i2cSession{}, usageErrorf("--sda and --scl are both LA%d; each needs its own pin", sdaPin)
 	}
 	if err := ensureBusMasterImage(ctx, t.client, "the I2C master"); err != nil {
-		return i2cSession{}, fmt.Errorf("expansion: %w", err)
+		return i2cSession{}, fmt.Errorf("%s: %w", what, err)
 	}
 	var s i2cSession
 	req := map[string]any{"cmd": "i2c_start", "sda": sdaPin, "scl": sclPin, "clock_hz": hz, "pullups": pullups}
-	if err := busCommand(ctx, t, "expansion", "I2C master", req, &s); err != nil {
+	if err := busCommand(ctx, t, what, "I2C master", req, &s); err != nil {
 		return i2cSession{}, err
 	}
-	fmt.Fprintf(os.Stderr, "expansion: opened I2C on %s for this run\n", s.String())
+	fmt.Fprintf(os.Stderr, "%s: opened I2C on %s for this run\n", what, s.String())
 	return s, nil
 }
 
@@ -213,14 +257,20 @@ func printExpansionChips(out io.Writer, asJSON bool) error {
 			volts[i] = fmt.Sprintf("%g V", v)
 		}
 		pins := fmt.Sprint(c.Pins)
-		if len(c.Addrs) == 0 {
+		if c.Kind == "current" {
+			pins = "current monitor"
+		} else if len(c.Addrs) == 0 {
 			pins += " per chip"
 		}
 		name := c.Name
 		if len(c.Aliases) > 0 {
 			name += " (" + strings.Join(c.Aliases, ", ") + ")"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", name, bus, c.LAPins, pins, strings.Join(volts, ", "), c.Directions)
+		dirs := c.Directions
+		if dirs == "" {
+			dirs = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", name, bus, c.LAPins, pins, strings.Join(volts, ", "), dirs)
 	}
 	return tw.Flush()
 }

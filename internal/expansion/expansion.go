@@ -29,6 +29,12 @@ type Chip struct {
 	Since      string    `json:"since"`
 	Aliases    []string  `json:"aliases"`
 	Note       string    `json:"note"`
+	// Kind is "gpio" (EXT pins) or "current" (an INA current monitor: no pins; its fields below).
+	Kind        string  `json:"kind"`
+	Channels    int     `json:"channels"`
+	InternalOhm float64 `json:"internal_ohm"`
+	ShuntMax    float64 `json:"shunt_max"`
+	IDs         [][]int `json:"ids"` // {register, mask, value}
 }
 
 // Chips is every chip the SDK drives, in its order.

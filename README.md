@@ -1777,6 +1777,46 @@ benchpod expansion tca9555 --addr 0x20 --sda 1 --scl 2
 benchpod expansion mcp23017 --addr 0x20,0x21 --pullups external --json
 ```
 
+**INA current monitors (µA currents).** The pod's own current monitors step about 125 µA, too coarse
+for a sleep current. Put a shunt in series between the pod's target-power output and the DUT and an INA
+breakout across it (IN+ on the supply side; IN- and the bus pin on the DUT side), and give the chip
+(`ina226`, `ina228`, `ina238`, `ina219`, `ina260`, `ina3221`) and `--shunt` in ohms. The command probes
+the chip (manufacturer and die ID where it has them), resets and configures it for continuous
+conversion, and prints the current through the shunt, the bus voltage and the power; `--seconds N`
+measures for N seconds and prints the mean, minimum and maximum. With 10 ohm an INA226 resolves
+0.25 µA up to about 8 mA. The LA voltage must be 3.3 V or 5 V (the chips do not run at 1.8 V). The SDK
+(`bp.expansion("ina226", shunt_ohm=10)` with `measure_power(monitor="ext")`) and the MCP server's
+`expansion` tool keep the monitor attached; the CLI resets and reads it once per run and leaves it
+running.
+
+```bash
+benchpod expansion ina226 --shunt 10 --sda 1 --scl 2
+benchpod expansion ina228 --shunt 10 --max-current 0.001 --seconds 5 --json
+```
+
+**Monitors in the wiring profile.** The profile's optional `monitors` key (at most 8 entries) describes
+the INA breakouts on the bench, so the command needs no flags. `benchpod expansion <chip>` takes what
+the flags leave out from the entries whose `chip` matches: with `--addr` the entry at that address,
+without it every matching entry (each one is read). Explicit flags win. The entry's `name` is printed
+next to the chip (and is `name` in the JSON); without one it is `chip@0xAA` (ina3221: `.channel`
+appended). `--shunt` is only required when no entry supplies `shunt_ohm`. `benchpod wiring save`
+checks the key: `chip` and `addr` (a number, 64 is 0x40) are required; `shunt_ohm` is required
+except for the ina260; `channel` is for the ina3221 (1-3); `sda`/`scl` (LA 1-14, default the profile's
+`i2c_sda`/`i2c_scl`) must be the same pair for all monitors; `averaging`, `conversion_time` (seconds,
+at most 0.01) and `max_current` (amps) are optional; (`addr`, `channel`) and names are unique.
+
+```json
+"monitors": [
+  {"chip": "ina226", "addr": 64, "shunt_ohm": 10.0, "name": "dut", "sda": 13, "scl": 14,
+   "averaging": 16, "conversion_time": 0.0011, "max_current": 0.001}
+]
+```
+
+```bash
+benchpod expansion ina226                  # reads every ina226 entry of the profile
+benchpod expansion ina226 --addr 0x40 --seconds 5
+```
+
 | Flag        | Default | Purpose                                                             |
 |-------------|---------|---------------------------------------------------------------------|
 | `--addr`    | (the chip's first address) | The 7-bit address, or several for chips on one bus: `0x20,0x21`. |
@@ -1785,6 +1825,12 @@ benchpod expansion mcp23017 --addr 0x20,0x21 --pullups external --json
 | `--hz`      | (the chip's limit) | SCL rate when a session is opened: 400 kHz, or 100 kHz for the PCF8574. |
 | `--pullups` | `pod`   | `pod` (the pod's pull-ups on LA1-LA6) or `external` (the breakout's). |
 | `--json`    | `false` | Print JSON.                                                         |
+| `--shunt`   | (required for INA chips) | INA monitors: the shunt resistor in ohms (the INA260 has its own 2 mohm). |
+| `--channel` | `1`     | ina3221: channel 1-3.                                               |
+| `--seconds` | `0`     | INA monitors: measure this long (mean, min, max); 0 is one reading. |
+| `--averaging` | `16`  | INA monitors: conversions averaged per result: 1, 4, 16, 64, 128, 256, 512 or 1024 (ina219: 1-128). |
+| `--conversion-time` | `1.1ms` | INA monitors: per shunt and bus conversion, the nearest the chip has (50µs to 8.2ms). |
+| `--max-current` | (chip default) | INA monitors: largest current in amps (`0.001`): ina219, ina228 and ina238 pick the narrowest range covering it. |
 
 ### `benchpod flash`
 

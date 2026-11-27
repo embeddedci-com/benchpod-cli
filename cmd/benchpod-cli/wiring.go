@@ -303,6 +303,11 @@ func runWiringShow(g *globalFlags, name string, out io.Writer) error {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return fmt.Errorf("profile %s on the pod is not valid JSON: %w", name, err)
 	}
+	if m, ok := v.(map[string]any); ok {
+		if err := validateMonitors(m); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: profile %s: %v\n", name, err)
+		}
+	}
 	b, _ := json.MarshalIndent(v, "", "  ")
 	fmt.Fprintln(out, string(b))
 	return nil
@@ -328,6 +333,9 @@ func runWiringSave(g *globalFlags, path, name string, force bool, out, warn io.W
 		if err := validDebugPort(s); err != nil {
 			return usageErrorf("wiring save: %s: %v", path, err)
 		}
+	}
+	if err := validateMonitors(p); err != nil {
+		return usageErrorf("wiring save: %s: %v", path, err)
 	}
 	body, _ := json.Marshal(p)
 	ctx, cancel, t, err := wiringTarget(g)
