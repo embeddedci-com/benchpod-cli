@@ -150,6 +150,8 @@ var codeKinds = map[string]RefusalKind{
 	"BP0086": Busy,           // usb_serial_busy
 	"BP0087": Refused,        // usb_check_refused
 	"BP0088": Refused,        // usb_check_no_efuse_power
+	"BP0089": Refused,        // wiring_bad_rail
+	"BP0090": Refused,        // power_no_meter
 }
 
 // CodeKind is the kind of a refusal code; ok is false for a code the table does not have.

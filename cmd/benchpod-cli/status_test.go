@@ -141,3 +141,39 @@ func TestStatusShowsADACPinoutMismatch(t *testing.T) {
 		}
 	}
 }
+
+func TestDescribeJ1Rails(t *testing.T) {
+	var none targetPower
+	if got := describeJ1Rails(none); got != "" {
+		t.Errorf("a board without switchable J1 supplies shows %q", got)
+	}
+	var p targetPower
+	if err := json.Unmarshal([]byte(`{"efuse1":{"enabled":false},"efuse2":{"enabled":false},"j1_rails":{"v3v3":true,"v1v8":false}}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := describeJ1Rails(p), "pin 17 3.3 V on, pin 18 1.8 V off"; got != want {
+		t.Errorf("describeJ1Rails = %q, want %q", got, want)
+	}
+}
+
+func TestCIWiringJ1Rail(t *testing.T) {
+	for _, tc := range []struct {
+		raw  map[string]any
+		j1   string
+		rail int
+	}{
+		{map[string]any{"efuse": "j1_3v3"}, "j1_3v3", 1},
+		{map[string]any{"efuse": "j1_1v8"}, "j1_1v8", 1},
+		{map[string]any{"efuse": float64(2)}, "", 2},
+		{map[string]any{"efuse": "j1_5v"}, "", 1},
+		{nil, "", 1},
+	} {
+		w := &ciWiring{Raw: tc.raw}
+		if got := w.j1Rail(); got != tc.j1 {
+			t.Errorf("%v: j1Rail = %q, want %q", tc.raw, got, tc.j1)
+		}
+		if got := w.rail(); got != tc.rail {
+			t.Errorf("%v: rail = %d, want %d", tc.raw, got, tc.rail)
+		}
+	}
+}

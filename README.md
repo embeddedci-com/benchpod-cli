@@ -970,7 +970,7 @@ and `expect`:
 | Step | What it does | Metrics |
 |---|---|---|
 | `flash: {}` | Flashes the firmware. | |
-| `power_on: {}` | Sets the profile's I/O voltage (only while the rail is off), then turns on the profile's rail. | |
+| `power_on: {}` | Sets the profile's I/O voltage (only while the rail is off), then turns on the profile's rail (eFuse 1 or 2, or on a digital board v4 a J1 supply, see [`benchpod wiring`](#benchpod-wiring)). | |
 | `power_off: {}` | Turns the profile's rail off. | |
 | `power_cycle: {until, timeout, off_ms, port, dtr, rts, baud}` | Power off, wait `off_ms` (default 500), power on; with `until` (a regex) it reads the DUT's UART (the profile's `uart_rx`/`uart_tx`/`uart_baud`) until it matches within `timeout` (default 10s). `port: usb` reads the board's USB serial port instead (see below). | `boot_ms`: power on to the match |
 | `uart_expect: {until, send, timeout, port, dtr, rts, baud}` | Sends `send` (optional) to the DUT's UART and waits up to `timeout` (default 5s) for `until`. `port: usb` as above. | `match_ms` |
@@ -1316,6 +1316,10 @@ BenchPod at 192.168.1.220:8080
   MAC           Ethernet 02:35:c7:76:b7:9b, Wi-Fi 7c:e8:b1:c5:ca:6c
   Cloud         registered, connected, on your account as benchpod-baea06
 ```
+
+The `J1 supplies` line appears on the digital board v4 (firmware with feature `dut_rails`): it
+shows whether J1 pin 17 (+3.3 V) and pin 18 (+1.8 V) are on. Both come on at boot; scripts and
+the MCP server switch them (`bp.j1_power`, `power_on` with `j1_rail`).
 
 The `MAC` line (firmware after 3.10.7) has the Ethernet MAC and, on a pod with Wi-Fi, the MAC it
 uses on Wi-Fi, or `not known yet` until a `benchpod scan-wifi` or a join tells the pod. Through
@@ -2537,6 +2541,12 @@ say to update the pod.
 
 A profile is schema version 2: what it does not set is undefined (that pin is not wired, no I/O
 voltage, no rail), and a command that needs it says which flag to pass. No flags.
+
+The profile's power rail is its `efuse` key: `1` (internal 5 V), `2` (external), and on a digital
+board v4 `"j1_3v3"` or `"j1_1v8"`, the switched J1 pins 17 (+3.3 V) and 18 (+1.8 V). The pod refuses
+the J1 rails on a board without them when you save (`BP0089`). `benchpod ci` follows the profile's
+rail: `power_on`, `power_off`, `power_cycle` and the flash's power-up switch that pin. A J1 supply has
+no current monitor, so a `measure_power` step on a profile with a J1 rail fails and says so.
 
 ### `benchpod wiring list`
 
